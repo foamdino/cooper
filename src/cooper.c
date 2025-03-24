@@ -23,6 +23,15 @@ typedef struct log_q log_q_t;
 typedef struct trace_event trace_event_t;
 typedef struct event_q event_q_t;
 typedef struct method_stats method_stats_t;
+typedef struct config config_t;
+
+struct config
+{
+    int rate;
+    char **filters;
+    int num_filters;
+    char *sample_file_path;
+};
 
 struct log_q
 {
@@ -86,11 +95,24 @@ static pthread_t log_thread;
 static event_q_t eq = {0};
 static pthread_t event_thread;
 
+/* Config */
+static config_t cfg = {1, NULL, 0, NULL};
+
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
 int should_trace_method(const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(const char *cf);
 void cleanup_filters(int nf);
+
+static char *trim(char *str)
+{
+    while (*str == ' ' || *str == '\t') str++;
+    char *end = str + strlen(str) -1;
+    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n'))
+        *end-- = '\0';
+    
+    return str;
+}
 
 static int init_log_q()
 {
@@ -595,39 +617,66 @@ int load_config(const char *cf)
     }
 
     char line[256];
-    num_filters = 0;
+    char *section = NULL;
+    int in_filters;
 
-    // Count lines first
-    while (fgets(line, sizeof(line), fp)) {
-        num_filters++;
-    }
-    rewind(fp);
-
-    // Allocate memory for filters
-    method_filters = (char **)malloc(num_filters * sizeof(char *));
-    if (method_filters == NULL)
+    while (fgets(line, sizeof(line), fp))
     {
-        LOG("ERROR: Failed to allocate memory for filters\n");
-        fclose(fp);
-        return 1;
-    }
-    int i = 0;
+        char *trimmed = trim(line);
+        /* skip empty lines or comments */
+        if (trimmed[0] == '\0' || trimmed[0] == '#') 
+            continue;
 
-    // Read filters
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\n")] = 0; // Remove newline
-        method_filters[i] = strdup(line);
-        if (method_filters[i] == NULL)
+        /* Start of a section */
+        if (trimmed[0] == '[')
         {
-            LOG("ERROR: Failed to duplicate string %s for filter %d\n", line, i);
-            cleanup_filters(i);
-            fclose(fp);
-            return 1;
+            section = strdup(trimmed);
+            in_filters = (strcmp(section, "[method_signatures]") == 0);
+            continue;
         }
-        i++;
+
+        if (section)
+        {
+            if (strcmp(section, "[sample_rate]") == 0)
+            {
+                /* set sample rate */
+                if (sscanf(trimmed, "rate = %d", &cfg.rate) == 1)
+                    sample_rate = cfg.rate > 0 ? cfg.rate : 1;
+            } 
+            else if (strcmp(section, "[method_signatures]") == 0)
+            {
+                if (strncmp(trimmed, "filters =", 9) == 0)
+                {
+                    in_filters = 1;
+                }
+                else if (in_filters && trimmed[0] != ']')
+                {
+                    cfg.num_filters++;
+                    char **tmp = realloc(cfg.filters, cfg.num_filters * sizeof(char *));
+                    if (!tmp)
+                    {
+                        LOG("ERROR: Failed to allocate memory for filters");
+                        fclose(fp);
+                        return 1;
+                    }
+                    cfg.filters = tmp;
+                    cfg.filters[cfg.num_filters - 1] = strdup(trimmed);
+                }
+            }
+            else if (strcmp(section, "[sample_file_location]") == 0)
+            {
+                if (strncmp(trimmed, "path =", 6) == 0)
+                {
+                    cfg.sample_file_path = strdup(trimmed + 6);
+                }
+            }
+
+        }
     }
 
     fclose(fp);
+    method_filters = cfg.filters;
+    num_filters = cfg.num_filters;
 
     return 0;
 }
@@ -770,14 +819,23 @@ void cleanup_filters(int nf)
 {
     /* check if we have work to do */
     if (method_filters == NULL) return;
-    
-    for (int i = 0; i < nf; i++) {
-        if (method_filters[i] != NULL)
-            free(method_filters[i]);
+ 
+    if (cfg.filters)
+    {
+        for (int i = 0; i < nf; i++) {
+            if (cfg.filters[i] != NULL)
+                free(cfg.filters[i]);
+        }
+        free(cfg.filters);
     }
-    free(method_filters);
 
     /* reset state */
+    if (cfg.sample_file_path)
+        free(cfg.sample_file_path);
+
+    cfg.filters = NULL;
+    cfg.num_filters = 0;
+    cfg.sample_file_path = NULL;
     method_filters = NULL;
     num_filters = 0;
 }
