@@ -18,4 +18,3 @@ Need to have a `trace.ini` file in the working directory
 * add mechanism to record invocation counts (histogram?)
 * need a fixed size data structure that we allocate at startup
 * how to do sampling?
-* add logging to a file, rip out printf
