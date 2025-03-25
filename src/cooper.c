@@ -1,74 +1,10 @@
-#include <jvmti.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
+/*
+ * SPDX-FileCopyrightText: (c) 2025 Kev Jackson <foamdino@gmail.com>
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
-#define config_file "trace.ini"
-#define EVENT_Q_SZ 2048 /**< An event q buffer */
-#define FULL_SAMPLE_SZ 1024 /**< The max entries for the every sample buffer */
-#define NTH_SAMPLE_SZ 256 /**< The max entries for the nth sample buffer */
-#define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
-#define MAX_LOG_MSG_SZ 1024 /**< The max size of a trace message we will tolerate */
-#define LOG_Q_SZ 1024 /**< Length of log q */
-#define LOG(fmt, ...) do { \
-    char msg[MAX_LOG_MSG_SZ]; \
-    int len = snprintf(msg, sizeof(msg), "[JMVTI] " fmt, ##__VA_ARGS__); \
-    if (len >= 0 && len < MAX_LOG_MSG_SZ) { \
-        log_enq(msg); \
-    } \
-} while (0)
-
-typedef struct log_q log_q_t;
-typedef struct trace_event trace_event_t;
-typedef struct event_q event_q_t;
-typedef struct method_stats method_stats_t;
-typedef struct config config_t;
-
-struct config
-{
-    int rate;
-    char **filters;
-    int num_filters;
-    char *sample_file_path;
-};
-
-struct log_q
-{
-    char *messages[LOG_Q_SZ];
-    int hd;
-    int tl;
-    int count;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    int running;
-};
-
-struct trace_event
-{
-    char *class_sig;
-    char *method_name;
-    char *method_sig;
-    int is_entry; /**< 1 for entry, 0 for exit */
-};
-
-struct event_q
-{
-    trace_event_t events[EVENT_Q_SZ];
-    int hd;
-    int tl;
-    int count;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    int running;
-};
-
-struct method_stats
-{
-    char *signature;
-    int entry_count;
-    int exit_count;
-};
+#include "cooper.h"
 
 static int sample_rate = 1; /**< Default: every event */
 static int event_counter = 0; /**< Global counter for nth samples */
@@ -80,7 +16,6 @@ static int full_count = 0;
 static method_stats_t nth_samples[NTH_SAMPLE_SZ];
 static int nth_hd = 0;
 static int nth_count = 0;
-
 
 static jvmtiEnv *jvmti_env = NULL;
 static char **method_filters = NULL;
@@ -95,24 +30,19 @@ static pthread_t log_thread;
 static event_q_t eq = {0};
 static pthread_t event_thread;
 
+/* Export samples support */
+static pthread_t export_thread;
+static pthread_mutex_t samples_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /* Config */
-static config_t cfg = {1, NULL, 0, NULL};
+static config_t cfg = {1, NULL, 0, NULL, "file", 60};
 
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
 int should_trace_method(const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(const char *cf);
-void cleanup_filters(int nf);
+void cleanup(int nf);
 
-static char *trim(char *str)
-{
-    while (*str == ' ' || *str == '\t') str++;
-    char *end = str + strlen(str) -1;
-    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n'))
-        *end-- = '\0';
-    
-    return str;
-}
 
 static int init_log_q()
 {
@@ -317,14 +247,14 @@ static int init_event_q()
     err = pthread_mutex_init(&eq.lock, NULL);
     if (err != 0)
     {
-        printf("ERROR: Failed to init event q mutex: %d\n", err);
+        LOG("ERROR: Failed to init event q mutex: %d\n", err);
         return 1;
     }
 
     err = pthread_cond_init(&eq.cond, NULL);
     if (err != 0)
     {
-        printf("ERROR: Failed to init event q condition: %d\n", err);
+        LOG("ERROR: Failed to init event q condition: %d\n", err);
         return 1;
     }
 
@@ -501,6 +431,75 @@ static void cleanup_event_system()
    pthread_mutex_destroy(&eq.lock);
 }
 
+static void export_to_file()
+{
+    FILE *fp = fopen(cfg.sample_file_path, "w");
+    if (!fp) 
+    {
+        LOG("ERROR: Failed to open sample file: %s", cfg.sample_file_path);
+        return;
+    }
+
+    pthread_mutex_lock(&samples_lock);
+    fprintf(fp, "# Full Samples (every event)\n");
+    for (int i = 0; i < full_count; i++) {
+        int idx = (full_hd + i) % FULL_SAMPLE_SZ;
+        if (full_samples[idx].signature) {
+            fprintf(fp, "%s entries=%d exits=%d\n", 
+                    full_samples[idx].signature, 
+                    full_samples[idx].entry_count, 
+                    full_samples[idx].exit_count);
+        }
+    }
+    fprintf(fp, "# Nth Samples (every %d events)\n", sample_rate);
+    for (int i = 0; i < nth_count; i++) {
+        int idx = (nth_hd + i) % NTH_SAMPLE_SZ;
+        if (nth_samples[idx].signature) {
+            fprintf(fp, "%s entries=%d exits=%d\n", 
+                    nth_samples[idx].signature, 
+                    nth_samples[idx].entry_count, 
+                    nth_samples[idx].exit_count);
+        }
+    }
+    pthread_mutex_unlock(&samples_lock);
+
+    fclose(fp);
+}
+
+static void *export_thread_func(void *arg) 
+{
+    /* Reuse event_queue.running as a global stop flag */
+    while (eq.running) { 
+        export_to_file();
+        sleep(cfg.export_interval);
+    }
+
+    /* Final write on shutdown */
+    export_to_file(); 
+    return NULL;
+}
+
+static int start_export_thread() {
+    printf("export method: [%s]\n", cfg.export_method);
+
+    if (strcmp(cfg.export_method, "file") != 0) 
+    {
+        LOG("ERROR: Unknown export method: [%s]", cfg.export_method);
+        return 1;
+    }
+
+    if (pthread_create(&export_thread, NULL, export_thread_func, NULL) != 0) 
+    {
+        LOG("ERROR: Failed to start export thread");
+        return 1;
+    }
+    
+    if (pthread_detach(export_thread) != 0)
+        LOG("WARNING: Failed to detach export thread");
+    
+    return 0;
+}
+
 /*
  * Method entry callback
  */
@@ -620,9 +619,14 @@ int load_config(const char *cf)
     char *section = NULL;
     int in_filters;
 
+    LOG("here\n", NULL);
+
     while (fgets(line, sizeof(line), fp))
     {
         char *trimmed = trim(line);
+        strip_comment(trimmed);
+
+        LOG("after strip_comment with [%s]\n", trimmed);
         /* skip empty lines or comments */
         if (trimmed[0] == '\0' || trimmed[0] == '#') 
             continue;
@@ -630,8 +634,18 @@ int load_config(const char *cf)
         /* Start of a section */
         if (trimmed[0] == '[')
         {
+            if (section) 
+                free(section); // Free previous section before reassigning
+            
             section = strdup(trimmed);
+            if (!section) 
+            {
+                LOG("ERROR: Failed to allocate memory for section");
+                fclose(fp);
+                return 1;
+            }
             in_filters = (strcmp(section, "[method_signatures]") == 0);
+            LOG("Section: %s", section);
             continue;
         }
 
@@ -639,9 +653,17 @@ int load_config(const char *cf)
         {
             if (strcmp(section, "[sample_rate]") == 0)
             {
-                /* set sample rate */
-                if (sscanf(trimmed, "rate = %d", &cfg.rate) == 1)
-                    sample_rate = cfg.rate > 0 ? cfg.rate : 1;
+                char *value = extract_and_trim_value(trimmed, "rate");
+                LOG("rate: %s\n", value);
+                if (value) 
+                {
+                    int rate;
+                    if (sscanf(value, "%d", &rate) == 1) 
+                    {
+                        cfg.rate = rate > 0 ? rate : 1;
+                        sample_rate = cfg.rate;
+                    }
+                }
             } 
             else if (strcmp(section, "[method_signatures]") == 0)
             {
@@ -663,16 +685,56 @@ int load_config(const char *cf)
                     cfg.filters[cfg.num_filters - 1] = strdup(trimmed);
                 }
             }
-            else if (strcmp(section, "[sample_file_location]") == 0)
+            else if (strcmp(section, "[sample_file_location]") == 0) 
             {
-                if (strncmp(trimmed, "path =", 6) == 0)
-                {
-                    cfg.sample_file_path = strdup(trimmed + 6);
+                char *value = extract_and_trim_value(trimmed, "path");
+                LOG("path value: %s", value ? value : "NULL");
+                if (value) {
+                    char *new_path = strdup(value);
+                    if (!new_path) {
+                        LOG("ERROR: Failed to duplicate path: %s", value);
+                    } else {
+                        if (cfg.sample_file_path) free(cfg.sample_file_path);
+                        cfg.sample_file_path = new_path;
+                        LOG("cfg.sample_file_path: %s", cfg.sample_file_path);
+                    }
+                }
+            } 
+            else if (strcmp(section, "[export]") == 0) 
+            {
+                LOG("In export section: %s", section);
+                char *value;
+
+                if (strstr(trimmed, "method")) {
+                    value = extract_and_trim_value(trimmed, "method");
+                    LOG("method value: %s", value ? value : "NULL");
+                    if (value) {
+                        char *new_method = strdup(value);
+                        if (!new_method) {
+                            LOG("ERROR: Failed to duplicate method: %s", value);
+                        } else {
+                            if (cfg.export_method) free(cfg.export_method);
+                            cfg.export_method = new_method;
+                            LOG("cfg.export_method: %s", cfg.export_method);
+                        }
+                    }
+                }
+
+                if (strstr(trimmed, "interval")) {
+                    value = extract_and_trim_value(trimmed, "interval");
+                    LOG("interval value: %s", value ? value : "NULL");
+                    if (value) {
+                        if (sscanf(value, "%d", &cfg.export_interval) != 1) {
+                            LOG("WARNING: Invalid interval value: %s", value);
+                        }
+                    }
                 }
             }
-
         }
     }
+
+    if (section) 
+        free(section);
 
     fclose(fp);
     method_filters = cfg.filters;
@@ -730,12 +792,12 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     /* Init logging */
     if (init_log_q() != 0)
     {
-        cleanup_filters(num_filters);
+        cleanup(num_filters);
         return JNI_ERR;
     }
     if (start_log_thread() != 0)
     {
-        cleanup_filters(num_filters);
+        cleanup(num_filters);
         cleanup_log_system();
         return JNI_ERR;
     }
@@ -754,14 +816,17 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     /* Now we have logging configured, load config */
     if (load_config("./trace.ini") != 0)
     {
-        printf("ERROR: Unable to load config_file!\n");
+        LOG("ERROR: Unable to load config_file!\n");
         return JNI_ERR;
     }
 
+    LOG("Config: rate=%d, method='%s', path='%s'",
+        cfg.rate, cfg.export_method, cfg.sample_file_path);
+
     /* Init the event/sample handling */
-    if (init_event_q() != 0 || start_event_thread() != 0)
+    if (init_event_q() != 0 || start_event_thread() != 0 || start_export_thread() != 0)
     {
-        cleanup_filters(num_filters);
+        cleanup(num_filters);
         cleanup_log_system();
         cleanup_event_system();
         return JNI_ERR;
@@ -776,7 +841,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     err = (*jvmti_env)->AddCapabilities(jvmti_env, &capabilities);
     if (err != JVMTI_ERROR_NONE) 
     {
-        printf("ERROR: AddCapabilities failed with error %d\n", err);
+        LOG("ERROR: AddCapabilities failed with error %d\n", err);
         return JNI_ERR;
     }
 
@@ -788,7 +853,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     err = (*jvmti_env)->SetEventCallbacks(jvmti_env, &callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) 
     {
-        printf("ERROR: SetEventCallbacks failed with error %d\n", err);
+        LOG("ERROR: SetEventCallbacks failed with error %d\n", err);
         return JNI_ERR;
     }
 
@@ -796,13 +861,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     err = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        printf("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
+        LOG("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
         return JNI_ERR;
     }
     err = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
-        printf("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
+        LOG("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
         return JNI_ERR;
     }
 
@@ -811,31 +876,38 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 }
 
 /**
- * Cleanup filters
+ * Cleanup state
  * 
  * @param nf num filters to clear
  */
-void cleanup_filters(int nf)
+void cleanup(int nf)
 {
+    printf("in cleanup\n");
+
     /* check if we have work to do */
-    if (method_filters == NULL) return;
- 
-    if (cfg.filters)
-    {
+    if (cfg.filters) {
         for (int i = 0; i < nf; i++) {
-            if (cfg.filters[i] != NULL)
+            if (cfg.filters[i]) 
                 free(cfg.filters[i]);
         }
         free(cfg.filters);
     }
 
-    /* reset state */
-    if (cfg.sample_file_path)
+    printf("in cleanup after doing filters\n");
+
+    if (cfg.sample_file_path) 
         free(cfg.sample_file_path);
+
+    printf("in cleanup after sample file path\n");
+    if (cfg.export_method) 
+        free(cfg.export_method);
+
+    printf("in cleanup after export method\n");
 
     cfg.filters = NULL;
     cfg.num_filters = 0;
     cfg.sample_file_path = NULL;
+    cfg.export_method = NULL;
     method_filters = NULL;
     num_filters = 0;
 }
@@ -844,7 +916,7 @@ void cleanup_filters(int nf)
  * JVMTI Agent Unload Function
  */
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
-    cleanup_filters(num_filters);
+    cleanup(num_filters);
     cleanup_samples();
     cleanup_log_system();
     printf("JVMTI Agent Unloaded.\n");

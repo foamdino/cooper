@@ -1,3 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: (c) 2025 Kev Jackson <foamdino@gmail.com>
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
 // This is your build script. You only need to "bootstrap" it once with `cc -o nob nob.c` (you can
 // call it whatever actually) or `cl nob.c` on MSVC and thanks to NOB_GO_REBUILD_URSELF (see below).
 // After that every time you run the `nob` executable if it detects that you modifed nob.c it will
@@ -45,7 +51,7 @@ int main(int argc, char **argv)
     snprintf(LINUX_INC, l_buf_sz, "-I%s/%s/%s", JAVA_HOME, "include", "linux");
 
     if (!nob_mkdir_if_not_exists(BUILD_FOLDER)) return 1;
-    nob_cmd_append(&cc_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC", JAVA_INC, LINUX_INC, "-o", BUILD_FOLDER"libcooper.so", SRC_FOLDER"cooper.c", "-pthread");
+    nob_cmd_append(&cc_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-o", BUILD_FOLDER"libcooper.so", SRC_FOLDER"cooper.c", "-pthread");
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
     /* compile java */
