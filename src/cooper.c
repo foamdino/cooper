@@ -35,7 +35,7 @@ static pthread_t export_thread;
 static pthread_mutex_t samples_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Config */
-static config_t cfg = {1, NULL, 0, NULL, "file", 60};
+static config_t cfg = {1, NULL, 0, NULL, NULL, 60};
 
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
@@ -619,8 +619,6 @@ int load_config(const char *cf)
     char *section = NULL;
     int in_filters;
 
-    LOG("here\n", NULL);
-
     while (fgets(line, sizeof(line), fp))
     {
         char *trimmed = trim(line);
@@ -645,7 +643,6 @@ int load_config(const char *cf)
                 return 1;
             }
             in_filters = (strcmp(section, "[method_signatures]") == 0);
-            LOG("Section: %s", section);
             continue;
         }
 
@@ -696,13 +693,11 @@ int load_config(const char *cf)
                     } else {
                         if (cfg.sample_file_path) free(cfg.sample_file_path);
                         cfg.sample_file_path = new_path;
-                        LOG("cfg.sample_file_path: %s", cfg.sample_file_path);
                     }
                 }
             } 
             else if (strcmp(section, "[export]") == 0) 
             {
-                LOG("In export section: %s", section);
                 char *value;
 
                 if (strstr(trimmed, "method")) {
@@ -715,14 +710,12 @@ int load_config(const char *cf)
                         } else {
                             if (cfg.export_method) free(cfg.export_method);
                             cfg.export_method = new_method;
-                            LOG("cfg.export_method: %s", cfg.export_method);
                         }
                     }
                 }
 
                 if (strstr(trimmed, "interval")) {
                     value = extract_and_trim_value(trimmed, "interval");
-                    LOG("interval value: %s", value ? value : "NULL");
                     if (value) {
                         if (sscanf(value, "%d", &cfg.export_interval) != 1) {
                             LOG("WARNING: Invalid interval value: %s", value);
@@ -882,8 +875,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
  */
 void cleanup(int nf)
 {
-    printf("in cleanup\n");
-
     /* check if we have work to do */
     if (cfg.filters) {
         for (int i = 0; i < nf; i++) {
@@ -893,16 +884,11 @@ void cleanup(int nf)
         free(cfg.filters);
     }
 
-    printf("in cleanup after doing filters\n");
-
     if (cfg.sample_file_path) 
         free(cfg.sample_file_path);
 
-    printf("in cleanup after sample file path\n");
     if (cfg.export_method) 
         free(cfg.export_method);
-
-    printf("in cleanup after export method\n");
 
     cfg.filters = NULL;
     cfg.num_filters = 0;
