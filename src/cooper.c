@@ -499,14 +499,6 @@ static void *export_thread_func(void *arg)
 }
 
 static int start_export_thread() {
-    printf("export method: [%s]\n", cfg.export_method);
-
-    if (strcmp(cfg.export_method, "file") != 0) 
-    {
-        LOG("ERROR: Unknown export method: [%s]", cfg.export_method);
-        return 1;
-    }
-
     if (pthread_create(&export_thread, NULL, export_thread_func, NULL) != 0) 
     {
         LOG("ERROR: Failed to start export thread");
@@ -830,6 +822,12 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     LOG("Config: rate=%d, method='%s', path='%s'",
         cfg.rate, cfg.export_method, cfg.sample_file_path);
+
+    if (strcmp(cfg.export_method, "file") != 0)
+    {
+        LOG("ERROR: Unknown export method: [%s]", cfg.export_method);
+        return JNI_ERR;
+    }
 
     /* Init the event/sample handling */
     if (init_event_q() != 0 || start_event_thread() != 0 || start_export_thread() != 0)
