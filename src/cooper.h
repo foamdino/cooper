@@ -34,6 +34,7 @@ typedef struct trace_event trace_event_t;
 typedef struct event_q event_q_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
+typedef void *thread_fn(void *args);
 
 struct config
 {

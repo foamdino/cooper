@@ -43,6 +43,8 @@ int should_trace_method(const char *class_signature, const char *method_name, co
 int load_config(const char *cf);
 void cleanup(int nf);
 
+static int start_thread(pthread_t *thread, thread_fn *tf, char *name);
+
 
 static int init_log_q()
 {
@@ -158,20 +160,20 @@ static void *log_thread_func(void *arg)
     return NULL;
 }
 
-static int start_log_thread()
+static int start_thread(pthread_t *thread, thread_fn *fun, char *name)
 {
     int err = 0;
-    err = pthread_create(&log_thread, NULL, log_thread_func, NULL);
+    err = pthread_create(thread, NULL, fun, NULL);
     if (err != 0)
     {
-        printf("ERROR: Failed to start log thread: %d\n", err);
+        printf("ERROR: Failed to start %s thread: %d\n", name, err);
         return 1;
     }
 
-    err = pthread_detach(log_thread);
+    err = pthread_detach(*thread);
     if (err != 0)
     {
-        printf("ERROR: Failed to detach log thread: %d\n", err);
+        printf("ERROR: Failed to detach %s thread: %d\n", name, err);
         return 1;
     }
     return 0;
@@ -411,25 +413,6 @@ cleanup:
     return NULL;
 }
 
-static int start_event_thread()
-{
-    int err = 0;
-    err = pthread_create(&event_thread, NULL, &event_thread_func, NULL);
-    if (err != 0)
-    {
-        LOG("ERROR: Failed to start event thread %d", err);
-        return 1;
-    }
-
-    err = pthread_detach(event_thread);
-    if (err != 0)
-    {
-        LOG("ERROR: Failed to detach event thread %d", err);
-        return 1;
-    }
-    return 0;
-}
-
 static void cleanup_event_system()
 {
     pthread_mutex_lock(&eq.lock);
@@ -496,19 +479,6 @@ static void *export_thread_func(void *arg)
     /* Final write on shutdown */
     export_to_file(); 
     return NULL;
-}
-
-static int start_export_thread() {
-    if (pthread_create(&export_thread, NULL, export_thread_func, NULL) != 0) 
-    {
-        LOG("ERROR: Failed to start export thread");
-        return 1;
-    }
-    
-    if (pthread_detach(export_thread) != 0)
-        LOG("WARNING: Failed to detach export thread");
-    
-    return 0;
 }
 
 /*
@@ -795,7 +765,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         cleanup(num_filters);
         return JNI_ERR;
     }
-    if (start_log_thread() != 0)
+    if (start_thread(&log_thread, &log_thread_func, "log") != 0)
     {
         cleanup(num_filters);
         cleanup_log_system();
@@ -830,7 +800,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Init the event/sample handling */
-    if (init_event_q() != 0 || start_event_thread() != 0 || start_export_thread() != 0)
+    if (init_event_q() != 0 || 
+        start_thread(&event_thread, &event_thread_func, "event") != 0 || 
+        start_thread(&export_thread, &export_thread_func, "export-samples") != 0)
     {
         cleanup(num_filters);
         cleanup_log_system();
