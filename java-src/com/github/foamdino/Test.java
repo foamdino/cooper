@@ -12,16 +12,17 @@ public class Test {
         return "return from private method a()";
     }
 
-    public void foo() {
+    public void foo() throws Exception {
         /* just perform some ops here and invoke some methods */
 
         for (int i=0; i<10; i++) {
             System.out.println(a());
+            Thread.sleep(10000);
             System.out.println(b());
         }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
 
         Test t = new Test();
         t.foo();

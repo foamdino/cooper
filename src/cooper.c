@@ -267,13 +267,25 @@ static void event_enq(const char *class_sig, const char *method_name, const char
     if (eq.count < EVENT_Q_SZ)
     {
         trace_event_t *e = &eq.events[eq.hd];
-        e->class_sig = (char *)class_sig;
-        e->method_name = (char *)method_name;
-        e->method_sig = (char *)method_sig;
+        e->class_sig = strdup(class_sig);
+        e->method_name = strdup(method_name);
+        e->method_sig = strdup(method_sig);
         e->is_entry = is_entry;
-        eq.hd = (eq.hd + 1) % EVENT_Q_SZ;
-        eq.count++;
-        pthread_cond_signal(&eq.cond);
+
+        if (!e->class_sig || !e->method_name || !e->method_sig) 
+        {
+            LOG("ERROR: Failed to strdup event strings");
+            free(e->class_sig);    // Cleanup on failure
+            free(e->method_name);
+            free(e->method_sig);
+            e->class_sig = e->method_name = e->method_sig = NULL;
+        } 
+        else 
+        {
+            eq.hd = (eq.hd + 1) % EVENT_Q_SZ;
+            eq.count++;
+            pthread_cond_signal(&eq.cond);
+        }
     }
     else
         LOG("WARNING: Event queue full, dropping event for %s %s %s", class_sig, method_name, method_sig);
@@ -324,9 +336,10 @@ static void *event_thread_func(void *arg)
 
             /* Now we copy the sig/method strings */
             char full_sig[MAX_SIG_SZ];
-            // TODO perhaps check snprintf return here in case of truncation
-            snprintf(full_sig, sizeof(full_sig), "%s %s %s", e.class_sig, e.method_name, e.method_sig);
-
+            int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", e.class_sig, e.method_name, e.method_sig);
+            if (written < 0 || written >= MAX_SIG_SZ) {
+                LOG("WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
+            }
             for (int i=0; i < full_count; i++)
             {
                 int idx = (full_hd + i) % FULL_SAMPLE_SZ;
@@ -388,6 +401,9 @@ nth_sampling:
                 }
             }
 cleanup:
+            free(e.class_sig);
+            free(e.method_name);
+            free(e.method_sig);
             continue;
         }        
         pthread_mutex_unlock(&eq.lock);
@@ -442,8 +458,10 @@ static void export_to_file()
 
     pthread_mutex_lock(&samples_lock);
     fprintf(fp, "# Full Samples (every event)\n");
+    LOG("Exporting full samples to file: %d", full_count);
     for (int i = 0; i < full_count; i++) {
         int idx = (full_hd + i) % FULL_SAMPLE_SZ;
+        LOG("%d full sample for sig %s", idx, full_samples[idx].signature);
         if (full_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
                     full_samples[idx].signature, 
@@ -454,6 +472,7 @@ static void export_to_file()
     fprintf(fp, "# Nth Samples (every %d events)\n", sample_rate);
     for (int i = 0; i < nth_count; i++) {
         int idx = (nth_hd + i) % NTH_SAMPLE_SZ;
+        LOG("%d nth sample for sig %s", idx, nth_samples[idx].signature);
         if (nth_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
                     nth_samples[idx].signature, 
@@ -624,7 +643,6 @@ int load_config(const char *cf)
         char *trimmed = trim(line);
         strip_comment(trimmed);
 
-        LOG("after strip_comment with [%s]\n", trimmed);
         /* skip empty lines or comments */
         if (trimmed[0] == '\0' || trimmed[0] == '#') 
             continue;
@@ -651,7 +669,6 @@ int load_config(const char *cf)
             if (strcmp(section, "[sample_rate]") == 0)
             {
                 char *value = extract_and_trim_value(trimmed, "rate");
-                LOG("rate: %s\n", value);
                 if (value) 
                 {
                     int rate;
@@ -685,7 +702,6 @@ int load_config(const char *cf)
             else if (strcmp(section, "[sample_file_location]") == 0) 
             {
                 char *value = extract_and_trim_value(trimmed, "path");
-                LOG("path value: %s", value ? value : "NULL");
                 if (value) {
                     char *new_path = strdup(value);
                     if (!new_path) {
@@ -702,7 +718,6 @@ int load_config(const char *cf)
 
                 if (strstr(trimmed, "method")) {
                     value = extract_and_trim_value(trimmed, "method");
-                    LOG("method value: %s", value ? value : "NULL");
                     if (value) {
                         char *new_method = strdup(value);
                         if (!new_method) {
