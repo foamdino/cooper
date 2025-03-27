@@ -113,8 +113,10 @@ static inline char *trim(char *str)
     return str;
 }
 
-// Extract and trim the value from a key-value pair (e.g., "method = \"file\" # comment")
-static char *extract_and_trim_value(char *line, const char *key) {
+/**
+ * Extract and trim the value from a key-value pair (e.g., "method = \"file\" # comment")
+ */ 
+static inline char *extract_and_trim_value(char *line) {
     char *eq = strchr(line, '=');
     if (!eq) 
         return NULL; // No '=' found

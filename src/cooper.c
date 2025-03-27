@@ -630,7 +630,7 @@ int load_config(const char *cf)
         {
             if (strcmp(section, "[sample_rate]") == 0)
             {
-                char *value = extract_and_trim_value(trimmed, "rate");
+                char *value = extract_and_trim_value(trimmed);
                 if (value) 
                 {
                     int rate;
@@ -663,7 +663,7 @@ int load_config(const char *cf)
             }
             else if (strcmp(section, "[sample_file_location]") == 0) 
             {
-                char *value = extract_and_trim_value(trimmed, "path");
+                char *value = extract_and_trim_value(trimmed);
                 if (value) {
                     char *new_path = strdup(value);
                     if (!new_path) {
@@ -679,7 +679,7 @@ int load_config(const char *cf)
                 char *value;
 
                 if (strstr(trimmed, "method")) {
-                    value = extract_and_trim_value(trimmed, "method");
+                    value = extract_and_trim_value(trimmed);
                     if (value) {
                         char *new_method = strdup(value);
                         if (!new_method) {
@@ -692,7 +692,7 @@ int load_config(const char *cf)
                 }
 
                 if (strstr(trimmed, "interval")) {
-                    value = extract_and_trim_value(trimmed, "interval");
+                    value = extract_and_trim_value(trimmed);
                     if (value) {
                         if (sscanf(value, "%d", &cfg.export_interval) != 1) {
                             LOG("WARNING: Invalid interval value: %s", value);
