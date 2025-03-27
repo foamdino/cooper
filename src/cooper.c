@@ -6,62 +6,58 @@
 
 #include "cooper.h"
 
-static int event_counter = 0; /**< Global counter for nth samples */
+// static int event_counter = 0; /**< Global counter for nth samples */
 
-static method_stats_t full_samples[FULL_SAMPLE_SZ];
-static int full_hd = 0;
-static int full_count = 0;
+// static method_stats_t full_samples[FULL_SAMPLE_SZ];
+// static int full_hd = 0;
+// static int full_count = 0;
 
-static method_stats_t nth_samples[NTH_SAMPLE_SZ];
-static int nth_hd = 0;
-static int nth_count = 0;
+// static method_stats_t nth_samples[NTH_SAMPLE_SZ];
+// static int nth_hd = 0;
+// static int nth_count = 0;
 
-static jvmtiEnv *jvmti_env = NULL;
-static char **method_filters = NULL;
-static int num_filters = 0;
+// static jvmtiEnv *jvmti_env = NULL;
+// static char **method_filters = NULL;
+// static int num_filters = 0;
 
-/* Logging support */
-static log_q_t lq = {0};
-static FILE *log_file = NULL;
-static pthread_t log_thread;
+// /* Logging support */
+// static log_q_t lq = {0};
+// static FILE *log_file = NULL;
+// static pthread_t log_thread;
 
-/* Trace support */
-static event_q_t eq = {0};
-static pthread_t event_thread;
+// /* Trace support */
+// static event_q_t eq = {0};
+// static pthread_t event_thread;
 
-/* Export samples support */
-static pthread_t export_thread;
-static pthread_mutex_t samples_lock = PTHREAD_MUTEX_INITIALIZER;
+// /* Export samples support */
+// static pthread_t export_thread;
+// static pthread_mutex_t samples_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Config */
-static config_t cfg = {1, NULL, 0, NULL, NULL, 60};
+// /* Config */
+// static config_t cfg = {1, NULL, 0, NULL, NULL, 60};
 
-void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
-void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
-int should_trace_method(const char *class_signature, const char *method_name, const char *method_signature);
-int load_config(const char *cf);
-void cleanup(int nf);
-
-static int start_thread(pthread_t *thread, thread_fn *tf, char *name);
+static agent_context_t *global_ctx = NULL; // Single global context
 
 
-static int init_log_q()
+static int init_log_q(agent_context_t *ctx)
 {
-    lq.hd = 0;
-    lq.tl = 0;
-    lq.count = 0;
-    lq.running = 1;
+    assert(ctx != NULL);
+    
+    ctx->log_queue.hd = 0;
+    ctx->log_queue.tl = 0;
+    ctx->log_queue.count = 0;
+    ctx->log_queue.running = 1;
 
     int err;
 
-    err = pthread_mutex_init(&lq.lock, NULL);
+    err = pthread_mutex_init(&ctx->log_queue.lock, NULL);
     if (err != 0)
     {
         printf("ERROR: Failed to init log q mutex: %d\n", err);
         return 1;
     }
 
-    err = pthread_cond_init(&lq.cond, NULL);
+    err = pthread_cond_init(&ctx->log_queue.cond, NULL);
     if (err != 0)
     {
         printf("ERROR: Failed to init log q condition: %d\n", err);
@@ -69,7 +65,7 @@ static int init_log_q()
     }
 
     /* TODO: This is hardcoded to STDOUT for now*/
-    log_file = stdout;
+    ctx->log_file = stdout;
     return 0;
 }
 
@@ -79,25 +75,28 @@ static int init_log_q()
  * @param msg Pointer to msg to add
  * 
  * */
-static void log_enq(const char *msg)
+static void log_enq(agent_context_t *ctx, const char *msg)
 {
+    assert(ctx != NULL);
+    assert(msg != NULL);
+    
     /* Obtain lock to q */
-    pthread_mutex_lock(&lq.lock);
+    pthread_mutex_lock(&ctx->log_queue.lock);
 
-    if (lq.count < LOG_Q_SZ)
+    if (ctx->log_queue.count < LOG_Q_SZ)
     {
-        lq.messages[lq.hd] = strdup(msg);
-        if (lq.messages[lq.hd])
+        ctx->log_queue.messages[ctx->log_queue.hd] = strdup(msg);
+        if (ctx->log_queue.messages[ctx->log_queue.hd])
         {
-            lq.hd = (lq.hd + 1) % LOG_Q_SZ;
-            lq.count++;
-            pthread_cond_signal(&lq.cond);
+            ctx->log_queue.hd = (ctx->log_queue.hd + 1) % LOG_Q_SZ;
+            ctx->log_queue.count++;
+            pthread_cond_signal(&ctx->log_queue.cond);
         }
     }
     else /* Drop messages when q is full */
         fprintf(stderr, "WARNING: logging q full, dropping: %s\n", msg);
 
-    pthread_mutex_unlock(&lq.lock);
+    pthread_mutex_unlock(&ctx->log_queue.lock);
 }
 
 /**
@@ -105,64 +104,70 @@ static void log_enq(const char *msg)
  * 
  * @retval Pointer to a char message
  */
-static char *log_deq()
+static char *log_deq(agent_context_t *ctx)
 {
-    char *msg = NULL;
-    pthread_mutex_lock(&lq.lock);
+    assert(ctx != NULL);
 
-    if (lq.count > 0)
+    char *msg = NULL;
+    pthread_mutex_lock(&ctx->log_queue.lock);
+
+    if (ctx->log_queue.count > 0)
     {
-        msg = lq.messages[lq.tl];
-        lq.messages[lq.tl] = NULL;
-        lq.tl = (lq.tl + 1) % LOG_Q_SZ;
-        lq.count--;
+        msg = ctx->log_queue.messages[ctx->log_queue.tl];
+        ctx->log_queue.messages[ctx->log_queue.tl] = NULL;
+        ctx->log_queue.tl = (ctx->log_queue.tl + 1) % LOG_Q_SZ;
+        ctx->log_queue.count--;
     }
 
-    pthread_mutex_unlock(&lq.lock);
+    pthread_mutex_unlock(&ctx->log_queue.lock);
     return msg;
 }
 
 static void *log_thread_func(void *arg)
 {
+    assert(arg != NULL);
+
+    agent_context_t *ctx = (agent_context_t *)arg;
+
     while (1)
     {
-        pthread_mutex_lock(&lq.lock);
+        pthread_mutex_lock(&ctx->log_queue.lock);
 
         /* Should we exit? */
-        if (!lq.running && lq.count == 0)
+        if (!ctx->log_queue.running && ctx->log_queue.count == 0)
         {
-            pthread_mutex_unlock(&lq.lock);
+            pthread_mutex_unlock(&ctx->log_queue.lock);
             break;
         }
 
         /* Wait for messages when q is empty */
-        while (lq.running && lq.count == 0)
-            pthread_cond_wait(&lq.cond, &lq.lock);
+        while (ctx->log_queue.running && ctx->log_queue.count == 0)
+            pthread_cond_wait(&ctx->log_queue.cond, &ctx->log_queue.lock);
 
-        if (lq.count > 0)
+        if (ctx->log_queue.count > 0)
         {
-            char *msg = lq.messages[lq.tl];
-            lq.messages[lq.tl] = NULL;
-            lq.tl = (lq.tl + 1) % LOG_Q_SZ;
-            lq.count--;
-            pthread_mutex_unlock(&lq.lock);
+            char *msg = ctx->log_queue.messages[ctx->log_queue.tl];
+            ctx->log_queue.messages[ctx->log_queue.tl] = NULL;
+            ctx->log_queue.tl = (ctx->log_queue.tl + 1) % LOG_Q_SZ;
+            ctx->log_queue.count--;
+            pthread_mutex_unlock(&ctx->log_queue.lock);
 
             /* We assume that messages have a trailing new line here - we could check and add if missing */
-            fprintf(log_file, "%s", msg);
-            fflush(log_file);
+            fprintf(ctx->log_file, "%s", msg);
+            fflush(ctx->log_file);
             free(msg);
         }
         else /* Nothing to do so release lock */
-            pthread_mutex_unlock(&lq.lock);    
+            pthread_mutex_unlock(&ctx->log_queue.lock);    
     }
 
     return NULL;
 }
 
-static int start_thread(pthread_t *thread, thread_fn *fun, char *name)
+static int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t *ctx)
 {
     int err = 0;
-    err = pthread_create(thread, NULL, fun, NULL);
+    err = pthread_create(thread, NULL, fun, ctx);
     if (err != 0)
     {
         printf("ERROR: Failed to start %s thread: %d\n", name, err);
@@ -178,96 +183,106 @@ static int start_thread(pthread_t *thread, thread_fn *fun, char *name)
     return 0;
 }
 
-static void cleanup_log_system()
+static void cleanup_log_system(agent_context_t *ctx)
 {
-    pthread_mutex_lock(&lq.lock);
-    lq.running = 0;
-    pthread_cond_broadcast(&lq.cond);
-    pthread_mutex_unlock(&lq.lock);
+    assert(ctx != NULL);
+    
+    pthread_mutex_lock(&ctx->log_queue.lock);
+    ctx->log_queue.running = 0;
+    pthread_cond_broadcast(&ctx->log_queue.cond);
+    pthread_mutex_unlock(&ctx->log_queue.lock);
 
     /* Purge remaining messages */
     char *msg;
-    while ((msg = log_deq()) != NULL)
+    while ((msg = log_deq(ctx)) != NULL)
     {
-        fprintf(log_file, "%s\n", msg);
+        fprintf(ctx->log_file, "%s\n", msg);
         free(msg);
     }
 
-    if (log_file != stdout && log_file != stderr)
-        fclose(log_file);
+    if (ctx->log_file != stdout && ctx->log_file != stderr)
+        fclose(ctx->log_file);
 
-    pthread_cond_destroy(&lq.cond);
-    pthread_mutex_destroy(&lq.lock);
+    pthread_cond_destroy(&ctx->log_queue.cond);
+    pthread_mutex_destroy(&ctx->log_queue.lock);
 }
 
-static void init_samples()
+static void init_samples(agent_context_t *ctx)
 {
+    assert(ctx != NULL);
+    
     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
     {
-        full_samples[i].signature = NULL;
-        full_samples[i].entry_count = 0;
-        full_samples[i].exit_count = 0;
+        ctx->full_samples[i].signature = NULL;
+        ctx->full_samples[i].entry_count = 0;
+        ctx->full_samples[i].exit_count = 0;
     }
     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
     {
-        nth_samples[i].signature = NULL;
-        nth_samples[i].entry_count = 0;
-        nth_samples[i].exit_count = 0;
+        ctx->nth_samples[i].signature = NULL;
+        ctx->nth_samples[i].entry_count = 0;
+        ctx->nth_samples[i].exit_count = 0;
     }
 }
 
-static void cleanup_samples()
+static void cleanup_samples(agent_context_t *ctx)
 {
+    assert(ctx != NULL);
+    
     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
     {
-        if (full_samples[i].signature)
+        if (ctx->full_samples[i].signature)
         {
-            free(full_samples[i].signature);
-            full_samples[i].signature = NULL;
+            free(ctx->full_samples[i].signature);
+            ctx->full_samples[i].signature = NULL;
         }
     }
     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
     {
-        if (nth_samples[i].signature)
+        if (ctx->nth_samples[i].signature)
         {
-            free(nth_samples[i].signature);
-            nth_samples[i].signature = NULL;
+            free(ctx->nth_samples[i].signature);
+            ctx->nth_samples[i].signature = NULL;
         }
     }
-    full_hd = full_count = nth_hd = nth_count = 0;
+    ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
 }
 
-static int init_event_q()
+static int init_event_q(agent_context_t *ctx)
 {
-    eq.hd = 0;
-    eq.tl = 0;
-    eq.count = 0;
-    eq.running = 1;
+    assert(ctx != NULL);
+    
+    ctx->event_queue.hd = 0;
+    ctx->event_queue.tl = 0;
+    ctx->event_queue.count = 0;
+    ctx->event_queue.running = 1;
     int err = 0;
 
-    err = pthread_mutex_init(&eq.lock, NULL);
+    err = pthread_mutex_init(&ctx->event_queue.lock, NULL);
     if (err != 0)
     {
-        LOG("ERROR: Failed to init event q mutex: %d\n", err);
+        LOG(ctx, "ERROR: Failed to init event q mutex: %d\n", err);
         return 1;
     }
 
-    err = pthread_cond_init(&eq.cond, NULL);
+    err = pthread_cond_init(&ctx->event_queue.cond, NULL);
     if (err != 0)
     {
-        LOG("ERROR: Failed to init event q condition: %d\n", err);
+        LOG(ctx, "ERROR: Failed to init event q condition: %d\n", err);
         return 1;
     }
 
     return 0;
 }
 
-static void event_enq(const char *class_sig, const char *method_name, const char *method_sig, int is_entry)
+static void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry)
 {
-    pthread_mutex_lock(&eq.lock);
-    if (eq.count < EVENT_Q_SZ)
+    assert(ctx != NULL);
+    
+    pthread_mutex_lock(&ctx->event_queue.lock);
+    if (ctx->event_queue.count < EVENT_Q_SZ)
     {
-        trace_event_t *e = &eq.events[eq.hd];
+        trace_event_t *e = &ctx->event_queue.events[ctx->event_queue.hd];
         e->class_sig = strdup(class_sig);
         e->method_name = strdup(method_name);
         e->method_sig = strdup(method_sig);
@@ -275,7 +290,7 @@ static void event_enq(const char *class_sig, const char *method_name, const char
 
         if (!e->class_sig || !e->method_name || !e->method_sig) 
         {
-            LOG("ERROR: Failed to strdup event strings");
+            LOG(ctx, "ERROR: Failed to strdup event strings");
             free(e->class_sig);    // Cleanup on failure
             free(e->method_name);
             free(e->method_sig);
@@ -283,122 +298,128 @@ static void event_enq(const char *class_sig, const char *method_name, const char
         } 
         else 
         {
-            eq.hd = (eq.hd + 1) % EVENT_Q_SZ;
-            eq.count++;
-            pthread_cond_signal(&eq.cond);
+            ctx->event_queue.hd = (ctx->event_queue.hd + 1) % EVENT_Q_SZ;
+            ctx->event_queue.count++;
+            pthread_cond_signal(&ctx->event_queue.cond);
         }
     }
     else
-        LOG("WARNING: Event queue full, dropping event for %s %s %s", class_sig, method_name, method_sig);
+        LOG(ctx, "WARNING: Event queue full, dropping event for %s %s %s", class_sig, method_name, method_sig);
 
-    pthread_mutex_unlock(&eq.lock);
+    pthread_mutex_unlock(&ctx->event_queue.lock);
 }
 
-static int event_deq(trace_event_t *e)
+static int event_deq(agent_context_t *ctx, trace_event_t *e)
 {
-    pthread_mutex_lock(&eq.lock);
+    assert(ctx != NULL);
+    
+    pthread_mutex_lock(&ctx->event_queue.lock);
 
-    if (eq.count > 0)
+    if (ctx->event_queue.count > 0)
     {
-        *e = eq.events[eq.tl];
-        eq.tl = (eq.tl + 1) % EVENT_Q_SZ;
-        eq.count--;
-        pthread_mutex_unlock(&eq.lock);
+        *e = ctx->event_queue.events[ctx->event_queue.tl];
+        ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
+        ctx->event_queue.count--;
+        pthread_mutex_unlock(&ctx->event_queue.lock);
         return 1;
     }
 
-    pthread_mutex_unlock(&eq.lock);
+    pthread_mutex_unlock(&ctx->event_queue.lock);
     return 0;
 }
 
 static void *event_thread_func(void *arg)
 {
+    assert(arg != NULL);
+
+    agent_context_t *ctx = (agent_context_t *)arg;
+    
     trace_event_t e;
     while (1)
     {
-        pthread_mutex_lock(&eq.lock);
+        pthread_mutex_lock(&ctx->event_queue.lock);
 
-        if (!eq.running && eq.count == 0)
+        if (!ctx->event_queue.running && ctx->event_queue.count == 0)
         {
-            pthread_mutex_unlock(&eq.lock);
+            pthread_mutex_unlock(&ctx->event_queue.lock);
             break;
         }
 
-        while (eq.running && eq.count == 0)
-            pthread_cond_wait(&eq.cond, &eq.lock);
+        while (ctx->event_queue.running && ctx->event_queue.count == 0)
+            pthread_cond_wait(&ctx->event_queue.cond, &ctx->event_queue.lock);
 
-        if (eq.count > 0)
+        if (ctx->event_queue.count > 0)
         {
-            e = eq.events[eq.tl];
+            e = ctx->event_queue.events[ctx->event_queue.tl];
             // TODO check this logic should we increment when taking from the tail?
-            eq.tl = (eq.tl + 1) % EVENT_Q_SZ;
-            eq.count--;
-            pthread_mutex_unlock(&eq.lock);
+            ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
+            ctx->event_queue.count--;
+            pthread_mutex_unlock(&ctx->event_queue.lock);
 
             /* Now we copy the sig/method strings */
             char full_sig[MAX_SIG_SZ];
             int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", e.class_sig, e.method_name, e.method_sig);
             if (written < 0 || written >= MAX_SIG_SZ) {
-                LOG("WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
+                LOG(ctx, "WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
             }
-            for (int i=0; i < full_count; i++)
+            for (int i=0; i < ctx->full_count; i++)
             {
-                int idx = (full_hd + i) % FULL_SAMPLE_SZ;
-                if (full_samples[idx].signature && strcmp(full_samples[idx].signature, full_sig) == 0)
+                int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
+                if (ctx->full_samples[idx].signature && strcmp(ctx->full_samples[idx].signature, full_sig) == 0)
                 {
-                    e.is_entry ? full_samples[idx].entry_count++ : full_samples[idx].exit_count++;
+                    e.is_entry ? ctx->full_samples[idx].entry_count++ : ctx->full_samples[idx].exit_count++;
                     goto nth_sampling;
                 }
             }
-            if (full_count < FULL_SAMPLE_SZ)
+            if (ctx->full_count < FULL_SAMPLE_SZ)
             {
-                full_samples[full_count].signature = strdup(full_sig);
-                full_samples[full_count].entry_count = e.is_entry ? 1 : 0;
-                full_samples[full_count].exit_count = e.is_entry ? 0 : 1;
-                full_count++;
+                ctx->full_samples[ctx->full_count].signature = strdup(full_sig);
+                ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
+                ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
+                ctx->full_count++;
             }
             else
             {
-                int idx = full_hd;
-                if (full_samples[idx].signature)
-                    free(full_samples[idx].signature);
+                int idx = ctx->full_hd;
+                if (ctx->full_samples[idx].signature)
+                    free(ctx->full_samples[idx].signature);
 
-                full_samples[idx].signature = strdup(full_sig);
-                full_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                full_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                full_hd = (full_hd + 1) % FULL_SAMPLE_SZ;
+                ctx->full_samples[idx].signature = strdup(full_sig);
+                ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
+                ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
+                ctx->full_hd = (ctx->full_hd + 1) % FULL_SAMPLE_SZ;
             }
 
 nth_sampling:
-            event_counter++;
-            if (event_counter % cfg.rate == 0)
+            ctx->event_counter++;
+            if (ctx->event_counter % ctx->config.rate == 0)
             {
-                for (int i = 0; i < nth_count; i++)
+                for (int i = 0; i < ctx->nth_count; i++)
                 {
-                    int idx = (nth_hd + i) % NTH_SAMPLE_SZ;
-                    if (nth_samples[idx].signature && strcmp(nth_samples[idx].signature, full_sig) == 0)
+                    int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
+                    if (ctx->nth_samples[idx].signature && strcmp(ctx->nth_samples[idx].signature, full_sig) == 0)
                     {
-                        e.is_entry ? nth_samples[idx].entry_count++ : nth_samples[idx].exit_count++;
+                        e.is_entry ? ctx->nth_samples[idx].entry_count++ : ctx->nth_samples[idx].exit_count++;
                         goto cleanup;
                     }
                 }
-                if (nth_count < NTH_SAMPLE_SZ)
+                if (ctx->nth_count < NTH_SAMPLE_SZ)
                 {
-                    nth_samples[nth_count].signature = strdup(full_sig);
-                    nth_samples[nth_count].entry_count = e.is_entry ? 1 : 0;
-                    nth_samples[nth_count].exit_count = e.is_entry ? 0 : 1;
-                    nth_count++;
+                    ctx->nth_samples[ctx->nth_count].signature = strdup(full_sig);
+                    ctx->nth_samples[ctx->nth_count].entry_count = e.is_entry ? 1 : 0;
+                    ctx->nth_samples[ctx->nth_count].exit_count = e.is_entry ? 0 : 1;
+                    ctx->nth_count++;
                 }
                 else
                 {
-                    int idx = nth_hd;
-                    if (nth_samples[idx].signature)
-                        free(nth_samples[idx].signature);
+                    int idx = ctx->nth_hd;
+                    if (ctx->nth_samples[idx].signature)
+                        free(ctx->nth_samples[idx].signature);
 
-                    nth_samples[idx].signature = strdup(full_sig);
-                    nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                    nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                    nth_hd = (nth_hd + 1) % NTH_SAMPLE_SZ;
+                    ctx->nth_samples[idx].signature = strdup(full_sig);
+                    ctx->nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
+                    ctx->nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
+                    ctx->nth_hd = (ctx->nth_hd + 1) % NTH_SAMPLE_SZ;
                 }
             }
 cleanup:
@@ -407,77 +428,85 @@ cleanup:
             free(e.method_sig);
             continue;
         }        
-        pthread_mutex_unlock(&eq.lock);
+        pthread_mutex_unlock(&ctx->event_queue.lock);
     }
     return NULL;
 }
 
-static void cleanup_event_system()
+static void cleanup_event_system(agent_context_t *ctx)
 {
-    pthread_mutex_lock(&eq.lock);
-    eq.running = 0;
-    pthread_cond_broadcast(&eq.cond);
-    pthread_mutex_unlock(&eq.lock);
+    assert(ctx != NULL);
+
+    pthread_mutex_lock(&ctx->event_queue.lock);
+    ctx->event_queue.running = 0;
+    pthread_cond_broadcast(&ctx->event_queue.cond);
+    pthread_mutex_unlock(&ctx->event_queue.lock);
 
     /* TODO Purge remaining events
     Not sure this is required
     while (dequeue_event(&event))
 
     */
-   cleanup_samples();
-   pthread_cond_destroy(&eq.cond);
-   pthread_mutex_destroy(&eq.lock);
+   cleanup_samples(ctx);
+   pthread_cond_destroy(&ctx->event_queue.cond);
+   pthread_mutex_destroy(&ctx->event_queue.lock);
 }
 
-static void export_to_file()
+static void export_to_file(agent_context_t *ctx)
 {
-    FILE *fp = fopen(cfg.sample_file_path, "w");
+    assert(ctx != NULL);
+    
+    FILE *fp = fopen(ctx->config.sample_file_path, "w");
     if (!fp) 
     {
-        LOG("ERROR: Failed to open sample file: %s", cfg.sample_file_path);
+        LOG(ctx, "ERROR: Failed to open sample file: %s", ctx->config.sample_file_path);
         return;
     }
 
-    pthread_mutex_lock(&samples_lock);
+    pthread_mutex_lock(&ctx->samples_lock);
     fprintf(fp, "# Full Samples (every event)\n");
-    LOG("Exporting full samples to file: %d", full_count);
-    for (int i = 0; i < full_count; i++) {
-        int idx = (full_hd + i) % FULL_SAMPLE_SZ;
-        LOG("%d full sample for sig %s", idx, full_samples[idx].signature);
-        if (full_samples[idx].signature) {
+    LOG(ctx, "Exporting full samples to file: %d", ctx->full_count);
+    for (int i = 0; i < ctx->full_count; i++) {
+        int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
+        LOG(ctx, "%d full sample for sig %s", idx, ctx->full_samples[idx].signature);
+        if (ctx->full_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
-                    full_samples[idx].signature, 
-                    full_samples[idx].entry_count, 
-                    full_samples[idx].exit_count);
+                    ctx->full_samples[idx].signature, 
+                    ctx->full_samples[idx].entry_count, 
+                    ctx->full_samples[idx].exit_count);
         }
     }
-    fprintf(fp, "# Nth Samples (every %d events)\n", cfg.rate);
-    for (int i = 0; i < nth_count; i++) {
-        int idx = (nth_hd + i) % NTH_SAMPLE_SZ;
-        LOG("%d nth sample for sig %s", idx, nth_samples[idx].signature);
-        if (nth_samples[idx].signature) {
+    fprintf(fp, "# Nth Samples (every %d events)\n", ctx->config.rate);
+    for (int i = 0; i < ctx->nth_count; i++) {
+        int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
+        LOG(ctx, "%d nth sample for sig %s", idx, ctx->nth_samples[idx].signature);
+        if (ctx->nth_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
-                    nth_samples[idx].signature, 
-                    nth_samples[idx].entry_count, 
-                    nth_samples[idx].exit_count);
+                    ctx->nth_samples[idx].signature, 
+                    ctx->nth_samples[idx].entry_count, 
+                    ctx->nth_samples[idx].exit_count);
         }
     }
-    pthread_mutex_unlock(&samples_lock);
+    pthread_mutex_unlock(&ctx->samples_lock);
 
     fclose(fp);
 }
 
 static void *export_thread_func(void *arg) 
 {
+    assert(arg != NULL);
+
+    agent_context_t *ctx = (agent_context_t *)arg;
+    
     /* Reuse event_queue.running as a global stop flag */
-    while (eq.running) 
+    while (ctx->event_queue.running) 
     { 
-        export_to_file();
-        sleep(cfg.export_interval);
+        export_to_file(ctx);
+        sleep(ctx->config.export_interval);
     }
 
     /* Final write on shutdown */
-    export_to_file(); 
+    export_to_file(ctx); 
     return NULL;
 }
 
@@ -492,24 +521,24 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     jclass declaring_class;
     jvmtiError err;
 
-    err = (*jvmti_env)->GetMethodName(jvmti_env, method, &method_name, &method_signature, NULL);
+    err = (*global_ctx->jvmti_env)->GetMethodName(global_ctx->jvmti_env, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: GetMethodName failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
-    err = (*jvmti_env)->GetMethodDeclaringClass(jvmti_env, method, &declaring_class);
+    err = (*global_ctx->jvmti_env)->GetMethodDeclaringClass(global_ctx->jvmti_env, method, &declaring_class);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
-    err = (*jvmti_env)->GetClassSignature(jvmti_env, declaring_class, &class_signature, NULL);
+    err = (*global_ctx->jvmti_env)->GetClassSignature(global_ctx->jvmti_env, declaring_class, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: GetClassSignature failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
 
@@ -519,17 +548,17 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     // }
 
     // TODO need to also count the calls - need a histogram style datastructure - or maxheap (bounded mem)
-    if (should_trace_method(class_signature, method_name, method_signature))
+    if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
     {
-        event_enq(class_signature, method_name, method_signature, 1);
-        LOG("[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
+        event_enq(global_ctx, class_signature, method_name, method_signature, 1);
+        LOG(global_ctx, "[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
     } 
 
 deallocate:
     // Deallocate memory allocated by JVMTI
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_signature);
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_signature);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_name);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_signature);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)class_signature);
 }
 
 /*
@@ -544,23 +573,23 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jvmtiError err;
 
     // Get method name
-    err = (*jvmti_env)->GetMethodName(jvmti_env, method, &method_name, &method_signature, NULL);
+    err = (*global_ctx->jvmti_env)->GetMethodName(global_ctx->jvmti_env, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) {
-        LOG("ERROR: GetMethodName failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get declaring class
-    err = (*jvmti_env)->GetMethodDeclaringClass(jvmti_env, method, &declaringClass);
+    err = (*global_ctx->jvmti_env)->GetMethodDeclaringClass(global_ctx->jvmti_env, method, &declaringClass);
     if (err != JVMTI_ERROR_NONE) {
-        LOG("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get class signature
-    err = (*jvmti_env)->GetClassSignature(jvmti_env, declaringClass, &class_signature, NULL);
+    err = (*global_ctx->jvmti_env)->GetClassSignature(global_ctx->jvmti_env, declaringClass, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) {
-        LOG("ERROR: GetClassSignature failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
 
@@ -570,22 +599,22 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     // }
     
     // TODO count exits from method - same as entry traces
-    if (should_trace_method(class_signature, method_name, method_signature))
+    if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
     {
-        event_enq(class_signature, method_name, method_signature, 0);
-        LOG("[EXIT] Method from class (%s): %s\n", class_signature, method_name);
+        event_enq(global_ctx, class_signature, method_name, method_signature, 0);
+        LOG(global_ctx, "[EXIT] Method from class (%s): %s\n", class_signature, method_name);
     }
 
 deallocate:
     // Deallocate memory allocated by JVMTI
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_signature);
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_signature);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_name);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_signature);
+    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)class_signature);
 }
 
-int load_config(const char *cf)
+int load_config(agent_context_t *ctx, const char *cf)
 {
-    LOG("INFO: loading config from: %s, config_file: %s\n", cf, config_file);
+    LOG(ctx, "INFO: loading config from: %s, config_file: %s\n", cf, config_file);
     if (!cf) 
         cf = config_file;
 
@@ -593,7 +622,7 @@ int load_config(const char *cf)
     FILE *fp = fopen(cf, "r");
     if (!fp) 
     {
-        LOG("ERROR: Could not open config file: %s\n", config_file);
+        LOG(ctx, "ERROR: Could not open config file: %s\n", config_file);
         return 1;
     }
 
@@ -619,7 +648,7 @@ int load_config(const char *cf)
             section = strdup(trimmed);
             if (!section) 
             {
-                LOG("ERROR: Failed to allocate memory for section");
+                LOG(ctx, "ERROR: Failed to allocate memory for section");
                 fclose(fp);
                 return 1;
             }
@@ -637,7 +666,7 @@ int load_config(const char *cf)
                     int rate;
                     if (sscanf(value, "%d", &rate) == 1) 
                     {
-                        cfg.rate = rate > 0 ? rate : 1;
+                        ctx->config.rate = rate > 0 ? rate : 1;
                     }
                 }
             } 
@@ -649,16 +678,16 @@ int load_config(const char *cf)
                 }
                 else if (in_filters && trimmed[0] != ']')
                 {
-                    cfg.num_filters++;
-                    char **tmp = realloc(cfg.filters, cfg.num_filters * sizeof(char *));
+                    ctx->config.num_filters++;
+                    char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
                     if (!tmp)
                     {
-                        LOG("ERROR: Failed to allocate memory for filters");
+                        LOG(ctx, "ERROR: Failed to allocate memory for filters");
                         fclose(fp);
                         return 1;
                     }
-                    cfg.filters = tmp;
-                    cfg.filters[cfg.num_filters - 1] = strdup(trimmed);
+                    ctx->config.filters = tmp;
+                    ctx->config.filters[ctx->config.num_filters - 1] = strdup(trimmed);
                 }
             }
             else if (strcmp(section, "[sample_file_location]") == 0) 
@@ -667,10 +696,10 @@ int load_config(const char *cf)
                 if (value) {
                     char *new_path = strdup(value);
                     if (!new_path) {
-                        LOG("ERROR: Failed to duplicate path: %s", value);
+                        LOG(ctx, "ERROR: Failed to duplicate path: %s", value);
                     } else {
-                        if (cfg.sample_file_path) free(cfg.sample_file_path);
-                        cfg.sample_file_path = new_path;
+                        if (ctx->config.sample_file_path) free(ctx->config.sample_file_path);
+                        ctx->config.sample_file_path = new_path;
                     }
                 }
             } 
@@ -683,10 +712,10 @@ int load_config(const char *cf)
                     if (value) {
                         char *new_method = strdup(value);
                         if (!new_method) {
-                            LOG("ERROR: Failed to duplicate method: %s", value);
+                            LOG(ctx, "ERROR: Failed to duplicate method: %s", value);
                         } else {
-                            if (cfg.export_method) free(cfg.export_method);
-                            cfg.export_method = new_method;
+                            if (ctx->config.export_method) free(ctx->config.export_method);
+                            ctx->config.export_method = new_method;
                         }
                     }
                 }
@@ -694,8 +723,8 @@ int load_config(const char *cf)
                 if (strstr(trimmed, "interval")) {
                     value = extract_and_trim_value(trimmed);
                     if (value) {
-                        if (sscanf(value, "%d", &cfg.export_interval) != 1) {
-                            LOG("WARNING: Invalid interval value: %s", value);
+                        if (sscanf(value, "%d", &ctx->config.export_interval) != 1) {
+                            LOG(ctx, "WARNING: Invalid interval value: %s", value);
                         }
                     }
                 }
@@ -707,8 +736,8 @@ int load_config(const char *cf)
         free(section);
 
     fclose(fp);
-    method_filters = cfg.filters;
-    num_filters = cfg.num_filters;
+    ctx->method_filters = ctx->config.filters;
+    ctx->num_filters = ctx->config.num_filters;
 
     return 0;
 }
@@ -716,7 +745,7 @@ int load_config(const char *cf)
 /**
  * Check if a method matches the filter
  */
-int should_trace_method(const char *class_signature, const char *method_name, const char *method_signature) {
+int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature) {
 
     /* This is a fixed size as we cannot afford mallocs in this hot code path */
     char full_signature[MAX_SIG_SZ];
@@ -727,16 +756,16 @@ int should_trace_method(const char *class_signature, const char *method_name, co
     if (written < 0 || written >= MAX_SIG_SZ)
     {
         /* snprintf has truncated this method name so we cannot trust this value */
-        LOG("WARN: Method signature too long for buffer (%d chars)\n", written);
+        LOG(ctx, "WARN: Method signature too long for buffer (%d chars)\n", written);
         return 0;
     }
     
-    for (int i = 0; i < num_filters; i++) {
+    for (int i = 0; i < ctx->num_filters; i++) {
         //printf("filter: %s signature: %s", method_filters[i], full_signature);
         // if (strcmp(method_filters[i], full_signature) == 0) {
         //     return 1; // Match found
         // }
-        if (strstr(method_filters[i], class_signature))
+        if (strstr(ctx->method_filters[i], class_signature))
             return 1;
     }
     return 0; // No match
@@ -747,79 +776,98 @@ int should_trace_method(const char *class_signature, const char *method_name, co
  */
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 {
+    // Allocate and initialize the context
+    global_ctx = malloc(sizeof(agent_context_t));
+    if (!global_ctx) {
+        printf("ERROR: Failed to allocate agent context\n");
+        return JNI_ERR;
+    }
+    memset(global_ctx, 0, sizeof(agent_context_t));
+    global_ctx->jvmti_env = NULL;
+    global_ctx->method_filters = NULL;
+    global_ctx->num_filters = 0;
+    global_ctx->log_file = NULL;
+    global_ctx->config.rate = 1;
+    global_ctx->config.filters = NULL;
+    global_ctx->config.num_filters = 0;
+    global_ctx->config.sample_file_path = NULL;
+    global_ctx->config.export_method = NULL;
+    global_ctx->config.export_interval = 60;
+    pthread_mutex_init(&global_ctx->samples_lock, NULL);
+    
     jvmtiCapabilities capabilities;
     jvmtiEventCallbacks callbacks;
     jvmtiError err;
 
     /* Get JVMTI environment */
-    jint result = (*vm)->GetEnv(vm, (void **)&jvmti_env, JVMTI_VERSION_1_2);
-    if (result != JNI_OK || jvmti_env == NULL) 
+    jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
+    if (result != JNI_OK || global_ctx->jvmti_env == NULL) 
     {
         printf("ERROR: Unable to access JVMTI!\n");
         return JNI_ERR;
     }
 
     /* Init logging */
-    if (init_log_q() != 0)
+    if (init_log_q(global_ctx) != 0)
     {
-        cleanup(num_filters);
+        cleanup(global_ctx);
         return JNI_ERR;
     }
-    if (start_thread(&log_thread, &log_thread_func, "log") != 0)
+    if (start_thread(&global_ctx->log_thread, &log_thread_func, "log", global_ctx) != 0)
     {
-        cleanup(num_filters);
-        cleanup_log_system();
+        cleanup(global_ctx);
+        cleanup_log_system(global_ctx);
         return JNI_ERR;
     }
 
     /* Redirect output */
     if (options && strncmp(options, "logfile=", 8) == 0)
     {
-        log_file = fopen(options + 8, "w");
-        if (!log_file)
+        global_ctx->log_file = fopen(options + 8, "w");
+        if (!global_ctx->log_file)
         {
             printf("ERROR: Failed to open log file: %s, reverting to stdout\n", options + 8);
-            log_file = stdout;
+            global_ctx->log_file = stdout;
         }
     }
 
     /* Now we have logging configured, load config */
-    if (load_config("./trace.ini") != 0)
+    if (load_config(global_ctx, "./trace.ini") != 0)
     {
-        LOG("ERROR: Unable to load config_file!\n");
+        LOG(global_ctx, "ERROR: Unable to load config_file!\n");
         return JNI_ERR;
     }
 
-    LOG("Config: rate=%d, method='%s', path='%s'",
-        cfg.rate, cfg.export_method, cfg.sample_file_path);
+    LOG(global_ctx, "Config: rate=%d, method='%s', path='%s'",
+        global_ctx->config.rate, global_ctx->config.export_method, global_ctx->config.sample_file_path);
 
-    if (strcmp(cfg.export_method, "file") != 0)
+    if (strcmp(global_ctx->config.export_method, "file") != 0)
     {
-        LOG("ERROR: Unknown export method: [%s]", cfg.export_method);
+        LOG(global_ctx, "ERROR: Unknown export method: [%s]", global_ctx->config.export_method);
         return JNI_ERR;
     }
 
     /* Init the event/sample handling */
-    if (init_event_q() != 0 || 
-        start_thread(&event_thread, &event_thread_func, "event") != 0 || 
-        start_thread(&export_thread, &export_thread_func, "export-samples") != 0)
+    if (init_event_q(global_ctx) != 0 || 
+        start_thread(&global_ctx->event_thread, &event_thread_func, "event", global_ctx) != 0 || 
+        start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
     {
-        cleanup(num_filters);
-        cleanup_log_system();
-        cleanup_event_system();
+        cleanup(global_ctx);
+        cleanup_log_system(global_ctx);
+        cleanup_event_system(global_ctx);
         return JNI_ERR;
     }
 
-    init_samples();
+    init_samples(global_ctx);
 
     /* Enable capabilities */
     memset(&capabilities, 0, sizeof(capabilities));
     capabilities.can_generate_method_entry_events = 1;
     capabilities.can_generate_method_exit_events = 1;
-    err = (*jvmti_env)->AddCapabilities(jvmti_env, &capabilities);
+    err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: AddCapabilities failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: AddCapabilities failed with error %d\n", err);
         return JNI_ERR;
     }
 
@@ -828,28 +876,28 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     callbacks.MethodEntry = &method_entry_callback;
     callbacks.MethodExit = &method_exit_callback;
 
-    err = (*jvmti_env)->SetEventCallbacks(jvmti_env, &callbacks, sizeof(callbacks));
+    err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: SetEventCallbacks failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: SetEventCallbacks failed with error %d\n", err);
         return JNI_ERR;
     }
 
     /* Enable event notifications */
-    err = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
         return JNI_ERR;
     }
-    err = (*jvmti_env)->SetEventNotificationMode(jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
-        LOG("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
+        LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
         return JNI_ERR;
     }
 
-    LOG("JVMTI Agent Loaded.\n");
+    LOG(global_ctx, "JVMTI Agent Loaded.\n");
     return JNI_OK;
 }
 
@@ -858,37 +906,42 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
  * 
  * @param nf num filters to clear
  */
-void cleanup(int nf)
+void cleanup(agent_context_t *ctx)
 {
     /* check if we have work to do */
-    if (cfg.filters) {
-        for (int i = 0; i < nf; i++) {
-            if (cfg.filters[i]) 
-                free(cfg.filters[i]);
+    if (ctx->config.filters) {
+        for (int i = 0; i < ctx->num_filters; i++) {
+            if (ctx->config.filters[i]) 
+                free(ctx->config.filters[i]);
         }
-        free(cfg.filters);
+        free(ctx->config.filters);
     }
 
-    if (cfg.sample_file_path) 
-        free(cfg.sample_file_path);
+    if (ctx->config.sample_file_path) 
+        free(ctx->config.sample_file_path);
 
-    if (cfg.export_method) 
-        free(cfg.export_method);
+    if (ctx->config.export_method) 
+        free(ctx->config.export_method);
 
-    cfg.filters = NULL;
-    cfg.num_filters = 0;
-    cfg.sample_file_path = NULL;
-    cfg.export_method = NULL;
-    method_filters = NULL;
-    num_filters = 0;
+    ctx->config.filters = NULL;
+    ctx->config.num_filters = 0;
+    ctx->config.sample_file_path = NULL;
+    ctx->config.export_method = NULL;
+    ctx->method_filters = NULL;
+    ctx->num_filters = 0;
 }
 
 /**
  * JVMTI Agent Unload Function
  */
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
-    cleanup(num_filters);
-    cleanup_samples();
-    cleanup_log_system();
+    if (global_ctx) {
+        cleanup(global_ctx);
+        cleanup_samples(global_ctx);
+        cleanup_log_system(global_ctx);
+        cleanup_event_system(global_ctx);
+        free(global_ctx);
+        global_ctx = NULL;
+    }
     printf("JVMTI Agent Unloaded.\n");
 }

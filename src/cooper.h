@@ -13,6 +13,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <assert.h>
 
 #define config_file "trace.ini"
 #define EVENT_Q_SZ 2048 /**< An event q buffer */
@@ -21,11 +22,11 @@
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
 #define MAX_LOG_MSG_SZ 1024 /**< The max size of a trace message we will tolerate */
 #define LOG_Q_SZ 1024 /**< Length of log q */
-#define LOG(fmt, ...) do { \
+#define LOG(ctx, fmt, ...) do { \
     char msg[MAX_LOG_MSG_SZ]; \
     int len = snprintf(msg, sizeof(msg), "[JMVTI] " fmt, ##__VA_ARGS__); \
     if (len >= 0 && len < MAX_LOG_MSG_SZ) { \
-        log_enq(msg); \
+        log_enq(ctx, msg); \
     } \
 } while (0)
 
@@ -34,6 +35,7 @@ typedef struct trace_event trace_event_t;
 typedef struct event_q event_q_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
+typedef struct agent_context agent_context_t;
 typedef void *thread_fn(void *args);
 
 struct config
@@ -82,6 +84,36 @@ struct method_stats
     int entry_count;
     int exit_count;
 };
+
+struct agent_context
+{
+    int event_counter;              /**< Counter for nth samples */
+    method_stats_t full_samples[FULL_SAMPLE_SZ]; /**< Full event samples */
+    int full_hd;                    /**< Head index for full samples */
+    int full_count;                 /**< Number of full samples */
+    method_stats_t nth_samples[NTH_SAMPLE_SZ];   /**< Nth event samples */
+    int nth_hd;                     /**< Head index for nth samples */
+    int nth_count;                  /**< Number of nth samples */
+    jvmtiEnv *jvmti_env;            /**< JVMTI environment */
+    char **method_filters;          /**< Method filter list */
+    int num_filters;                /**< Number of filters */
+    log_q_t log_queue;              /**< Logging queue */
+    FILE *log_file;                 /**< Log output file */
+    pthread_t log_thread;           /**< Logging thread */
+    event_q_t event_queue;          /**< Event queue */
+    pthread_t event_thread;         /**< Event processing thread */
+    pthread_t export_thread;        /**< Export thread */
+    pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
+    config_t config;                /**< Agent configuration */
+};
+
+// Function prototypes (updated to take agent_context_t *)
+void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
+void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
+int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
+int load_config(agent_context_t *ctx, const char *cf);
+void cleanup(agent_context_t *ctx);
+static int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
 
 /**
  * Strip trailing comment from a string (returns pointer to start, modifies in place)
