@@ -8,7 +8,6 @@
 
 static agent_context_t *global_ctx = NULL; // Single global context
 
-
 static int init_log_q(agent_context_t *ctx)
 {
     assert(ctx != NULL);
@@ -591,130 +590,128 @@ deallocate:
 
 int load_config(agent_context_t *ctx, const char *cf)
 {
-    LOG(ctx, "INFO: loading config from: %s, config_file: %s\n", cf, config_file);
+    assert(ctx != NULL);
+    
+    LOG(ctx, "INFO: loading config from: %s, default config_file: %s\n", cf, DEFAULT_CFG_FILE);
     if (!cf) 
-        cf = config_file;
-
+        cf = DEFAULT_CFG_FILE;
     
     FILE *fp = fopen(cf, "r");
     if (!fp) 
     {
-        LOG(ctx, "ERROR: Could not open config file: %s\n", config_file);
+        LOG(ctx, "ERROR: Could not open config file: %s\n", cf);
         return 1;
     }
 
     char line[256];
-    char *section = NULL;
-    int in_filters;
+    char *current_section = NULL;
 
     while (fgets(line, sizeof(line), fp))
     {
+        /* clean input line */
         char *trimmed = trim(line);
         strip_comment(trimmed);
-
-        /* skip empty lines or comments */
-        if (trimmed[0] == '\0' || trimmed[0] == '#') 
+        /* skip empty lines */
+        if (trimmed[0] == '\0')
             continue;
 
-        /* Start of a section */
+        /* This is a section header, move to the next line for config data */
         if (trimmed[0] == '[')
         {
-            if (section) 
-                free(section); // Free previous section before reassigning
-            
-            section = strdup(trimmed);
-            if (!section) 
+            free(current_section);
+            current_section = strdup(trimmed);
+            if (!current_section)
             {
-                LOG(ctx, "ERROR: Failed to allocate memory for section");
+                LOG(ctx, "ERROR: Failed to allocate memory for section\n");
                 fclose(fp);
                 return 1;
             }
-            in_filters = (strcmp(section, "[method_signatures]") == 0);
             continue;
         }
 
-        if (section)
+        /* Skip any data before the first section */
+        if (!current_section)
+            continue;
+
+        /* Based on the section we're in we can interpret the value differently */
+        if (strcmp(current_section, "[method_signatures]") == 0)
         {
-            if (strcmp(section, "[sample_rate]") == 0)
+            LOG(ctx, "DEBUG: Processing line in [method_signatures]: '%s'\n", trimmed);
+            /* Skip over the filters line, end of filters is a line containing a single ']' */
+            if (strncmp(trimmed, "filters =", 9) == 0 || trimmed[0] == ']')
+                continue;
+
+            /* Process a filter entry */
+            ctx->config.num_filters++;
+            LOG(ctx, "DEBUG: Adding filter #%d: '%s'\n", ctx->config.num_filters, trimmed);
+            /* Adjust filter storage */
+            char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
+            if (!tmp)
             {
-                char *value = extract_and_trim_value(trimmed);
-                if (value) 
-                {
-                    int rate;
-                    if (sscanf(value, "%d", &rate) == 1) 
-                    {
-                        ctx->config.rate = rate > 0 ? rate : 1;
-                    }
-                }
-            } 
-            else if (strcmp(section, "[method_signatures]") == 0)
-            {
-                if (strncmp(trimmed, "filters =", 9) == 0)
-                {
-                    in_filters = 1;
-                }
-                else if (in_filters && trimmed[0] != ']')
-                {
-                    ctx->config.num_filters++;
-                    char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
-                    if (!tmp)
-                    {
-                        LOG(ctx, "ERROR: Failed to allocate memory for filters");
-                        fclose(fp);
-                        return 1;
-                    }
-                    ctx->config.filters = tmp;
-                    ctx->config.filters[ctx->config.num_filters - 1] = strdup(trimmed);
-                }
+                LOG(ctx, "ERROR: Failed to allocate memory for filters\n");
+                free(current_section);
+                fclose(fp);
+                return 1;
             }
-            else if (strcmp(section, "[sample_file_location]") == 0) 
-            {
-                char *value = extract_and_trim_value(trimmed);
-                if (value) {
-                    char *new_path = strdup(value);
-                    if (!new_path) {
-                        LOG(ctx, "ERROR: Failed to duplicate path: %s", value);
-                    } else {
-                        if (ctx->config.sample_file_path) free(ctx->config.sample_file_path);
-                        ctx->config.sample_file_path = new_path;
-                    }
-                }
-            } 
-            else if (strcmp(section, "[export]") == 0) 
-            {
-                char *value;
+            ctx->config.filters = tmp;
 
-                if (strstr(trimmed, "method")) {
-                    value = extract_and_trim_value(trimmed);
-                    if (value) {
-                        char *new_method = strdup(value);
-                        if (!new_method) {
-                            LOG(ctx, "ERROR: Failed to duplicate method: %s", value);
-                        } else {
-                            if (ctx->config.export_method) free(ctx->config.export_method);
-                            ctx->config.export_method = new_method;
-                        }
-                    }
-                }
+            /* Copy filter value to ctx filter storage */
+            ctx->config.filters[ctx->config.num_filters - 1] = strdup(trimmed);
+            /* Check we have the new filter */
+            if (!ctx->config.filters[ctx->config.num_filters -1])
+                LOG(ctx, "ERROR: Failed to duplicate filter: %s\n", trimmed);
+        }
+        else
+        {
+            /* Grab the data value from the trimmed line */
+            char *value = extract_and_trim_value(trimmed);
+            if (!value)
+                continue;
 
-                if (strstr(trimmed, "interval")) {
-                    value = extract_and_trim_value(trimmed);
-                    if (value) {
-                        if (sscanf(value, "%d", &ctx->config.export_interval) != 1) {
-                            LOG(ctx, "WARNING: Invalid interval value: %s", value);
-                        }
-                    }
+            if (strcmp(current_section, "[sample_rate]") == 0)
+            {
+                int rate;
+                if (sscanf(value, "%d", &rate) == 1)
+                    ctx->config.rate = rate > 0 ? rate : 1;
+            }
+            else if (strcmp(current_section, "[sample_file_location]") == 0)
+            {
+                if (!set_config_string(&ctx->config.sample_file_path, value))
+                    LOG(ctx, "ERROR: Failed to duplicate sample_file_path: %s\n", value);
+            }
+            else if (strcmp(current_section, "[export]") == 0)
+            {
+                if (strstr(trimmed, "method"))
+                {
+                    if (!set_config_string(&ctx->config.export_method, value))
+                        LOG(ctx, "ERROR: Failed to duplicate export_method: %s\n", value);
+                }
+                else if (strstr(trimmed, "interval"))
+                {
+                    if (sscanf(value, "%d", &ctx->config.export_interval) != 1)
+                        LOG(ctx, "WARNING: Invalid interval value: %s\n", value);
                 }
             }
         }
     }
 
-    if (section) 
-        free(section);
-
+    free(current_section);
     fclose(fp);
+
+    // Set defaults and finalize
+    if (!ctx->config.export_method) 
+    {
+        ctx->config.export_method = strdup("file");
+        if (!ctx->config.export_method)
+            LOG(ctx, "ERROR: Failed to set default export_method\n");
+    }
     ctx->method_filters = ctx->config.filters;
     ctx->num_filters = ctx->config.num_filters;
+
+    LOG(ctx, "Config loaded: rate=%d, filters=%d, path=%s, method=%s\n",
+        ctx->config.rate, ctx->num_filters,
+        ctx->config.sample_file_path ? ctx->config.sample_file_path : "NULL",
+        ctx->config.export_method ? ctx->config.export_method : "NULL");
 
     return 0;
 }

@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <assert.h>
 
-#define config_file "trace.ini"
+#define DEFAULT_CFG_FILE "trace.ini"
 #define EVENT_Q_SZ 2048 /**< An event q buffer */
 #define FULL_SAMPLE_SZ 1024 /**< The max entries for the every sample buffer */
 #define NTH_SAMPLE_SZ 256 /**< The max entries for the nth sample buffer */
@@ -137,11 +137,22 @@ static inline char *strip_comment(char *str) {
  */
 static inline char *trim(char *str)
 {
+    /* Skip leading whitespace */
     while (*str == ' ' || *str == '\t') str++;
-    char *end = str + strlen(str) -1;
-    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n'))
+
+    /* If we reach the end or only whitespace remains, return an empty string */
+    if (*str == '\0' || *str == '\n') 
+    {
+        *str = '\0';
+        return str;
+    }
+
+    /* Trim trailing whitespace */
+    char *end = str + strlen(str) - 1;
+    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n')) {
         *end-- = '\0';
-    
+    }
+
     return str;
 }
 
@@ -166,6 +177,18 @@ static inline char *extract_and_trim_value(char *line) {
     }
 
     return value[0] == '\0' ? NULL : value; // Return NULL if empty
+}
+
+/**
+ * Helper function to set config strings with error handling
+ */
+static inline int set_config_string(char **dest, const char *value) 
+{
+    char *new_value = strdup(value);
+    if (!new_value) return 0; // Failure
+    if (*dest) free(*dest);
+    *dest = new_value;
+    return 1; // Success
 }
 
 #endif /* COOPER_H */
