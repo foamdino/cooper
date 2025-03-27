@@ -6,7 +6,6 @@
 
 #include "cooper.h"
 
-static int sample_rate = 1; /**< Default: every event */
 static int event_counter = 0; /**< Global counter for nth samples */
 
 static method_stats_t full_samples[FULL_SAMPLE_SZ];
@@ -372,7 +371,7 @@ static void *event_thread_func(void *arg)
 
 nth_sampling:
             event_counter++;
-            if (event_counter % sample_rate == 0)
+            if (event_counter % cfg.rate == 0)
             {
                 for (int i = 0; i < nth_count; i++)
                 {
@@ -452,7 +451,7 @@ static void export_to_file()
                     full_samples[idx].exit_count);
         }
     }
-    fprintf(fp, "# Nth Samples (every %d events)\n", sample_rate);
+    fprintf(fp, "# Nth Samples (every %d events)\n", cfg.rate);
     for (int i = 0; i < nth_count; i++) {
         int idx = (nth_hd + i) % NTH_SAMPLE_SZ;
         LOG("%d nth sample for sig %s", idx, nth_samples[idx].signature);
@@ -471,7 +470,8 @@ static void export_to_file()
 static void *export_thread_func(void *arg) 
 {
     /* Reuse event_queue.running as a global stop flag */
-    while (eq.running) { 
+    while (eq.running) 
+    { 
         export_to_file();
         sleep(cfg.export_interval);
     }
@@ -493,19 +493,22 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     jvmtiError err;
 
     err = (*jvmti_env)->GetMethodName(jvmti_env, method, &method_name, &method_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG("ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
     err = (*jvmti_env)->GetMethodDeclaringClass(jvmti_env, method, &declaring_class);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
     err = (*jvmti_env)->GetClassSignature(jvmti_env, declaring_class, &class_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG("ERROR: GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
@@ -521,8 +524,6 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         event_enq(class_signature, method_name, method_signature, 1);
         LOG("[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
     } 
-        
-
 
 deallocate:
     // Deallocate memory allocated by JVMTI
@@ -637,7 +638,6 @@ int load_config(const char *cf)
                     if (sscanf(value, "%d", &rate) == 1) 
                     {
                         cfg.rate = rate > 0 ? rate : 1;
-                        sample_rate = cfg.rate;
                     }
                 }
             } 
