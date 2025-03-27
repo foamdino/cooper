@@ -302,9 +302,9 @@ static void *event_thread_func(void *arg)
 {
     assert(arg != NULL);
 
+    trace_event_t e;
     agent_context_t *ctx = (agent_context_t *)arg;
     
-    trace_event_t e;
     while (1)
     {
         pthread_mutex_lock(&ctx->event_queue.lock);
@@ -328,10 +328,11 @@ static void *event_thread_func(void *arg)
 
             /* Now we copy the sig/method strings */
             char full_sig[MAX_SIG_SZ];
+            
             int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", e.class_sig, e.method_name, e.method_sig);
-            if (written < 0 || written >= MAX_SIG_SZ) {
+            if (written < 0 || written >= MAX_SIG_SZ)
                 LOG(ctx, "WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
-            }
+            
             for (int i=0; i < ctx->full_count; i++)
             {
                 int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
@@ -491,21 +492,24 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     jclass declaring_class;
     jvmtiError err;
 
-    err = (*global_ctx->jvmti_env)->GetMethodName(global_ctx->jvmti_env, method, &method_name, &method_signature, NULL);
+    if (jvmti != global_ctx->jvmti_env)
+        LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
+
+    err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
-    err = (*global_ctx->jvmti_env)->GetMethodDeclaringClass(global_ctx->jvmti_env, method, &declaring_class);
+    err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
-    err = (*global_ctx->jvmti_env)->GetClassSignature(global_ctx->jvmti_env, declaring_class, &class_signature, NULL);
+    err = (*jvmti)->GetClassSignature(jvmti, declaring_class, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
@@ -526,9 +530,9 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 
 deallocate:
     // Deallocate memory allocated by JVMTI
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_name);
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_signature);
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)class_signature);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
 }
 
 /*
@@ -542,22 +546,25 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jclass declaringClass;
     jvmtiError err;
 
+    if (jvmti != global_ctx->jvmti_env)
+        LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
+
     // Get method name
-    err = (*global_ctx->jvmti_env)->GetMethodName(global_ctx->jvmti_env, method, &method_name, &method_signature, NULL);
+    err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) {
         LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get declaring class
-    err = (*global_ctx->jvmti_env)->GetMethodDeclaringClass(global_ctx->jvmti_env, method, &declaringClass);
+    err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
     if (err != JVMTI_ERROR_NONE) {
         LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get class signature
-    err = (*global_ctx->jvmti_env)->GetClassSignature(global_ctx->jvmti_env, declaringClass, &class_signature, NULL);
+    err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) {
         LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
         goto deallocate;
@@ -577,9 +584,9 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
 
 deallocate:
     // Deallocate memory allocated by JVMTI
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_name);
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)method_signature);
-    (*global_ctx->jvmti_env)->Deallocate(global_ctx->jvmti_env, (unsigned char*)class_signature);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
 }
 
 int load_config(agent_context_t *ctx, const char *cf)
@@ -715,7 +722,8 @@ int load_config(agent_context_t *ctx, const char *cf)
 /**
  * Check if a method matches the filter
  */
-int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature) {
+int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature) 
+{
 
     /* This is a fixed size as we cannot afford mallocs in this hot code path */
     char full_signature[MAX_SIG_SZ];
