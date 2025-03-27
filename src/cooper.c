@@ -6,36 +6,6 @@
 
 #include "cooper.h"
 
-// static int event_counter = 0; /**< Global counter for nth samples */
-
-// static method_stats_t full_samples[FULL_SAMPLE_SZ];
-// static int full_hd = 0;
-// static int full_count = 0;
-
-// static method_stats_t nth_samples[NTH_SAMPLE_SZ];
-// static int nth_hd = 0;
-// static int nth_count = 0;
-
-// static jvmtiEnv *jvmti_env = NULL;
-// static char **method_filters = NULL;
-// static int num_filters = 0;
-
-// /* Logging support */
-// static log_q_t lq = {0};
-// static FILE *log_file = NULL;
-// static pthread_t log_thread;
-
-// /* Trace support */
-// static event_q_t eq = {0};
-// static pthread_t event_thread;
-
-// /* Export samples support */
-// static pthread_t export_thread;
-// static pthread_mutex_t samples_lock = PTHREAD_MUTEX_INITIALIZER;
-
-// /* Config */
-// static config_t cfg = {1, NULL, 0, NULL, NULL, 60};
-
 static agent_context_t *global_ctx = NULL; // Single global context
 
 
