@@ -8,7 +8,7 @@
 
 static agent_context_t *global_ctx = NULL; // Single global context
 
-static int init_log_q(agent_context_t *ctx)
+int init_log_q(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -44,7 +44,7 @@ static int init_log_q(agent_context_t *ctx)
  * @param msg Pointer to msg to add
  * 
  * */
-static void log_enq(agent_context_t *ctx, const char *msg)
+void log_enq(agent_context_t *ctx, const char *msg)
 {
     assert(ctx != NULL);
     assert(msg != NULL);
@@ -73,7 +73,7 @@ static void log_enq(agent_context_t *ctx, const char *msg)
  * 
  * @retval Pointer to a char message
  */
-static char *log_deq(agent_context_t *ctx)
+char *log_deq(agent_context_t *ctx)
 {
     assert(ctx != NULL);
 
@@ -92,7 +92,7 @@ static char *log_deq(agent_context_t *ctx)
     return msg;
 }
 
-static void *log_thread_func(void *arg)
+void *log_thread_func(void *arg)
 {
     assert(arg != NULL);
 
@@ -133,7 +133,7 @@ static void *log_thread_func(void *arg)
     return NULL;
 }
 
-static int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t *ctx)
+int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t *ctx)
 {
     int err = 0;
     err = pthread_create(thread, NULL, fun, ctx);
@@ -152,7 +152,7 @@ static int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_con
     return 0;
 }
 
-static void cleanup_log_system(agent_context_t *ctx)
+void cleanup_log_system(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -176,7 +176,7 @@ static void cleanup_log_system(agent_context_t *ctx)
     pthread_mutex_destroy(&ctx->log_queue.lock);
 }
 
-static void init_samples(agent_context_t *ctx)
+void init_samples(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -194,7 +194,7 @@ static void init_samples(agent_context_t *ctx)
     }
 }
 
-static void cleanup_samples(agent_context_t *ctx)
+void cleanup_samples(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -217,7 +217,7 @@ static void cleanup_samples(agent_context_t *ctx)
     ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
 }
 
-static int init_event_q(agent_context_t *ctx)
+int init_event_q(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -244,7 +244,7 @@ static int init_event_q(agent_context_t *ctx)
     return 0;
 }
 
-static void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry)
+void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry)
 {
     assert(ctx != NULL);
     
@@ -278,7 +278,7 @@ static void event_enq(agent_context_t *ctx, const char *class_sig, const char *m
     pthread_mutex_unlock(&ctx->event_queue.lock);
 }
 
-static int event_deq(agent_context_t *ctx, trace_event_t *e)
+int event_deq(agent_context_t *ctx, trace_event_t *e)
 {
     assert(ctx != NULL);
     
@@ -297,7 +297,7 @@ static int event_deq(agent_context_t *ctx, trace_event_t *e)
     return 0;
 }
 
-static void *event_thread_func(void *arg)
+void *event_thread_func(void *arg)
 {
     assert(arg != NULL);
 
@@ -343,20 +343,27 @@ static void *event_thread_func(void *arg)
             }
             if (ctx->full_count < FULL_SAMPLE_SZ)
             {
+                /* Copy the full_sig value to the samples signature as full_sig is a stack allocated buffer */
                 ctx->full_samples[ctx->full_count].signature = strdup(full_sig);
+                /* Set correct info for exit/entry */
                 ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
                 ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
                 ctx->full_count++;
             }
-            else
+            else /* We have FULL_SAMPLE_SZ number of samples already */
             {
+                /* Set our index to the current hd */
                 int idx = ctx->full_hd;
+                /* Remove any signature at this location */
                 if (ctx->full_samples[idx].signature)
                     free(ctx->full_samples[idx].signature);
 
+                /* Set the signature to the new value */
                 ctx->full_samples[idx].signature = strdup(full_sig);
+                /* Set correct info for exit/entry */
                 ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
                 ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
+                /* Reset the full_hd position */
                 ctx->full_hd = (ctx->full_hd + 1) % FULL_SAMPLE_SZ;
             }
 
@@ -403,7 +410,7 @@ cleanup:
     return NULL;
 }
 
-static void cleanup_event_system(agent_context_t *ctx)
+void cleanup_event_system(agent_context_t *ctx)
 {
     assert(ctx != NULL);
 
@@ -422,7 +429,7 @@ static void cleanup_event_system(agent_context_t *ctx)
    pthread_mutex_destroy(&ctx->event_queue.lock);
 }
 
-static void export_to_file(agent_context_t *ctx)
+void export_to_file(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
@@ -462,7 +469,7 @@ static void export_to_file(agent_context_t *ctx)
     fclose(fp);
 }
 
-static void *export_thread_func(void *arg) 
+void *export_thread_func(void *arg)
 {
     assert(arg != NULL);
 

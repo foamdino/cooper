@@ -115,14 +115,36 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(agent_context_t *ctx, const char *cf);
 void cleanup(agent_context_t *ctx);
-static int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
+int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
+
+int init_log_q(agent_context_t *ctx);
+void log_enq(agent_context_t *ctx, const char *msg);
+char *log_deq(agent_context_t *ctx);
+void *log_thread_func(void *arg);
+void cleanup_log_system(agent_context_t *ctx);
+void init_samples(agent_context_t *ctx);
+void cleanup_samples(agent_context_t *ctx);
+int init_event_q(agent_context_t *ctx);
+void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry);
+int event_deq(agent_context_t *ctx, trace_event_t *e);
+void *event_thread_func(void *arg);
+void cleanup_event_system(agent_context_t *ctx);
+void export_to_file(agent_context_t *ctx);
+void *export_thread_func(void *arg);
+
+
+// extern char *strip_comment(char *str);
+// extern char *trim(char *str);
+// extern char *extract_and_trim_value(char *line);
+// extern int set_config_string(char **dest, const char *value);
 
 /**
  * Strip trailing comment from a string (returns pointer to start, modifies in place)
  * 
  * @param str pointer to check for comment start
  */
-static inline char *strip_comment(char *str) {
+static inline char *strip_comment(char *str) 
+{
     char *comment = strchr(str, '#');
     if (comment)
         *comment = '\0'; /* Truncate at comment start */
@@ -161,7 +183,8 @@ static inline char *trim(char *str)
 /**
  * Extract and trim the value from a key-value pair (e.g., "method = \"file\" # comment")
  */ 
-static inline char *extract_and_trim_value(char *line) {
+static inline char *extract_and_trim_value(char *line)
+{
     char *eq = strchr(line, '=');
     if (!eq) 
         return NULL; // No '=' found
@@ -184,7 +207,7 @@ static inline char *extract_and_trim_value(char *line) {
 /**
  * Helper function to set config strings with error handling
  */
-static inline int set_config_string(char **dest, const char *value) 
+static inline int set_config_string(char **dest, const char *value)
 {
     char *new_value = strdup(value);
     if (!new_value) return 0; // Failure

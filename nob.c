@@ -38,6 +38,7 @@ int main(int argc, char **argv)
 
     Nob_Cmd cc_cmd = {0};
     Nob_Cmd javac_cmd = {0};
+    Nob_Cmd test_cmd = {0};
 
     const char *JAVA_HOME = getenv("JAVA_HOME");
     assert(JAVA_HOME != NULL);
@@ -50,13 +51,19 @@ int main(int argc, char **argv)
     char LINUX_INC[l_buf_sz];
     snprintf(LINUX_INC, l_buf_sz, "-I%s/%s/%s", JAVA_HOME, "include", "linux");
 
+    /* Check that the build output dir exists */
     if (!nob_mkdir_if_not_exists(BUILD_FOLDER)) return 1;
+
     nob_cmd_append(&cc_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-o", BUILD_FOLDER"libcooper.so", SRC_FOLDER"cooper.c", "-pthread");
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
     /* compile java */
     nob_cmd_append(&javac_cmd, "javac", "java-src/com/github/foamdino/Test.java", "-d", BUILD_FOLDER);
     if (!nob_cmd_run_sync(javac_cmd)) return 1;
+
+    /* compile tests */
+    nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-o", BUILD_FOLDER"test_cooper", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread");
+    if (!nob_cmd_run_sync(test_cmd)) return 1;
 
     return 0;
 }

@@ -15,6 +15,6 @@ Need to have a `trace.ini` file in the working directory
 
 * cleanup config file handling
 * add assertions where appropriate
-* work on simple exception callback
+* add some unit tests
 * capture method parameters
 * how to do method performance/timing
