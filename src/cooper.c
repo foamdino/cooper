@@ -550,21 +550,24 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
 
     // Get method name
     err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get declaring class
     err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
     // Get class signature
     err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) {
+    if (err != JVMTI_ERROR_NONE) 
+    {
         LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
@@ -586,6 +589,86 @@ deallocate:
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
+}
+
+/**
+ * Exception callback
+ */
+void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location)
+{
+    char *method_name = NULL;
+    char *method_signature = NULL;
+    char *class_name = NULL;
+    char *catch_method_name = NULL;
+    char *catch_method_signature = NULL;
+
+    /* Get details of method */
+    jvmtiError err = (*jvmti_env)->GetMethodName(
+        jvmti_env, method, &method_name, &method_signature, NULL);
+    
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
+        goto deallocate;
+    }
+
+    jclass method_class;
+    err = (*jvmti_env)->GetMethodDeclaringClass(jvmti_env, method, &method_class);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+        goto deallocate;
+    }
+    
+    /* Get class name */
+    err = (*jvmti_env)->GetClassSignature(jvmti_env, method_class, &class_name, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
+        goto deallocate;
+    }
+        
+    /* Convert Java exception to string representation */
+    jclass exception_class = (*jni_env)->GetObjectClass(jni_env, exception);
+    jmethodID toString_id = (*jni_env)->GetMethodID(jni_env, exception_class, "toString", "()Ljava/lang/String;");
+    jstring exception_str = (*jni_env)->CallObjectMethod(jni_env, exception, toString_id);
+    if ((*jni_env)->ExceptionCheck(jni_env)) 
+    {
+        LOG(global_ctx, "ERROR: JNI exception occurred while getting exception string\n");
+        (*jni_env)->ExceptionClear(jni_env);
+        goto deallocate;
+    }
+    
+    /* Convert to standard C string */
+    const char *exception_cstr = exception_str ? (*jni_env)->GetStringUTFChars(jni_env, exception_str, NULL) : "Unknown exception";
+    
+    LOG(global_ctx, "Exception in %s.%s%s at location %ld\n", class_name, method_name, method_signature, (long)location);
+    LOG(global_ctx, "Exception details: %s\n", exception_cstr);
+    
+    /* check the catch method */
+    if (catch_method != NULL) 
+    {
+        
+        err = (*jvmti_env)->GetMethodName(jvmti_env, catch_method, &catch_method_name, &catch_method_signature, NULL);
+
+        if (err != JVMTI_ERROR_NONE)
+        {
+            LOG(global_ctx, "ERROR: GetMethodName for catch_method failed with error %d\n", err);
+            goto deallocate;
+        }
+        
+        LOG(global_ctx, "Caught in method: %s%s at location %ld\n", catch_method_name, catch_method_signature, (long)catch_location);
+    }
+
+    /* Free exception_str */
+    (*jni_env)->ReleaseStringUTFChars(jni_env, exception_str, exception_cstr);   
+
+deallocate:
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_signature);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_name);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_name);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_signature);
 }
 
 int load_config(agent_context_t *ctx, const char *cf)
@@ -751,7 +834,11 @@ int should_trace_method(agent_context_t *ctx, const char *class_signature, const
  */
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 {
-    // Allocate and initialize the context
+    jvmtiCapabilities capabilities;
+    jvmtiEventCallbacks callbacks;
+    jvmtiError err;
+
+    /* Allocate and initialize the agent context */
     global_ctx = malloc(sizeof(agent_context_t));
     if (!global_ctx) {
         printf("ERROR: Failed to allocate agent context\n");
@@ -769,10 +856,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
-    
-    jvmtiCapabilities capabilities;
-    jvmtiEventCallbacks callbacks;
-    jvmtiError err;
 
     /* Get JVMTI environment */
     jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
@@ -839,6 +922,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     memset(&capabilities, 0, sizeof(capabilities));
     capabilities.can_generate_method_entry_events = 1;
     capabilities.can_generate_method_exit_events = 1;
+    capabilities.can_generate_exception_events = 1;
+
     err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -850,6 +935,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.MethodEntry = &method_entry_callback;
     callbacks.MethodExit = &method_exit_callback;
+    callbacks.Exception = &exception_callback;
 
     err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) 
@@ -869,6 +955,18 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (err != JVMTI_ERROR_NONE)
     {
         LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
+        return JNI_ERR;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
+        return JNI_ERR;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION_CATCH, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
         return JNI_ERR;
     }
 

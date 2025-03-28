@@ -107,9 +107,11 @@ struct agent_context
     config_t config;                /**< Agent configuration */
 };
 
-// Function prototypes (updated to take agent_context_t *)
+/* jmvti callback functions */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
+void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location);
+
 int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(agent_context_t *ctx, const char *cf);
 void cleanup(agent_context_t *ctx);

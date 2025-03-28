@@ -15,6 +15,6 @@ Need to have a `trace.ini` file in the working directory
 
 * cleanup config file handling
 * add assertions where appropriate
-* add mechanism to record invocation counts (histogram?)
-* need a fixed size data structure that we allocate at startup
-* how to do sampling?
+* work on simple exception callback
+* capture method parameters
+* how to do method performance/timing

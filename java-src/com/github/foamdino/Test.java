@@ -3,6 +3,9 @@ package com.github.foamdino;
 /* Simple test class for connectinog agent to */
 public class Test {
 
+    int c() throws Exception {
+        throw new Exception("Thrown from c");
+    }
 
     String b() {
         return "return from package-private(default) b()";
@@ -20,11 +23,18 @@ public class Test {
             Thread.sleep(10000);
             System.out.println(b());
         }
+        c();
     }
 
     public static void main(String[] args) throws Exception {
 
-        Test t = new Test();
-        t.foo();
+        try {
+            Test t = new Test();
+            t.foo();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        /* wait so that exception details can be sent to log */
+        Thread.sleep(20000);
     }
 }
