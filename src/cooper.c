@@ -442,7 +442,6 @@ void export_to_file(agent_context_t *ctx)
 
     pthread_mutex_lock(&ctx->samples_lock);
     fprintf(fp, "# Full Samples (every event)\n");
-    LOG(ctx, "Exporting full samples to file: %d", ctx->full_count);
     for (int i = 0; i < ctx->full_count; i++) {
         int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
         LOG(ctx, "%d full sample for sig %s", idx, ctx->full_samples[idx].signature);
@@ -485,6 +484,163 @@ void *export_thread_func(void *arg)
     /* Final write on shutdown */
     export_to_file(ctx); 
     return NULL;
+}
+/**
+ * get a param value for a method
+ * 
+ * TODO think about how malloc/free works here - cannot have this dynamic memory, need an arena or something
+ */
+static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env, 
+    jthread thread, jmethodID method, jint param_index, jint param_slot, char param_type)
+{
+    char *result = NULL;
+    jvalue value;
+    jvmtiError err;
+
+    switch(param_type)
+    {
+        /* int */
+        case 'I':
+            err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                /* Allocate space for result (max int digist + sign + null) */
+                result = malloc(12);
+                if (result)
+                    sprintf(result, "%d", value.i);
+            }
+            break;
+
+        /* long */
+        case 'J':
+            err = (*jvmti)->GetLocalLong(jvmti, thread, 0, param_slot, &value.j);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                result = malloc(21);
+                if (result)
+                    sprintf(result, "%lld", (long long)value.j);
+            }
+            break;
+
+        /* float */
+        case 'F':
+            err = (*jvmti)->GetLocalFloat(jvmti, thread, 0, param_slot, &value.f);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                result = malloc(32);
+                if (result)
+                    sprintf(result, "%f", value.f);
+            }
+            break;
+
+        /* double */
+        case 'D':
+            err = (*jvmti)->GetLocalDouble(jvmti, thread, 0, param_slot, &value.d);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                // TODO check this as it's the same size as a float??
+                result = malloc(32);
+                if (result)
+                    sprintf(result, "%f", value.d);
+            }
+            break;
+
+        /* boolean */
+        case 'Z':
+            err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                result = malloc(6);
+                if (result)
+                    sprintf(result, "%s", value.i ? "true" : "false");
+            }
+            break;
+
+        case 'B': /* byte */
+        case 'C': /* char */
+        case 'S': /* short */
+            err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
+            if (err == JVMTI_ERROR_NONE)
+            {
+                result = malloc(12);
+                if (result)
+                    sprintf(result, "%d", value.i);
+            }
+            break;
+
+        case 'L': /* Object */
+        case '[': /* Array */
+            {
+                jobject obj;
+                err = (*jvmti)->GetLocalObject(jvmti, thread, 0, param_slot, &obj);
+                if (err == JVMTI_ERROR_NONE && obj != NULL)
+                {
+                    jstring str;
+                    jclass str_class = (*jni_env)->FindClass(jni_env, "java/lang/String");
+                    /* We have a string */
+                    if ((*jni_env)->IsInstanceOf(jni_env, obj, str_class))
+                    {
+                        const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, obj, NULL);
+                        if (str_value)
+                        {
+                            result = malloc(strlen(str_value) + 3); /* includes quotes and null */
+                            if (result)
+                                sprintf(result, "\"%s\"", str_value);
+                            
+                            (*jni_env)->ReleaseStringUTFChars(jni_env, obj, str_value);
+                        }
+                    }
+                    else /* Non-string object */
+                    {
+                        jclass obj_class = (*jni_env)->GetObjectClass(jni_env, obj);
+                        jmethodID toString_method = (*jni_env)->GetMethodID(jni_env, obj_class, "toString", "()Ljava/lang/String;");
+                        str = (jstring)(*jni_env)->CallObjectMethod(jni_env, obj, toString_method);
+
+                        if (str != NULL)
+                        {
+                            const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, str, NULL);
+                            if (str_value)
+                            {
+                                result = malloc(strlen(str_value) + 1);
+                                if (result)
+                                    strcpy(result, str_value);
+
+                                (*jni_env)->ReleaseStringUTFChars(jni_env, str, str_value);
+                            }
+                        }
+                        else
+                        {
+                            result = malloc(5);
+                            if (result)
+                                strcpy(result, "null");
+                        }
+                    }
+                }
+                else
+                {
+                    result = malloc(5);
+                    if (result)
+                        strcpy(result, "null");
+                }
+            }
+            break;
+        
+        default:
+            result = malloc(16);
+            if (result)
+                sprintf(result, "<unknown type>");
+
+            break;
+    }
+
+    if (!result)
+    {
+        result = malloc(10);
+        if (result)
+            sprintf(result, "<error>");
+    }
+
+    return result;
 }
 
 /*
@@ -605,13 +761,17 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 {
     char *method_name = NULL;
     char *method_signature = NULL;
+
+    //TODO is this needed?
+    char *generic_signature = NULL;
+
     char *class_name = NULL;
     char *catch_method_name = NULL;
     char *catch_method_signature = NULL;
 
     /* Get details of method */
     jvmtiError err = (*jvmti_env)->GetMethodName(
-        jvmti_env, method, &method_name, &method_signature, NULL);
+        jvmti_env, method, &method_name, &method_signature, generic_signature);
     
     if (err != JVMTI_ERROR_NONE)
     {
@@ -652,6 +812,96 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     LOG(global_ctx, "Exception in %s.%s%s at location %ld\n", class_name, method_name, method_signature, (long)location);
     LOG(global_ctx, "Exception details: %s\n", exception_cstr);
     
+    /* Get the local variable table for this method */
+    jint entry_count;
+    jvmtiLocalVariableEntry *table;
+    err = (*jvmti_env)->GetLocalVariableTable(jvmti_env, method, &entry_count, &table);
+
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(global_ctx, "ERROR: Could not get local variable table %d\n", err);
+        goto deallocate;
+    }
+
+    /* Parse the method signature for params */
+    char *params = strchr(method_signature, '(');
+    if (params != NULL)
+    {
+        /* advance past the opening '(' */
+        params++;
+
+        /* Is this a non-static method? If so, the first variable is 'this' */
+        jboolean is_static;
+        (*jvmti_env)->IsMethodNative(jvmti_env, method, &is_static);
+        // (*jvmti_env)->IsMethodStatic(jvmti_env, method, &is_static); <- I think this is incorrect
+
+        int param_idx = 0;
+        int slot = is_static ? 0 : 1; /* Start at either 0 or 1 skipping 'this' */
+
+        //TODO remove printfs after debugging
+        printf("Method params: \n");
+
+        while (*params != ')' && *params != '\0')
+        {
+            char param_type = *params;
+            char buffer[256] = {0};
+
+            /* Handle obj types (find the end of the class name) */
+            if (param_type == 'L')
+            {
+                strncpy(buffer, params, sizeof(buffer) -1);
+                char *semicolon = strchr(buffer, ';');
+                if (semicolon)
+                {
+                    *semicolon = '\0';
+                    params += (semicolon - buffer);
+                }
+            }
+
+            /* Find the parameter name in the local variable table */
+            char *param_name = NULL;
+            for (int i = 0; i < entry_count; i++)
+            {
+                if (table[i].slot == slot && table[i].start_location == 0)
+                {
+                    param_name = table[i].name;
+                    break;
+                }
+            }
+
+            /* Get the param value */
+            char *param_val = get_parameter_value(jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
+
+            printf("\tParam %d (%s): %s\n", 
+                param_idx, 
+                param_name ? param_name : "<unknown>",
+                param_val ? param_val : "<error>");
+
+            if (param_val)
+                free(param_val);
+
+            slot++;
+            param_idx++;
+
+            /* For long and double values they require two slots so advance a second time */
+            if (param_type == 'J' || param_type == 'D')
+                slot++;
+
+            /* Next param */
+            params++;
+        }
+    }
+
+    /* Free the local variable table */
+    for (int i = 0; i < entry_count; i++)
+    {
+        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table[i].name);
+        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table[i].signature);
+        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table[i].generic_signature);
+    }
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table);
+
+
     /* check the catch method */
     if (catch_method != NULL) 
     {
@@ -673,6 +923,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 deallocate:
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_signature);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)generic_signature);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_signature);
@@ -930,6 +1181,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     capabilities.can_generate_method_entry_events = 1;
     capabilities.can_generate_method_exit_events = 1;
     capabilities.can_generate_exception_events = 1;
+    capabilities.can_access_local_variables = 1;
+    capabilities.can_get_source_file_name = 1;
+    capabilities.can_get_line_numbers = 1;
 
     err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
     if (err != JVMTI_ERROR_NONE) 
