@@ -824,38 +824,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
         goto deallocate;
     }
 
-    // /* not compiled with debug symbols - have to do some inferring */
-    // if (err == JVMTI_ERROR_CLASS_NOT_PREPARED)
-    // {
-    //     /* Need to suspend the thread to inspect the frame */
-    //     err = (*jvmti_env)->SuspendThread(jvmti_env, thread);
-    //     if (err != JVMTI_ERROR_NONE)
-    //     {
-    //         LOG(global_ctx, "ERROR: Could not suspend thread to inspect frame %d\n", err);
-    //         goto deallocate;
-    //     }
-
-    //     jvmtiFrameInfo frames[1];
-    //     jint frame_count;
-    //     err = (*jvmti_env)->GetStackTrace(jvmti_env, thread, 0, 1, frames, &frame_count);
-    //     if (err != JVMTI_ERROR_NONE)
-    //     {
-    //         LOG(global_ctx, "ERROR: Could not get stack trace %d\n", err);
-    //         goto deallocate;
-    //     }
-
-    //     /* Check we have a frame and the method matches the id of the method that threw the exception */
-    //     if (frame_count > 0 && frames[0].method == method)
-    //     {
-    //         /* Extract the param values using the known slots from the signature */
-    //         jint int_value;
-    //         jobject obj_value;
-    //         (*jvmti_env)->GetLocalInt
-    //     }
-
-    // }
-
-    /* We have a valid local variable table, parse the method signature for params */
+    /* Parse the method signature for params */
     char *params = strchr(method_signature, '(');
     if (params != NULL)
     {
