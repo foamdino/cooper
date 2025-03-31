@@ -19,15 +19,15 @@ Need to have a `trace.ini` file in the working directory
 ## Features TODO
 
 * Methods
-  * Entry/exit tracking (done)
+  * Entry/exit tracking (v1 done)
   * Capturing method params
   * Recording method execution times
   * call stack sampling
 * Exceptions
-  * Capturing exception details
-  * Tracking exception throw points
+  * Capturing exception details (v1 done)
+  * Tracking exception throw points (v1 done)
   * Record stack traces for exceptions
-  * Paramter values at exception points
+  * Paramter values at exception points (v1 done)
 * Mem
   * Object allocation tracking
   * Object lifetime monitoring
