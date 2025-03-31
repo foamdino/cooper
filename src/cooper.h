@@ -148,6 +148,9 @@ static inline char *strip_comment(char *str)
 {
     assert(str != NULL);
 
+    if (str == NULL)
+        return NULL;
+
     char *comment = strchr(str, '#');
     if (comment)
         *comment = '\0'; /* Truncate at comment start */
@@ -176,13 +179,11 @@ static inline char *trim(char *str, size_t max_len)
 
     /* Skip leading whitespace */
     start = str;
-    while (*start == ' ' || *start == '\t' || *start == '\n' && len < max_len) 
+    while ((*start == ' ' || *start == '\t' || *start == '\n') && len < max_len) 
     {
         start++;
         len++;
     }
-
-    printf("start: %s, end: %s, len: %ld\n", start, end, len);
 
     /* If str is empty just return it */
     if (*start == '\0' || len >= max_len)
@@ -215,6 +216,9 @@ static inline char *trim(char *str, size_t max_len)
 static inline char *extract_and_trim_value(char *line)
 {
     assert(line != NULL);
+
+    if (line == NULL)
+        return NULL;
     
     char *eq = strchr(line, '=');
     if (!eq) 

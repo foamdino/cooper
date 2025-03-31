@@ -10,39 +10,17 @@
 #define LOG(ctx, fmt, ...) printf("[TEST] " fmt, ##__VA_ARGS__)
 
 // Helper to create a temporary config file
-static FILE *create_temp_config(const char *content, char *filename) 
+static const char *create_temp_config(const char *content) 
 {
-    FILE *fp = tmpfile();
+    const char *filename = "/tmp/test_config.ini";
+    FILE *fp = fopen(filename, "w");
     if (!fp) {
-        perror("Failed to create temp file");
+        perror("Failed to create temp config file");
         exit(1);
     }
     fputs(content, fp);
-    rewind(fp);
-
-    if (fp == NULL)
-        return NULL;
-
-    int fd = fileno(fp);
-    if (fd == -1)
-        return NULL;
-
-    char buf[256];
-
-    // Construct the path to the temporary file in /proc/self/fd
-    char proc_path[256];
-    snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%d", fd);
-
-    // Read the actual file path
-    ssize_t len = readlink(proc_path, buf, sizeof(buf) - 1);
-    if (len == -1)
-        return NULL;
-
-    // Null-terminate the filename
-    buf[len] = '\0';
-    filename = strdup(buf);
-
-    return fp;
+    fclose(fp);
+    return filename;
 }
 
 // Helper to free agent_context_t config fields
@@ -95,11 +73,10 @@ static void test_load_config()
         "method = file\n"
         "interval = 30\n";
 
-    char filename[256];
-    FILE *fp = create_temp_config(config_content, filename);
-    assert(fp != NULL);
-    int result = load_config(ctx, filename); // NULL to use default, but we override in test
-    fclose(fp);
+    const char *config_file = create_temp_config(config_content);
+    int result = load_config(ctx, config_file); // NULL to use default, but we override in test
+    /* Delete temp config file */
+    unlink(config_file);
 
     assert(result == 0);
     assert(ctx->config.rate == 5);
