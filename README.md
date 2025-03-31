@@ -7,14 +7,25 @@ A jvm agent
 Uses https://github.com/tsoding/nob.h for building to reduce dependencies (only need a compiler)
 
 ## Usage
+
 Compile and from the build location:
 `java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test`
 Need to have a `trace.ini` file in the working directory
+
+## Valgrind
+
+```
+valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
+         --track-origins=yes --verbose --log-file=valgrind-log.txt \
+         java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test
+```
+
 
 ## Misc TODO
 
 * cleanup config file handling
 * add assertions where appropriate
+* arena or other allocation strategy
 
 ## Features TODO
 
