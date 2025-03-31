@@ -768,10 +768,11 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     char *class_name = NULL;
     char *catch_method_name = NULL;
     char *catch_method_signature = NULL;
+    jvmtiLocalVariableEntry *table = NULL;
 
     /* Get details of method */
     jvmtiError err = (*jvmti_env)->GetMethodName(
-        jvmti_env, method, &method_name, &method_signature, generic_signature);
+        jvmti_env, method, &method_name, &method_signature, &generic_signature);
     
     if (err != JVMTI_ERROR_NONE)
     {
@@ -813,17 +814,48 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     LOG(global_ctx, "Exception details: %s\n", exception_cstr);
     
     /* Get the local variable table for this method */
-    jint entry_count;
-    jvmtiLocalVariableEntry *table;
+    jint entry_count = 0;
     err = (*jvmti_env)->GetLocalVariableTable(jvmti_env, method, &entry_count, &table);
 
-    if (err != JVMTI_ERROR_NONE)
+    /* all other errors just bail */
+    if (err != JVMTI_ERROR_NONE && err != JVMTI_ERROR_ABSENT_INFORMATION)
     {
         LOG(global_ctx, "ERROR: Could not get local variable table %d\n", err);
         goto deallocate;
     }
 
-    /* Parse the method signature for params */
+    // /* not compiled with debug symbols - have to do some inferring */
+    // if (err == JVMTI_ERROR_CLASS_NOT_PREPARED)
+    // {
+    //     /* Need to suspend the thread to inspect the frame */
+    //     err = (*jvmti_env)->SuspendThread(jvmti_env, thread);
+    //     if (err != JVMTI_ERROR_NONE)
+    //     {
+    //         LOG(global_ctx, "ERROR: Could not suspend thread to inspect frame %d\n", err);
+    //         goto deallocate;
+    //     }
+
+    //     jvmtiFrameInfo frames[1];
+    //     jint frame_count;
+    //     err = (*jvmti_env)->GetStackTrace(jvmti_env, thread, 0, 1, frames, &frame_count);
+    //     if (err != JVMTI_ERROR_NONE)
+    //     {
+    //         LOG(global_ctx, "ERROR: Could not get stack trace %d\n", err);
+    //         goto deallocate;
+    //     }
+
+    //     /* Check we have a frame and the method matches the id of the method that threw the exception */
+    //     if (frame_count > 0 && frames[0].method == method)
+    //     {
+    //         /* Extract the param values using the known slots from the signature */
+    //         jint int_value;
+    //         jobject obj_value;
+    //         (*jvmti_env)->GetLocalInt
+    //     }
+
+    // }
+
+    /* We have a valid local variable table, parse the method signature for params */
     char *params = strchr(method_signature, '(');
     if (params != NULL)
     {
@@ -833,13 +865,11 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
         /* Is this a non-static method? If so, the first variable is 'this' */
         jboolean is_static;
         (*jvmti_env)->IsMethodNative(jvmti_env, method, &is_static);
-        // (*jvmti_env)->IsMethodStatic(jvmti_env, method, &is_static); <- I think this is incorrect
 
         int param_idx = 0;
         int slot = is_static ? 0 : 1; /* Start at either 0 or 1 skipping 'this' */
 
-        //TODO remove printfs after debugging
-        printf("Method params: \n");
+        LOG(global_ctx, "Method params: \n");
 
         while (*params != ')' && *params != '\0')
         {
@@ -872,14 +902,14 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
             /* Get the param value */
             char *param_val = get_parameter_value(jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
 
-            printf("\tParam %d (%s): %s\n", 
+            LOG(global_ctx, "\tParam %d (%s): %s\n", 
                 param_idx, 
                 param_name ? param_name : "<unknown>",
                 param_val ? param_val : "<error>");
 
             if (param_val)
                 free(param_val);
-
+            
             slot++;
             param_idx++;
 
@@ -899,9 +929,11 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
         (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table[i].signature);
         (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table[i].generic_signature);
     }
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table);
 
-
+    /* Only try to deallocate with a valid pointer */
+    if (table)
+        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)table);
+        
     /* check the catch method */
     if (catch_method != NULL) 
     {
