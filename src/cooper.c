@@ -699,7 +699,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     while (fgets(line, sizeof(line), fp))
     {
         /* clean input line */
-        char *trimmed = trim(line);
+        char *trimmed = trim(line, MAX_STR_LEN);
         strip_comment(trimmed);
         /* skip empty lines */
         if (trimmed[0] == '\0')

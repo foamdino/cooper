@@ -57,19 +57,19 @@ static void free_config(agent_context_t *ctx)
 static void test_trim() 
 {
     char str1[] = "  hello  \n";
-    char *result1 = trim(str1);
+    char *result1 = trim(str1, MAX_STR_LEN);
     assert(strcmp(result1, "hello") == 0);
 
     char str2[] = " \t\n";
-    char *result2 = trim(str2);
+    char *result2 = trim(str2, MAX_STR_LEN);
     assert(result2[0] == '\0');
 
     char str3[] = "no_spaces";
-    char *result3 = trim(str3);
+    char *result3 = trim(str3, MAX_STR_LEN);
     assert(strcmp(result3, "no_spaces") == 0);
 
     char str4[] = "";
-    char *result4 = trim(str4);
+    char *result4 = trim(str4, MAX_STR_LEN);
     assert(result4[0] == '\0');
 
     printf("[TEST] trim: All tests passed\n");

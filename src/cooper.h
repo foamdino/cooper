@@ -16,6 +16,7 @@
 #include <assert.h>
 
 #define DEFAULT_CFG_FILE "trace.ini"
+#define MAX_STR_LEN 4096 /**< Max length of string we want to care about */
 #define EVENT_Q_SZ 2048 /**< An event q buffer */
 #define FULL_SAMPLE_SZ 1024 /**< The max entries for the every sample buffer */
 #define NTH_SAMPLE_SZ 256 /**< The max entries for the nth sample buffer */
@@ -145,6 +146,8 @@ void *export_thread_func(void *arg);
  */
 static inline char *strip_comment(char *str) 
 {
+    assert(str != NULL);
+
     char *comment = strchr(str, '#');
     if (comment)
         *comment = '\0'; /* Truncate at comment start */
@@ -156,28 +159,54 @@ static inline char *strip_comment(char *str)
  * Trim whitespace from string 
  * 
  * @param str pointer to string to trim
+ * @param max_len maximum length of string supported
  * 
  * @retval trimmed str pointer
  */
-static inline char *trim(char *str)
+static inline char *trim(char *str, size_t max_len)
 {
+    assert(str != NULL);
+
+    char *start = NULL;
+    char *end = NULL;
+    size_t len = 0;
+
+    if (str == NULL)
+        return NULL;
+
     /* Skip leading whitespace */
-    while (*str == ' ' || *str == '\t') str++;
-
-    /* If we reach the end or only whitespace remains, return an empty string */
-    if (*str == '\0' || *str == '\n') 
+    start = str;
+    while (*start == ' ' || *start == '\t' || *start == '\n' && len < max_len) 
     {
-        *str = '\0';
-        return str;
+        start++;
+        len++;
     }
 
-    /* Trim trailing whitespace */
-    char *end = str + strlen(str) - 1;
-    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n')) {
-        *end-- = '\0';
-    }
+    printf("start: %s, end: %s, len: %ld\n", start, end, len);
 
-    return str;
+    /* If str is empty just return it */
+    if (*start == '\0' || len >= max_len)
+        return start;
+
+    /* Find the end of the string */
+    end = start;
+    char *last_non_whitespace = NULL;
+
+    /* Track the last non-whitespace character */
+    while (*end != '\0' && len < max_len) 
+    {
+        if (*end != ' ' && *end != '\t' && *end != '\n')
+            last_non_whitespace = end;
+        
+        end++;
+        len++;
+    }
+    
+    /* If we found non-whitespace characters, null-terminate after the last one */
+    if (last_non_whitespace != NULL)
+        *(last_non_whitespace + 1) = '\0';
+    
+    return start;
 }
 
 /**
@@ -185,12 +214,14 @@ static inline char *trim(char *str)
  */ 
 static inline char *extract_and_trim_value(char *line)
 {
+    assert(line != NULL);
+    
     char *eq = strchr(line, '=');
     if (!eq) 
         return NULL; // No '=' found
 
     char *value = eq + 1;
-    value = trim(value); // Trim leading/trailing whitespace
+    value = trim(value, MAX_STR_LEN); // Trim leading/trailing whitespace
 
     // Handle quoted strings
     if (value[0] == '"') 
@@ -209,6 +240,8 @@ static inline char *extract_and_trim_value(char *line)
  */
 static inline int set_config_string(char **dest, const char *value)
 {
+    assert(value != NULL);
+    
     char *new_value = strdup(value);
     if (!new_value) return 0; // Failure
     if (*dest) free(*dest);
