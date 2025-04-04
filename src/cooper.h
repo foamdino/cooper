@@ -14,6 +14,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <assert.h>
+#include <sys/mman.h>
+
+#include "arena.h"
 
 #define DEFAULT_CFG_FILE "trace.ini"
 #define MAX_STR_LEN 4096 /**< Max length of string we want to care about */
@@ -106,6 +109,7 @@ struct agent_context
     pthread_t export_thread;        /**< Export thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     config_t config;                /**< Agent configuration */
+    arena_t *exception_arena;        /**< Arena for exception memory allocation */
 };
 
 /* jmvti callback functions */
@@ -134,10 +138,10 @@ void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
 
 
-// extern char *strip_comment(char *str);
-// extern char *trim(char *str);
-// extern char *extract_and_trim_value(char *line);
-// extern int set_config_string(char **dest, const char *value);
+/* extern char *strip_comment(char *str);
+   extern char *trim(char *str);
+   extern char *extract_and_trim_value(char *line);
+   extern int set_config_string(char **dest, const char *value); */
 
 /**
  * Strip trailing comment from a string (returns pointer to start, modifies in place)
@@ -222,21 +226,21 @@ static inline char *extract_and_trim_value(char *line)
     
     char *eq = strchr(line, '=');
     if (!eq) 
-        return NULL; // No '=' found
+        return NULL; /* No '=' found */
 
     char *value = eq + 1;
-    value = trim(value, MAX_STR_LEN); // Trim leading/trailing whitespace
+    value = trim(value, MAX_STR_LEN); /* Trim leading/trailing whitespace */
 
-    // Handle quoted strings
+    /* Handle quoted strings */
     if (value[0] == '"') 
     {
-        value++; // Skip opening quote
+        value++; /* Skip opening quote */
         char *end = strchr(value, '"');
-        if (end) *end = '\0'; // Remove closing quote
-        else return NULL; // Malformed: no closing quote
+        if (end) *end = '\0'; /* Remove closing quote */
+        else return NULL; /* Malformed: no closing quote */
     }
 
-    return value[0] == '\0' ? NULL : value; // Return NULL if empty
+    return value[0] == '\0' ? NULL : value; /* Return NULL if empty */
 }
 
 /**
@@ -247,10 +251,10 @@ static inline int set_config_string(char **dest, const char *value)
     assert(value != NULL);
     
     char *new_value = strdup(value);
-    if (!new_value) return 0; // Failure
+    if (!new_value) return 0; /* Failure */
     if (*dest) free(*dest);
     *dest = new_value;
-    return 1; // Success
+    return 1; /* Success */
 }
 
 #endif /* COOPER_H */

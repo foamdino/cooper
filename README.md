@@ -20,9 +20,16 @@ valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
          java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test
 ```
 
+## strace & friends
+```
+strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test
+```
+
+
 
 ## Misc TODO
 
+* using tracing tools to uncover how many syscalls/librarycalls are made in the code
 * cleanup config file handling
 * add assertions where appropriate
 * arena or other allocation strategy

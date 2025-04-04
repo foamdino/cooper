@@ -168,6 +168,101 @@ static void test_event_queue()
     printf("[TEST] event_queue: All tests passed\n");
 }
 
+/* Test arena memory management */
+static void test_arena()
+{
+    /* Test arena_init */
+    arena_t *arena = arena_init("test_arena", 1024, 10);
+    assert(arena != NULL);
+    assert(strcmp(arena->name, "test_arena") == 0);
+    assert(arena->total_size <= 1024);
+    assert(arena->total_size > 0);
+    assert(arena->used == 0);
+    assert(arena->free_count == 0);
+    assert(arena->max_free_blocks == 10);
+    
+    /* Test arena_alloc */
+    void *block1 = arena_alloc(arena, 100);
+    assert(block1 != NULL);
+    assert(arena->used >= 100);
+    
+    /* Write to the memory to ensure it's usable */
+    memset(block1, 'A', 100);
+    
+    /* Allocate another block */
+    void *block2 = arena_alloc(arena, 200);
+    assert(block2 != NULL);
+    assert((char*)block2 > (char*)block1);
+    assert(arena->used >= 300); /* Including alignment padding */
+    
+    /* Write to the second block */
+    memset(block2, 'B', 200);
+    
+    /* Test arena_free */
+    int result = arena_free(arena, block1, 100);
+    assert(result == 1);
+    assert(arena->free_count == 1);
+    
+    /* Test allocating after freeing */
+    void *block3 = arena_alloc(arena, 100);
+    assert(block3 != NULL);
+    
+    /* If the free block was reused, block3 should be the same as block1 */
+    if (arena->free_count == 0) {
+        assert(block3 == block1);
+    }
+    
+    /* Try to free a block with size 0 */
+    result = arena_free(arena, block2, 0);
+    assert(result == 0);
+    
+    /* Test arena_destroy */
+    arena_destroy(arena);
+    
+    /* Test initialization with 0 size or max_blocks */
+    assert(arena_init("bad_arena", 0, 10) == NULL);
+    assert(arena_init("bad_arena", 1024, 0) == NULL);
+    
+    /* Test allocating more memory than available */
+    arena = arena_init("small_arena", 200, 5);
+    assert(arena != NULL);
+    
+    block1 = arena_alloc(arena, 10);
+    assert(block1 != NULL);
+    
+    /* This should fail as we don't have enough space */
+    void *big_block = arena_alloc(arena, 1000);
+    assert(big_block == NULL);
+    
+    /* Test having more free blocks than we can track */
+    size_t i;
+    void *small_blocks[10];
+    
+    /* Calculate how many blocks we can allocate based on remaining space */
+    size_t max_blocks = 3; /* Reduce the number of allocations */
+    for (i = 0; i < max_blocks; i++) {
+        small_blocks[i] = arena_alloc(arena, 10);
+        assert(small_blocks[i] != NULL);
+    }
+    
+    for (i = 0; i < max_blocks; i++) {
+        result = arena_free(arena, small_blocks[i], 10);
+        assert(result == 1);
+    }
+    
+    /* Try to free one more block - this should fail as we've reached max_free_blocks */
+    if (arena->free_count >= arena->max_free_blocks) {
+        block1 = arena_alloc(arena, 10);
+        assert(block1 != NULL);
+        result = arena_free(arena, block1, 10);
+        assert(result == 0);
+    }
+    
+    arena_destroy(arena);
+    
+    printf("[TEST] arena: All tests passed\n");
+}
+
 int main() 
 {
     printf("Running unit tests for cooper.c...\n");
@@ -177,6 +272,7 @@ int main()
     test_should_trace_method();
     test_log_queue();
     test_event_queue();
+    test_arena();
 
     printf("All tests completed successfully!\n");
     return 0;

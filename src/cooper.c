@@ -5,8 +5,9 @@
  */
 
 #include "cooper.h"
+#include "arena.h"
 
-static agent_context_t *global_ctx = NULL; // Single global context
+static agent_context_t *global_ctx = NULL; /* Single global context */
 
 int init_log_q(agent_context_t *ctx)
 {
@@ -260,7 +261,7 @@ void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_n
         if (!e->class_sig || !e->method_name || !e->method_sig) 
         {
             LOG(ctx, "ERROR: Failed to strdup event strings");
-            free(e->class_sig);    // Cleanup on failure
+            free(e->class_sig);    /* Cleanup on failure */
             free(e->method_name);
             free(e->method_sig);
             e->class_sig = e->method_name = e->method_sig = NULL;
@@ -320,7 +321,7 @@ void *event_thread_func(void *arg)
         if (ctx->event_queue.count > 0)
         {
             e = ctx->event_queue.events[ctx->event_queue.tl];
-            // TODO check this logic should we increment when taking from the tail?
+            /* TODO check this logic should we increment when taking from the tail? */
             ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
             ctx->event_queue.count--;
             pthread_mutex_unlock(&ctx->event_queue.lock);
@@ -505,7 +506,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             if (err == JVMTI_ERROR_NONE)
             {
                 /* Allocate space for result (max int digist + sign + null) */
-                result = malloc(12);
+                result = arena_alloc(global_ctx->exception_arena, 12);
                 if (result)
                     sprintf(result, "%d", value.i);
             }
@@ -516,7 +517,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalLong(jvmti, thread, 0, param_slot, &value.j);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = malloc(21);
+                result = arena_alloc(global_ctx->exception_arena, 21);
                 if (result)
                     sprintf(result, "%lld", (long long)value.j);
             }
@@ -527,7 +528,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalFloat(jvmti, thread, 0, param_slot, &value.f);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = malloc(32);
+                result = arena_alloc(global_ctx->exception_arena, 32);
                 if (result)
                     sprintf(result, "%f", value.f);
             }
@@ -538,8 +539,8 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalDouble(jvmti, thread, 0, param_slot, &value.d);
             if (err == JVMTI_ERROR_NONE)
             {
-                // TODO check this as it's the same size as a float??
-                result = malloc(32);
+                /* TODO check this as it's the same size as a float?? */
+                result = arena_alloc(global_ctx->exception_arena, 32);
                 if (result)
                     sprintf(result, "%f", value.d);
             }
@@ -550,7 +551,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = malloc(6);
+                result = arena_alloc(global_ctx->exception_arena, 6);
                 if (result)
                     sprintf(result, "%s", value.i ? "true" : "false");
             }
@@ -562,7 +563,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = malloc(12);
+                result = arena_alloc(global_ctx->exception_arena, 12);
                 if (result)
                     sprintf(result, "%d", value.i);
             }
@@ -583,7 +584,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                         const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, obj, NULL);
                         if (str_value)
                         {
-                            result = malloc(strlen(str_value) + 3); /* includes quotes and null */
+                            result = arena_alloc(global_ctx->exception_arena, strlen(str_value) + 3); /* includes quotes and null */
                             if (result)
                                 sprintf(result, "\"%s\"", str_value);
                             
@@ -601,7 +602,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                             const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, str, NULL);
                             if (str_value)
                             {
-                                result = malloc(strlen(str_value) + 1);
+                                result = arena_alloc(global_ctx->exception_arena, strlen(str_value) + 1);
                                 if (result)
                                     strcpy(result, str_value);
 
@@ -610,7 +611,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                         }
                         else
                         {
-                            result = malloc(5);
+                            result = arena_alloc(global_ctx->exception_arena, 5);
                             if (result)
                                 strcpy(result, "null");
                         }
@@ -618,7 +619,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                 }
                 else
                 {
-                    result = malloc(5);
+                    result = arena_alloc(global_ctx->exception_arena, 5);
                     if (result)
                         strcpy(result, "null");
                 }
@@ -626,7 +627,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             break;
         
         default:
-            result = malloc(16);
+            result = arena_alloc(global_ctx->exception_arena, 16);
             if (result)
                 sprintf(result, "<unknown type>");
 
@@ -635,7 +636,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
 
     if (!result)
     {
-        result = malloc(10);
+        result = arena_alloc(global_ctx->exception_arena, 10);
         if (result)
             sprintf(result, "<error>");
     }
@@ -683,7 +684,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     //     printf("[ENTRY] Method from class %s: %s invoked\n", class_signature, method_name);
     // }
 
-    // TODO need to also count the calls - need a histogram style datastructure - or maxheap (bounded mem)
+    /* TODO need to also count the calls - need a histogram style datastructure - or maxheap (bounded mem) */
     if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
     {
         event_enq(global_ctx, class_signature, method_name, method_signature, 1);
@@ -691,7 +692,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     } 
 
 deallocate:
-    // Deallocate memory allocated by JVMTI
+    /* Deallocate memory allocated by JVMTI */
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
@@ -711,7 +712,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     if (jvmti != global_ctx->jvmti_env)
         LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
 
-    // Get method name
+    /* Get method name */
     err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -719,7 +720,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         goto deallocate;
     }
 
-    // Get declaring class
+    /* Get declaring class */
     err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -727,7 +728,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         goto deallocate;
     }
 
-    // Get class signature
+    /* Get class signature */
     err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -740,7 +741,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     //     printf("[EXIT] Method from class%s: %s\n", class_signature, method_name);
     // }
     
-    // TODO count exits from method - same as entry traces
+    /* TODO count exits from method - same as entry traces */
     if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
     {
         event_enq(global_ctx, class_signature, method_name, method_signature, 0);
@@ -748,7 +749,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     }
 
 deallocate:
-    // Deallocate memory allocated by JVMTI
+    /* Deallocate memory allocated by JVMTI */
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
@@ -762,7 +763,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     char *method_name = NULL;
     char *method_signature = NULL;
 
-    //TODO is this needed?
+    /* TODO is this needed? */
     char *generic_signature = NULL;
 
     char *class_name = NULL;
@@ -871,13 +872,17 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
             /* Get the param value */
             char *param_val = get_parameter_value(jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
 
-            LOG(global_ctx, "\tParam %d (%s): %s\n", 
+            LOG(global_ctx, "\tParam %d (%s): %s (sz: %d)\n", 
                 param_idx, 
                 param_name ? param_name : "<unknown>",
-                param_val ? param_val : "<error>");
+                param_val ? param_val : "<error>",
+                sizeof(param_val));
 
             if (param_val)
-                free(param_val);
+            {
+                arena_free(global_ctx->exception_arena, param_val, sizeof(param_val));
+            }
+                
             
             slot++;
             param_idx++;
@@ -1040,7 +1045,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     free(current_section);
     fclose(fp);
 
-    // Set defaults and finalize
+    /* Set defaults and finalize */
     if (!ctx->config.export_method) 
     {
         ctx->config.export_method = strdup("file");
@@ -1085,7 +1090,7 @@ int should_trace_method(agent_context_t *ctx, const char *class_signature, const
         if (strstr(ctx->method_filters[i], class_signature))
             return 1;
     }
-    return 0; // No match
+    return 0; /* No match */
 }
 
 /*
@@ -1115,6 +1120,15 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
+
+    /* Initialize exception arena */
+    /* TODO these numbers need tweaking / investigation */
+    size_t exception_arena_sz = 1024 * 1024;
+    global_ctx->exception_arena = arena_init("exception_arena", exception_arena_sz, 1024);
+    if (!global_ctx->exception_arena) {
+        LOG(global_ctx, "ERROR: Failed to create exception arena\n");
+        return JNI_ERR;
+    }
 
     /* Get JVMTI environment */
     jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
@@ -1272,11 +1286,16 @@ void cleanup(agent_context_t *ctx)
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) {
         cleanup(global_ctx);
+        /* Since the JVM is terminating, we'll just clean up some resources but avoid
+           freeing memory that might be in use by the JVM. The OS will reclaim all
+           memory when the process exits. */
         cleanup_samples(global_ctx);
         cleanup_log_system(global_ctx);
         cleanup_event_system(global_ctx);
+        
+        /* Don't free the context - the JVM still might be using it */
         free(global_ctx);
-        global_ctx = NULL;
+        global_ctx = NULL;    
     }
     printf("JVMTI Agent Unloaded.\n");
 }
