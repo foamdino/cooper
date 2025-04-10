@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <assert.h>
+#include <ctype.h>
 #include <sys/mman.h>
 
 #include "arena.h"
@@ -163,6 +164,37 @@ static inline char *strip_comment(char *str)
 }
 
 /**
+ * Strip trailing comment from a string
+ * 
+ * @param str pointer to check for comment start
+ * @return pointer to a newly allocated string
+ */
+static inline char *strip_comment_safe(const char *str)
+{
+    assert(str!= NULL);
+    if (str == NULL)
+        return NULL;
+
+    const char *comment = strchr(str, '#');
+    size_t len;
+
+    if (comment) {
+        len = comment - str;
+    } else {
+        len = strlen(str);
+    }
+
+    char *new_str = (char *)malloc(len + 1);
+    if (new_str == NULL) {
+        return NULL; /* Allocation failed */
+    }
+    strncpy(new_str, str, len);
+    new_str[len] = '\0';
+
+    return new_str;
+}
+
+/**
  * Trim whitespace from string 
  * 
  * @param str pointer to string to trim
@@ -214,6 +246,37 @@ static inline char *trim(char *str, size_t max_len)
     return start;
 }
 
+static inline char *trim_safe(const char *str)
+{
+    assert(str!= NULL);
+    if (str == NULL)
+        return NULL;
+
+    size_t len = strlen(str);
+    size_t start = 0;
+    size_t end = len;
+
+    /* Skip leading whitespace */
+    while (start < len && isspace((unsigned char)str[start])) {
+        start++;
+    }
+
+    /* Skip trailing whitespace */
+    while (end > start && isspace((unsigned char)str[end - 1])) {
+        end--;
+    }
+
+    size_t trimmed_len = end - start;
+    char *trimmed_str = (char *)malloc(trimmed_len + 1);
+    if (trimmed_str == NULL) {
+        return NULL; /* Allocation failed */
+    }
+    strncpy(trimmed_str, &str[start], trimmed_len);
+    trimmed_str[trimmed_len] = '\0';
+
+    return trimmed_str;
+}
+
 /**
  * Extract and trim the value from a key-value pair (e.g., "method = \"file\" # comment")
  */ 
@@ -241,6 +304,61 @@ static inline char *extract_and_trim_value(char *line)
     }
 
     return value[0] == '\0' ? NULL : value; /* Return NULL if empty */
+}
+
+static inline char *extract_and_trim_value_safe(const char *line)
+{
+    assert(line!= NULL);
+    if (line == NULL)
+        return NULL;
+
+    const char *eq = strchr(line, '=');
+    if (!eq)
+        return NULL; /* No '=' found */
+
+    const char *value_ptr = eq + 1;
+    char *trimmed_value = trim_safe(value_ptr);
+    if (trimmed_value == NULL) {
+        return NULL;
+    }
+
+    size_t trimmed_len = strlen(trimmed_value);
+    if (trimmed_len == 0) {
+        free(trimmed_value);
+        return NULL; /* Empty value after trim */
+    }
+
+    if (trimmed_len > 0 && trimmed_value[0] == '"') {
+        if (trimmed_len <= 1) {
+            free(trimmed_value);
+            return NULL; /* Empty quotes */
+        }
+        const char *end_quote = strchr(&trimmed_value[1], '"');
+        if (!end_quote) {
+            free(trimmed_value);
+            return NULL; /* Malformed: no closing quote */
+        }
+        size_t value_len = end_quote - &trimmed_value[1];
+        if (value_len >= MAX_STR_LEN) {
+            free(trimmed_value);
+            return NULL; /* Value too long */
+        }
+        char *extracted_value = (char *)malloc(value_len + 1);
+        if (extracted_value == NULL) {
+            free(trimmed_value);
+            return NULL; /* Allocation failed */
+        }
+        strncpy(extracted_value, &trimmed_value[1], value_len);
+        extracted_value[value_len] = '\0';
+        free(trimmed_value);
+        return extracted_value;
+    } else {
+        if (trimmed_len >= MAX_STR_LEN) {
+            free(trimmed_value);
+            return NULL; /* Value too long */
+        }
+        return trimmed_value; /* Caller is now responsible for freeing */
+    }
 }
 
 /**

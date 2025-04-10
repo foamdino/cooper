@@ -437,7 +437,7 @@ void export_to_file(agent_context_t *ctx)
     FILE *fp = fopen(ctx->config.sample_file_path, "w");
     if (!fp) 
     {
-        LOG(ctx, "ERROR: Failed to open sample file: %s", ctx->config.sample_file_path);
+        LOG(ctx, "ERROR: Failed to open sample file: %s\n", ctx->config.sample_file_path);
         return;
     }
 
@@ -445,7 +445,7 @@ void export_to_file(agent_context_t *ctx)
     fprintf(fp, "# Full Samples (every event)\n");
     for (int i = 0; i < ctx->full_count; i++) {
         int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
-        LOG(ctx, "%d full sample for sig %s", idx, ctx->full_samples[idx].signature);
+        LOG(ctx, "%d full sample for sig %s\n", idx, ctx->full_samples[idx].signature);
         if (ctx->full_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
                     ctx->full_samples[idx].signature, 
@@ -456,7 +456,7 @@ void export_to_file(agent_context_t *ctx)
     fprintf(fp, "# Nth Samples (every %d events)\n", ctx->config.rate);
     for (int i = 0; i < ctx->nth_count; i++) {
         int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
-        LOG(ctx, "%d nth sample for sig %s", idx, ctx->nth_samples[idx].signature);
+        LOG(ctx, "%d nth sample for sig %s\n", idx, ctx->nth_samples[idx].signature);
         if (ctx->nth_samples[idx].signature) {
             fprintf(fp, "%s entries=%d exits=%d\n", 
                     ctx->nth_samples[idx].signature, 
@@ -935,6 +935,9 @@ deallocate:
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_signature);
 }
 
+/**
+ * Load the config from the config file. Uses free directly rather than arena_alloc/free
+ */
 int load_config(agent_context_t *ctx, const char *cf)
 {
     assert(ctx != NULL);
@@ -956,8 +959,8 @@ int load_config(agent_context_t *ctx, const char *cf)
     while (fgets(line, sizeof(line), fp))
     {
         /* clean input line */
-        char *trimmed = trim(line, MAX_STR_LEN);
-        strip_comment(trimmed);
+        char *trimmed = trim_safe(line);
+        trimmed = strip_comment_safe(trimmed);
         /* skip empty lines */
         if (trimmed[0] == '\0')
             continue;
@@ -965,7 +968,9 @@ int load_config(agent_context_t *ctx, const char *cf)
         /* This is a section header, move to the next line for config data */
         if (trimmed[0] == '[')
         {
-            free(current_section);
+            if (current_section) 
+                free(current_section);
+            
             current_section = strdup(trimmed);
             if (!current_section)
             {
@@ -1011,7 +1016,7 @@ int load_config(agent_context_t *ctx, const char *cf)
         else
         {
             /* Grab the data value from the trimmed line */
-            char *value = extract_and_trim_value(trimmed);
+            char *value = extract_and_trim_value_safe(trimmed);
             if (!value)
                 continue;
 
@@ -1040,6 +1045,9 @@ int load_config(agent_context_t *ctx, const char *cf)
                 }
             }
         }
+
+        if (trimmed)
+            free(trimmed);
     }
 
     free(current_section);
@@ -1169,7 +1177,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    LOG(global_ctx, "Config: rate=%d, method='%s', path='%s'",
+    LOG(global_ctx, "Config: rate=%d, method='%s', path='%s'\n",
         global_ctx->config.rate, global_ctx->config.export_method, global_ctx->config.sample_file_path);
 
     if (strcmp(global_ctx->config.export_method, "file") != 0)

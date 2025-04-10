@@ -109,7 +109,6 @@ void *arena_alloc(arena_t *arena, size_t size)
 int arena_free(arena_t *arena, void *ptr, size_t size) 
 {
     assert(arena != NULL);
-    assert(size > 0);
     
     if (!ptr || size == 0)
         return 0;

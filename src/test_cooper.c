@@ -53,6 +53,109 @@ static void test_trim()
     printf("[TEST] trim: All tests passed\n");
 }
 
+// Test trim_safe function
+static void test_trim_safe() 
+{
+    char *result1 = trim_safe("  hello  \n");
+    assert(result1 != NULL);
+    assert(strcmp(result1, "hello") == 0);
+    free(result1);
+
+    char *result2 = trim_safe(" \t\n");
+    assert(result2 != NULL);
+    assert(strlen(result2) == 0);
+    free(result2);
+
+    char *result3 = trim_safe("no_spaces");
+    assert(result3 != NULL);
+    assert(strcmp(result3, "no_spaces") == 0);
+    free(result3);
+
+    char *result4 = trim_safe("");
+    assert(result4 != NULL);
+    assert(strlen(result4) == 0);
+    free(result4);
+
+    /* The function uses assert internally, so we can't directly test NULL input */
+    /* assert(trim_safe(NULL) == NULL); */
+
+    printf("[TEST] trim_safe: All tests passed\n");
+}
+
+// Test strip_comment_safe function
+static void test_strip_comment_safe() 
+{
+    char *result1 = strip_comment_safe("hello # comment");
+    assert(result1 != NULL);
+    assert(strcmp(result1, "hello ") == 0);
+    free(result1);
+
+    char *result2 = strip_comment_safe("no comment here");
+    assert(result2 != NULL);
+    assert(strcmp(result2, "no comment here") == 0);
+    free(result2);
+
+    char *result3 = strip_comment_safe("# comment only");
+    assert(result3 != NULL);
+    assert(strcmp(result3, "") == 0);
+    free(result3);
+
+    char *result4 = strip_comment_safe("");
+    assert(result4 != NULL);
+    assert(strlen(result4) == 0);
+    free(result4);
+
+    /* The function uses assert internally, so we can't directly test NULL input */
+    /* assert(strip_comment_safe(NULL) == NULL); */
+
+    printf("[TEST] strip_comment_safe: All tests passed\n");
+}
+
+// Test extract_and_trim_value_safe function
+static void test_extract_and_trim_value_safe() 
+{
+    // Standard key-value pair
+    char *result1 = extract_and_trim_value_safe("key = value");
+    assert(result1 != NULL);
+    assert(strcmp(result1, "value") == 0);
+    free(result1);
+
+    // Key-value pair with extra whitespace
+    char *result2 = extract_and_trim_value_safe("key =   value   ");
+    assert(result2 != NULL);
+    assert(strcmp(result2, "value") == 0);
+    free(result2);
+
+    // Key-value pair with no space after equals
+    char *result3 = extract_and_trim_value_safe("key=value");
+    assert(result3 != NULL);
+    assert(strcmp(result3, "value") == 0);
+    free(result3);
+    
+    // Key with no value (should return NULL)
+    char *result4 = extract_and_trim_value_safe("key = ");
+    assert(result4 == NULL);
+
+    // No equals sign (should return NULL)
+    char *result5 = extract_and_trim_value_safe("key value");
+    assert(result5 == NULL);
+
+    // Only equals sign
+    char *result6 = extract_and_trim_value_safe("=value");
+    assert(result6 != NULL);
+    assert(strcmp(result6, "value") == 0);
+    free(result6);
+
+    /* The function uses assert internally, so we can't directly test NULL input */
+    /* assert(extract_and_trim_value_safe(NULL) == NULL); */
+
+    // Empty string
+    char *result7 = extract_and_trim_value_safe("");
+    assert(result7 == NULL);
+
+    printf("[TEST] extract_and_trim_value_safe: All tests passed\n");
+}
+
 // Test load_config with a simple config
 static void test_load_config() 
 {
@@ -268,6 +371,9 @@ int main()
     printf("Running unit tests for cooper.c...\n");
 
     test_trim();
+    test_trim_safe();
+    test_strip_comment_safe();
+    test_extract_and_trim_value_safe();
     test_load_config();
     test_should_trace_method();
     test_log_queue();
