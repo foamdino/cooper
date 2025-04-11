@@ -872,11 +872,10 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
             /* Get the param value */
             char *param_val = get_parameter_value(jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
 
-            LOG(global_ctx, "\tParam %d (%s): %s (sz: %d)\n", 
+            LOG(global_ctx, "\tParam %d (%s): %s\n", 
                 param_idx, 
                 param_name ? param_name : "<unknown>",
-                param_val ? param_val : "<error>",
-                sizeof(param_val));
+                param_val ? param_val : "<error>");
 
             if (param_val)
             {
@@ -937,10 +936,31 @@ deallocate:
 
 /**
  * Load the config from the config file. Uses free directly rather than arena_alloc/free
+ *
+ * Notes: 
+ * The caller is responsible for freeing the memory pointed to by: 
+ * 
+ * - ctx->config.filters (and the strings within it), 
+ * - ctx->config.sample_file_path, 
+ * - and ctx->config.export_method 
+ * 
+ * when the agent_context_t is no longer needed.
+ * 
+ * If a NULL is passed for the config file pointer, the default config file is used instead
+ * 
+ * @param ctx Pointer to agent_context_t
+ * @param cf const char pointer to config file to load
+ * 
+ * @return 0 on success or 1 on failure
  */
 int load_config(agent_context_t *ctx, const char *cf)
 {
     assert(ctx != NULL);
+    
+    int res = 0;
+    
+    if (ctx == NULL) 
+        return 1;
     
     LOG(ctx, "INFO: loading config from: %s, default config_file: %s\n", cf, DEFAULT_CFG_FILE);
     if (!cf) 
@@ -975,8 +995,8 @@ int load_config(agent_context_t *ctx, const char *cf)
             if (!current_section)
             {
                 LOG(ctx, "ERROR: Failed to allocate memory for section\n");
-                fclose(fp);
-                return 1;
+                res = 1;
+                goto cleanup;
             }
             continue;
         }
@@ -1001,14 +1021,14 @@ int load_config(agent_context_t *ctx, const char *cf)
             if (!tmp)
             {
                 LOG(ctx, "ERROR: Failed to allocate memory for filters\n");
-                free(current_section);
-                fclose(fp);
-                return 1;
+                res = 1;
+                goto cleanup;
             }
             ctx->config.filters = tmp;
 
             /* Copy filter value to ctx filter storage */
             ctx->config.filters[ctx->config.num_filters - 1] = strdup(trimmed);
+            LOG(ctx, "DEBUG: Added filter: %s\n", ctx->config.filters[ctx->config.num_filters - 1]);
             /* Check we have the new filter */
             if (!ctx->config.filters[ctx->config.num_filters -1])
                 LOG(ctx, "ERROR: Failed to duplicate filter: %s\n", trimmed);
@@ -1050,8 +1070,24 @@ int load_config(agent_context_t *ctx, const char *cf)
             free(trimmed);
     }
 
+cleanup:
     free(current_section);
     fclose(fp);
+    /* check for prior error */
+    if (res)
+    {
+        /* Free already allocated filters */
+        if (ctx->config.filters) 
+        {
+            for (int i = 0; i < ctx->config.num_filters - 1; i++) { // Note the -1
+                free(ctx->config.filters[i]);
+            }
+            free(ctx->config.filters);
+            ctx->config.filters = NULL;
+            ctx->config.num_filters = 0;
+        }
+        return res;
+    }
 
     /* Set defaults and finalize */
     if (!ctx->config.export_method) 
@@ -1133,7 +1169,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     /* TODO these numbers need tweaking / investigation */
     size_t exception_arena_sz = 1024 * 1024;
     global_ctx->exception_arena = arena_init("exception_arena", exception_arena_sz, 1024);
-    if (!global_ctx->exception_arena) {
+    if (!global_ctx->exception_arena) 
+    {
         LOG(global_ctx, "ERROR: Failed to create exception arena\n");
         return JNI_ERR;
     }
@@ -1292,16 +1329,12 @@ void cleanup(agent_context_t *ctx)
  * JVMTI Agent Unload Function
  */
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
-    if (global_ctx) {
+    if (global_ctx) 
+    {
         cleanup(global_ctx);
-        /* Since the JVM is terminating, we'll just clean up some resources but avoid
-           freeing memory that might be in use by the JVM. The OS will reclaim all
-           memory when the process exits. */
         cleanup_samples(global_ctx);
         cleanup_log_system(global_ctx);
         cleanup_event_system(global_ctx);
-        
-        /* Don't free the context - the JVM still might be using it */
         free(global_ctx);
         global_ctx = NULL;    
     }
