@@ -116,6 +116,7 @@ struct agent_context
     arena_t *log_arena;             /**< Arena for log strings memory allocation */
     arena_t *event_arena;           /**< Arena for events memory allocation */
     arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
+    arena_t *config_arena;          /**< Arena for config file strings (filters etc) */
 };
 
 /* jmvti callback functions */
@@ -143,241 +144,151 @@ void cleanup_event_system(agent_context_t *ctx);
 void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
 
-
-/* extern char *strip_comment(char *str);
-   extern char *trim(char *str);
-   extern char *extract_and_trim_value(char *line);
-   extern int set_config_string(char **dest, const char *value); */
+/**
+ * String utility functions for configuration parsing
+ * 
+ * These functions provide safe string manipulation operations for
+ * configuration parsing, with clear ownership semantics and arena-based
+ * memory management.
+ */
 
 /**
- * Strip trailing comment from a string (returns pointer to start, modifies in place)
+ * Strip trailing comment from a string using arena allocation
  * 
- * @param str pointer to check for comment start
+ * @param arena     Pointer to the arena
+ * @param str       String to process
+ * @return          Newly allocated string without comments, or NULL on error
  */
-static inline char *strip_comment(char *str) 
+static char *arena_strip_comment(arena_t *arena, const char *str)
 {
+    assert(arena != NULL);
     assert(str != NULL);
-
-    if (str == NULL)
+    
+    if (!arena || !str)
         return NULL;
-
-    char *comment = strchr(str, '#');
-    if (comment)
-        *comment = '\0'; /* Truncate at comment start */
-
-    return str;
-}
-
-/**
- * Strip trailing comment from a string
- * 
- * @param str pointer to check for comment start
- * @return pointer to a newly allocated string
- */
-static inline char *strip_comment_safe(const char *str)
-{
-    assert(str!= NULL);
-    if (str == NULL)
-        return NULL;
-
+    
+    // Find the comment marker
     const char *comment = strchr(str, '#');
     size_t len;
-
+    
     if (comment) {
         len = comment - str;
     } else {
         len = strlen(str);
     }
-
-    char *new_str = (char *)malloc(len + 1);
-    if (new_str == NULL) {
-        return NULL; /* Allocation failed */
-    }
-    strncpy(new_str, str, len);
-    new_str[len] = '\0';
-
-    return new_str;
+    
+    // Allocate and copy the substring
+    char *result = arena_alloc(arena, len + 1);
+    if (!result)
+        return NULL;
+    
+    memcpy(result, str, len);
+    result[len] = '\0';
+    
+    return result;
 }
 
 /**
- * Trim whitespace from string 
+ * Trim whitespace from a string using arena allocation
  * 
- * @param str pointer to string to trim
- * @param max_len maximum length of string supported
- * 
- * @retval trimmed str pointer
+ * @param arena     Pointer to the arena
+ * @param str       String to trim
+ * @return          Newly allocated trimmed string, or NULL on error
  */
-static inline char *trim(char *str, size_t max_len)
+static char *arena_trim(arena_t *arena, const char *str)
 {
+    assert(arena != NULL);
     assert(str != NULL);
-
-    char *start = NULL;
-    char *end = NULL;
-    size_t len = 0;
-
-    if (str == NULL)
+    
+    if (!arena || !str)
         return NULL;
-
-    /* Skip leading whitespace */
-    start = str;
-    while ((*start == ' ' || *start == '\t' || *start == '\n') && len < max_len) 
-    {
-        start++;
-        len++;
-    }
-
-    /* If str is empty just return it */
-    if (*start == '\0' || len >= max_len)
-        return start;
-
-    /* Find the end of the string */
-    end = start;
-    char *last_non_whitespace = NULL;
-
-    /* Track the last non-whitespace character */
-    while (*end != '\0' && len < max_len) 
-    {
-        if (*end != ' ' && *end != '\t' && *end != '\n')
-            last_non_whitespace = end;
-        
-        end++;
-        len++;
+    
+    // Skip leading whitespace
+    while (isspace((unsigned char)*str))
+        str++;
+    
+    // All whitespace or empty string
+    if (*str == '\0') {
+        char *result = arena_alloc(arena, 1);
+        if (result)
+            *result = '\0';
+        return result;
     }
     
-    /* If we found non-whitespace characters, null-terminate after the last one */
-    if (last_non_whitespace != NULL)
-        *(last_non_whitespace + 1) = '\0';
-    
-    return start;
-}
-
-static inline char *trim_safe(const char *str)
-{
-    assert(str!= NULL);
-    if (str == NULL)
-        return NULL;
-
+    // Find the end of the string
     size_t len = strlen(str);
-    size_t start = 0;
-    size_t end = len;
-
-    /* Skip leading whitespace */
-    while (start < len && isspace((unsigned char)str[start])) {
-        start++;
-    }
-
-    /* Skip trailing whitespace */
-    while (end > start && isspace((unsigned char)str[end - 1])) {
+    const char *end = str + len - 1;
+    
+    // Move backward to find the last non-whitespace character
+    while (end > str && isspace((unsigned char)*end))
         end--;
-    }
-
-    size_t trimmed_len = end - start;
-    char *trimmed_str = (char *)malloc(trimmed_len + 1);
-    if (trimmed_str == NULL) {
-        return NULL; /* Allocation failed */
-    }
-    strncpy(trimmed_str, &str[start], trimmed_len);
-    trimmed_str[trimmed_len] = '\0';
-
-    return trimmed_str;
+    
+    // Calculate the trimmed length
+    size_t trimmed_len = end - str + 1;
+    
+    // Allocate and copy the trimmed string
+    char *result = arena_alloc(arena, trimmed_len + 1);
+    if (!result)
+        return NULL;
+    
+    memcpy(result, str, trimmed_len);
+    result[trimmed_len] = '\0';
+    
+    return result;
 }
 
 /**
- * Extract and trim the value from a key-value pair (e.g., "method = \"file\" # comment")
- */ 
-static inline char *extract_and_trim_value(char *line)
+ * Extract value part from a "key = value" string and trim it, using arena allocation
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Extracted and trimmed value, or NULL if no value found or on error
+ */
+static char *arena_extract_and_trim_value(arena_t *arena, const char *line)
 {
+    assert(arena != NULL);
     assert(line != NULL);
-
-    if (line == NULL)
+    
+    if (!arena || !line)
         return NULL;
     
-    char *eq = strchr(line, '=');
-    if (!eq) 
-        return NULL; /* No '=' found */
-
-    char *value = eq + 1;
-    value = trim(value, MAX_STR_LEN); /* Trim leading/trailing whitespace */
-
-    /* Handle quoted strings */
-    if (value[0] == '"') 
-    {
-        value++; /* Skip opening quote */
-        char *end = strchr(value, '"');
-        if (end) *end = '\0'; /* Remove closing quote */
-        else return NULL; /* Malformed: no closing quote */
-    }
-
-    return value[0] == '\0' ? NULL : value; /* Return NULL if empty */
-}
-
-static inline char *extract_and_trim_value_safe(const char *line)
-{
-    assert(line!= NULL);
-    if (line == NULL)
-        return NULL;
-
+    // Find the equals sign
     const char *eq = strchr(line, '=');
     if (!eq)
-        return NULL; /* No '=' found */
-
-    const char *value_ptr = eq + 1;
-    char *trimmed_value = trim_safe(value_ptr);
-    if (trimmed_value == NULL) {
         return NULL;
-    }
-
-    size_t trimmed_len = strlen(trimmed_value);
-    if (trimmed_len == 0) {
-        free(trimmed_value);
-        return NULL; /* Empty value after trim */
-    }
-
-    if (trimmed_len > 0 && trimmed_value[0] == '"') {
-        if (trimmed_len <= 1) {
-            free(trimmed_value);
-            return NULL; /* Empty quotes */
-        }
-        const char *end_quote = strchr(&trimmed_value[1], '"');
-        if (!end_quote) {
-            free(trimmed_value);
-            return NULL; /* Malformed: no closing quote */
-        }
-        size_t value_len = end_quote - &trimmed_value[1];
-        if (value_len >= MAX_STR_LEN) {
-            free(trimmed_value);
-            return NULL; /* Value too long */
-        }
-        char *extracted_value = (char *)malloc(value_len + 1);
-        if (extracted_value == NULL) {
-            free(trimmed_value);
-            return NULL; /* Allocation failed */
-        }
-        strncpy(extracted_value, &trimmed_value[1], value_len);
-        extracted_value[value_len] = '\0';
-        free(trimmed_value);
-        return extracted_value;
-    } else {
-        if (trimmed_len >= MAX_STR_LEN) {
-            free(trimmed_value);
-            return NULL; /* Value too long */
-        }
-        return trimmed_value; /* Caller is now responsible for freeing */
-    }
+    
+    // Move to the value part (after the equals sign)
+    const char *value_start = eq + 1;
+    
+    // Trim the value part
+    return arena_trim(arena, value_start);
 }
 
 /**
- * Helper function to set config strings with error handling
+ * Process a line from a configuration file - strip comments and trim whitespace
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Processed line, or NULL on error
  */
-static inline int set_config_string(char **dest, const char *value)
+static char *arena_process_config_line(arena_t *arena, const char *line)
 {
-    assert(value != NULL);
+    assert(arena != NULL);
+    assert(line != NULL);
     
-    char *new_value = strdup(value);
-    if (!new_value) return 0; /* Failure */
-    if (*dest) free(*dest);
-    *dest = new_value;
-    return 1; /* Success */
+    if (!arena || !line)
+        return NULL;
+    
+    // First strip comments, then trim whitespace
+    char *without_comments = arena_strip_comment(arena, line);
+    if (!without_comments)
+        return NULL;
+    
+    char *trimmed = arena_trim(arena, without_comments);
+    
+    // We can return trimmed directly - no need to free without_comments
+    // as it's managed by the arena
+    return trimmed;
 }
 
 /**

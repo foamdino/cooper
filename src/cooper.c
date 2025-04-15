@@ -83,7 +83,7 @@ void log_enq(agent_context_t *ctx, const char *msg)
 
     if (ctx->log_queue.count < LOG_Q_SZ)
     {
-        ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(global_ctx->log_arena, msg);
+        ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(ctx->log_arena, msg);
         if (ctx->log_queue.messages[ctx->log_queue.hd])
         {
             ctx->log_queue.hd = (ctx->log_queue.hd + 1) % LOG_Q_SZ;
@@ -314,9 +314,9 @@ void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_n
     if (ctx->event_queue.count < EVENT_Q_SZ)
     {
         trace_event_t *e = &ctx->event_queue.events[ctx->event_queue.hd];
-        e->class_sig = arena_strdup(global_ctx->event_arena, class_sig);
-        e->method_name = arena_strdup(global_ctx->event_arena, method_name);
-        e->method_sig = arena_strdup(global_ctx->event_arena, method_sig);
+        e->class_sig = arena_strdup(ctx->event_arena, class_sig);
+        e->method_name = arena_strdup(ctx->event_arena, method_name);
+        e->method_sig = arena_strdup(ctx->event_arena, method_sig);
         e->is_entry = is_entry;
 
         if (!e->class_sig || !e->method_name || !e->method_sig) 
@@ -1036,23 +1036,15 @@ deallocate:
 }
 
 /**
- * Load the config from the config file. Uses free directly rather than arena_alloc/free
- *
- * Notes: 
- * The caller is responsible for freeing the memory pointed to by: 
+ * Load agent configuration from a file
  * 
- * - ctx->config.filters (and the strings within it), 
- * - ctx->config.sample_file_path, 
- * - and ctx->config.export_method 
+ * Uses arena-based memory management for all string operations.
+ * The config_arena persists for the lifetime of the agent, so all
+ * config strings remain valid until agent shutdown.
  * 
- * when the agent_context_t is no longer needed.
- * 
- * If a NULL is passed for the config file pointer, the default config file is used instead
- * 
- * @param ctx Pointer to agent_context_t
- * @param cf const char pointer to config file to load
- * 
- * @return 0 on success or 1 on failure
+ * @param ctx       Pointer to agent context
+ * @param cf        Path to config file, or NULL to use default
+ * @return          0 on success, 1 on failure
  */
 int load_config(agent_context_t *ctx, const char *cf)
 {
@@ -1073,75 +1065,41 @@ int load_config(agent_context_t *ctx, const char *cf)
         LOG(ctx, "ERROR: Could not open config file: %s\n", cf);
         return 1;
     }
-
+    
     char line[256];
     char *current_section = NULL;
-    char *trimmed = NULL;
-    char *value = NULL;
-
+    
     while (fgets(line, sizeof(line), fp))
     {
-        /* Clean up from previous iteration if needed */
-        if (trimmed) 
+        // Process the line (strip comments, trim whitespace)
+        char *processed = arena_process_config_line(ctx->config_arena, line);
+        if (!processed || processed[0] == '\0')
+            continue;  // Skip empty lines
+        
+        // Handle section headers
+        if (processed[0] == '[')
         {
-            free(trimmed);
-            trimmed = NULL;
-        }
-        if (value) 
-        {
-            free(value);
-            value = NULL;
-        }
-
-        /* clean input line */
-        trimmed = trim_safe(line);
-        trimmed = strip_comment_safe(trimmed);
-        /* skip empty lines */
-        if (trimmed[0] == '\0')
-            continue;
-
-        /* This is a section header, move to the next line for config data */
-        if (trimmed[0] == '[')
-        {
-            if (current_section) 
-                free(current_section);
-            
-            current_section = strdup(trimmed);
-            if (!current_section)
-            {
-                LOG(ctx, "ERROR: Failed to allocate memory for section\n");
-                res = 1;
-                goto cleanup;
-            }
-            free(trimmed);
-            trimmed = NULL;
+            current_section = processed;  // Just point to the arena-allocated string
             continue;
         }
-
-        /* Skip any data before the first section */
+        
+        // Skip any data before the first section
         if (!current_section)
-        {
-            free(trimmed);
-            trimmed = NULL;
             continue;
-        }
-
-        /* Based on the section we're in we can interpret the value differently */
+        
+        // Based on the section we're in, interpret the value differently
         if (strcmp(current_section, "[method_signatures]") == 0)
         {
-            LOG(ctx, "DEBUG: Processing line in [method_signatures]: '%s'\n", trimmed);
-            /* Skip over the filters line, end of filters is a line containing a single ']' */
-            if (strncmp(trimmed, "filters =", 9) == 0 || trimmed[0] == ']')
-            {
-                free(trimmed);
-                trimmed = NULL;
+            LOG(ctx, "DEBUG: Processing line in [method_signatures]: '%s'\n", processed);
+            // Skip over the filters line, end of filters is a line containing a single ']'
+            if (strncmp(processed, "filters =", 9) == 0 || processed[0] == ']')
                 continue;
-            }
-
-            /* Process a filter entry */
+            
+            // Process a filter entry
             ctx->config.num_filters++;
-            LOG(ctx, "DEBUG: Adding filter #%d: '%s'\n", ctx->config.num_filters, trimmed);
-            /* Adjust filter storage */
+            LOG(ctx, "DEBUG: Adding filter #%d: '%s'\n", ctx->config.num_filters, processed);
+            
+            // Adjust filter storage
             char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
             if (!tmp)
             {
@@ -1150,25 +1108,18 @@ int load_config(agent_context_t *ctx, const char *cf)
                 goto cleanup;
             }
             ctx->config.filters = tmp;
-
-            /* Copy filter value to ctx filter storage */
-            ctx->config.filters[ctx->config.num_filters - 1] = strdup(trimmed);
+            
+            // Use the string directly from the arena - no need for strdup
+            ctx->config.filters[ctx->config.num_filters - 1] = processed;
             LOG(ctx, "DEBUG: Added filter: %s\n", ctx->config.filters[ctx->config.num_filters - 1]);
-            /* Check we have the new filter */
-            if (!ctx->config.filters[ctx->config.num_filters -1])
-                LOG(ctx, "ERROR: Failed to duplicate filter: %s\n", trimmed);
         }
         else
         {
-            /* Grab the data value from the trimmed line */
-            char *value = extract_and_trim_value_safe(trimmed);
+            // Extract and trim the value part
+            char *value = arena_extract_and_trim_value(ctx->config_arena, processed);
             if (!value)
-            {
-                free(trimmed);
-                trimmed = NULL;
                 continue;
-            }
-
+            
             if (strcmp(current_section, "[sample_rate]") == 0)
             {
                 int rate;
@@ -1177,65 +1128,58 @@ int load_config(agent_context_t *ctx, const char *cf)
             }
             else if (strcmp(current_section, "[sample_file_location]") == 0)
             {
-                if (!set_config_string(&ctx->config.sample_file_path, value))
-                    LOG(ctx, "ERROR: Failed to duplicate sample_file_path: %s\n", value);
+                // Store the arena-allocated string directly
+                ctx->config.sample_file_path = value;
             }
             else if (strcmp(current_section, "[export]") == 0)
             {
-                if (strstr(trimmed, "method"))
+                if (strstr(processed, "method"))
                 {
-                    if (!set_config_string(&ctx->config.export_method, value))
-                        LOG(ctx, "ERROR: Failed to duplicate export_method: %s\n", value);
+                    // Store the arena-allocated string directly
+                    ctx->config.export_method = value;
                 }
-                else if (strstr(trimmed, "interval"))
+                else if (strstr(processed, "interval"))
                 {
                     if (sscanf(value, "%d", &ctx->config.export_interval) != 1)
                         LOG(ctx, "WARNING: Invalid interval value: %s\n", value);
                 }
             }
         }
-
-        free(trimmed);
-        trimmed = NULL;
     }
-
+    
 cleanup:
-    if (current_section) free(current_section);
-    if (trimmed) free(trimmed);
-    if (value) free(value);
-
     fclose(fp);
-    /* check for prior error */
+    
+    // Check for prior error
     if (res)
     {
-        /* Free already allocated filters */
+        // Just free the array of pointers, not the strings themselves
         if (ctx->config.filters) 
         {
-            for (int i = 0; i < ctx->config.num_filters - 1; i++) { // Note the -1
-                free(ctx->config.filters[i]);
-            }
             free(ctx->config.filters);
             ctx->config.filters = NULL;
             ctx->config.num_filters = 0;
         }
         return res;
     }
-
-    /* Set defaults and finalize */
+    
+    // Set defaults if needed
     if (!ctx->config.export_method) 
     {
-        ctx->config.export_method = strdup("file");
+        ctx->config.export_method = arena_strdup(ctx->config_arena, "file");
         if (!ctx->config.export_method)
             LOG(ctx, "ERROR: Failed to set default export_method\n");
     }
+    
+    // Setup method filters
     ctx->method_filters = ctx->config.filters;
     ctx->num_filters = ctx->config.num_filters;
-
+    
     LOG(ctx, "Config loaded: rate=%d, filters=%d, path=%s, method=%s\n",
         ctx->config.rate, ctx->num_filters,
         ctx->config.sample_file_path ? ctx->config.sample_file_path : "NULL",
         ctx->config.export_method ? ctx->config.export_method : "NULL");
-
+    
     return 0;
 }
 
@@ -1334,6 +1278,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->sample_arena) 
     {
         LOG(global_ctx, "ERROR: Failed to create sample arena\n");
+        return JNI_ERR;
+    }
+
+    size_t config_arena_sz = 512 * 1024;
+    global_ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+    if (!global_ctx->config_arena) 
+    {
+        LOG(global_ctx, "ERROR: Failed to create config arena\n");
         return JNI_ERR;
     }
 
@@ -1465,20 +1417,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 void cleanup(agent_context_t *ctx)
 {
     /* check if we have work to do */
-    if (ctx->config.filters) {
-        for (int i = 0; i < ctx->num_filters; i++) {
-            if (ctx->config.filters[i]) 
-                free(ctx->config.filters[i]);
-        }
+    if (ctx->config.filters) 
+    {
+        /* Only free the array of pointers, strings are handled by config_arena */
         free(ctx->config.filters);
     }
 
-    if (ctx->config.sample_file_path) 
-        free(ctx->config.sample_file_path);
-
-    if (ctx->config.export_method) 
-        free(ctx->config.export_method);
-
+    /* Reset config values (no need to free arena allocated strings) */
     ctx->config.filters = NULL;
     ctx->config.num_filters = 0;
     ctx->config.sample_file_path = NULL;
@@ -1507,11 +1452,35 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         cleanup_log_system(global_ctx);
         cleanup_event_system(global_ctx);
 
-        /* Cleanup the exception arena */
+        /* Cleanup the arenas */
         if (global_ctx->exception_arena)
         {
             arena_destroy(global_ctx->exception_arena);
             global_ctx->exception_arena = NULL;
+        }
+
+        if (global_ctx->sample_arena) 
+        {
+            arena_destroy(global_ctx->sample_arena);
+            global_ctx->sample_arena = NULL;
+        }
+        
+        if (global_ctx->event_arena) 
+        {
+            arena_destroy(global_ctx->event_arena);
+            global_ctx->event_arena = NULL;
+        }
+        
+        if (global_ctx->log_arena) 
+        {
+            arena_destroy(global_ctx->log_arena);
+            global_ctx->log_arena = NULL;
+        }
+        
+        if (global_ctx->config_arena) 
+        {
+            arena_destroy(global_ctx->config_arena);
+            global_ctx->config_arena = NULL;
         }
 
         /* Destroy mutex */
