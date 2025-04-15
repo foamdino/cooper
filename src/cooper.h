@@ -112,7 +112,10 @@ struct agent_context
     pthread_t export_thread;        /**< Export thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     config_t config;                /**< Agent configuration */
-    arena_t *exception_arena;        /**< Arena for exception memory allocation */
+    arena_t *exception_arena;       /**< Arena for exception memory allocation */
+    arena_t *log_arena;             /**< Arena for log strings memory allocation */
+    arena_t *event_arena;           /**< Arena for events memory allocation */
+    arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
 };
 
 /* jmvti callback functions */
@@ -375,6 +378,27 @@ static inline int set_config_string(char **dest, const char *value)
     if (*dest) free(*dest);
     *dest = new_value;
     return 1; /* Success */
+}
+
+/**
+ * Duplicate a string using arena memory
+ * 
+ * @param arena     Pointer to the arena
+ * @param str       String to duplicate
+ * @return          Pointer to the duplicated string in arena memory, or NULL on failure
+ */
+static inline char *arena_strdup(arena_t *arena, const char *str)
+{
+    if (!arena || !str) return NULL;
+    
+    size_t len = strlen(str);
+    /* +1 for null terminator */
+    char *dup = arena_alloc(arena, len + 1);
+    if (dup) {
+        memcpy(dup, str, len);
+        dup[len] = '\0';
+    }
+    return dup;
 }
 
 #endif /* COOPER_H */

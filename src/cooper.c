@@ -65,11 +65,14 @@ int init_log_q(agent_context_t *ctx)
 }
 
 /**
- * Enqueue a msg to the log q 
+ * Enqueue a msg to the log q
+ * 
+ * Note: This function allocates memory for the message using strdup.
+ * The allocated memory must be freed by the log cleanup system.
  * 
  * @param msg Pointer to msg to add
  * 
- * */
+ */
 void log_enq(agent_context_t *ctx, const char *msg)
 {
     assert(ctx != NULL);
@@ -80,7 +83,7 @@ void log_enq(agent_context_t *ctx, const char *msg)
 
     if (ctx->log_queue.count < LOG_Q_SZ)
     {
-        ctx->log_queue.messages[ctx->log_queue.hd] = strdup(msg);
+        ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(global_ctx->log_arena, msg);
         if (ctx->log_queue.messages[ctx->log_queue.hd])
         {
             ctx->log_queue.hd = (ctx->log_queue.hd + 1) % LOG_Q_SZ;
@@ -118,6 +121,16 @@ char *log_deq(agent_context_t *ctx)
     return msg;
 }
 
+/**
+ * Logger thread function that writes messages from the log queue
+ * 
+ * This function processes messages from the log queue and writes them
+ * to the configured log file. With arena-based memory management,
+ * we no longer need to free individual message strings.
+ *
+ * @param arg       Pointer to agent_context_t cast as void*
+ * @return          NULL on thread completion
+ */
 void *log_thread_func(void *arg)
 {
     assert(arg != NULL);
@@ -150,7 +163,6 @@ void *log_thread_func(void *arg)
             /* We assume that messages have a trailing new line here - we could check and add if missing */
             fprintf(ctx->log_file, "%s", msg);
             fflush(ctx->log_file);
-            free(msg);
         }
         else /* Nothing to do so release lock */
             pthread_mutex_unlock(&ctx->log_queue.lock);    
@@ -206,11 +218,17 @@ void cleanup_log_system(agent_context_t *ctx)
     while ((msg = log_deq(ctx)) != NULL)
     {
         fprintf(ctx->log_file, "%s\n", msg);
-        free(msg);
     }
 
     if (ctx->log_file != stdout && ctx->log_file != stderr)
         fclose(ctx->log_file);
+
+    /* With an arena we can free all the log strings at once */
+    if (ctx->log_arena)
+    {
+        arena_destroy(ctx->log_arena);
+        ctx->log_arena = NULL;
+    }
 
     pthread_cond_destroy(&ctx->log_queue.cond);
     pthread_mutex_destroy(&ctx->log_queue.lock);
@@ -240,21 +258,25 @@ void cleanup_samples(agent_context_t *ctx)
     
     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
     {
-        if (ctx->full_samples[i].signature)
-        {
-            free(ctx->full_samples[i].signature);
-            ctx->full_samples[i].signature = NULL;
-        }
+        ctx->full_samples[i].signature = NULL;
+        ctx->full_samples[i].entry_count = 0;
+        ctx->full_samples[i].exit_count = 0;
     }
     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
     {
-        if (ctx->nth_samples[i].signature)
-        {
-            free(ctx->nth_samples[i].signature);
-            ctx->nth_samples[i].signature = NULL;
-        }
+        
+        ctx->nth_samples[i].signature = NULL;
+        ctx->nth_samples[i].entry_count = 0;
+        ctx->nth_samples[i].exit_count = 0;
+        
     }
     ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
+
+    if (ctx->sample_arena)
+    {
+        arena_destroy(ctx->sample_arena);
+        ctx->sample_arena = NULL;
+    }
 }
 
 int init_event_q(agent_context_t *ctx)
@@ -292,17 +314,14 @@ void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_n
     if (ctx->event_queue.count < EVENT_Q_SZ)
     {
         trace_event_t *e = &ctx->event_queue.events[ctx->event_queue.hd];
-        e->class_sig = strdup(class_sig);
-        e->method_name = strdup(method_name);
-        e->method_sig = strdup(method_sig);
+        e->class_sig = arena_strdup(global_ctx->event_arena, class_sig);
+        e->method_name = arena_strdup(global_ctx->event_arena, method_name);
+        e->method_sig = arena_strdup(global_ctx->event_arena, method_sig);
         e->is_entry = is_entry;
 
         if (!e->class_sig || !e->method_name || !e->method_sig) 
         {
-            LOG(ctx, "ERROR: Failed to strdup event strings");
-            free(e->class_sig);    /* Cleanup on failure */
-            free(e->method_name);
-            free(e->method_sig);
+            LOG(ctx, "ERROR: Failed to allocate event strings");
             e->class_sig = e->method_name = e->method_sig = NULL;
         } 
         else 
@@ -357,10 +376,10 @@ void *event_thread_func(void *arg)
         while (ctx->event_queue.running && ctx->event_queue.count == 0)
             pthread_cond_wait(&ctx->event_queue.cond, &ctx->event_queue.lock);
 
+        /* Process an event if available */
         if (ctx->event_queue.count > 0)
         {
             e = ctx->event_queue.events[ctx->event_queue.tl];
-            /* TODO check this logic should we increment when taking from the tail? */
             ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
             ctx->event_queue.count--;
             pthread_mutex_unlock(&ctx->event_queue.lock);
@@ -372,77 +391,91 @@ void *event_thread_func(void *arg)
             if (written < 0 || written >= MAX_SIG_SZ)
                 LOG(ctx, "WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
             
+            /* Grab a lock before updating samples */
+            pthread_mutex_lock(&ctx->samples_lock);
+
+            /* Check if this method is already contained in full_samples */
+            int found_in_full_samples = 0;
             for (int i=0; i < ctx->full_count; i++)
             {
                 int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
                 if (ctx->full_samples[idx].signature && strcmp(ctx->full_samples[idx].signature, full_sig) == 0)
                 {
+                    /* Update an existing sample with entry/exit count */
                     e.is_entry ? ctx->full_samples[idx].entry_count++ : ctx->full_samples[idx].exit_count++;
-                    goto nth_sampling;
+                    found_in_full_samples = 1;
+                    break;
                 }
             }
-            if (ctx->full_count < FULL_SAMPLE_SZ)
-            {
-                /* Copy the full_sig value to the samples signature as full_sig is a stack allocated buffer */
-                ctx->full_samples[ctx->full_count].signature = strdup(full_sig);
-                /* Set correct info for exit/entry */
-                ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
-                ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
-                ctx->full_count++;
-            }
-            else /* We have FULL_SAMPLE_SZ number of samples already */
-            {
-                /* Set our index to the current hd */
-                int idx = ctx->full_hd;
-                /* Remove any signature at this location */
-                if (ctx->full_samples[idx].signature)
-                    free(ctx->full_samples[idx].signature);
 
-                /* Set the signature to the new value */
-                ctx->full_samples[idx].signature = strdup(full_sig);
-                /* Set correct info for exit/entry */
-                ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                /* Reset the full_hd position */
-                ctx->full_hd = (ctx->full_hd + 1) % FULL_SAMPLE_SZ;
+            /* We did't find the signature in full_samples so add it here */
+            if (!found_in_full_samples)
+            {
+                if (ctx->full_count < FULL_SAMPLE_SZ)
+                {
+                    /* Copy the full_sig value to the samples signature as full_sig is a stack allocated buffer */
+                    ctx->full_samples[ctx->full_count].signature = arena_strdup(ctx->event_arena, full_sig);
+                    /* Set correct info for exit/entry */
+                    ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
+                    ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
+                    ctx->full_count++;
+                }
+                else /* We have FULL_SAMPLE_SZ number of samples already */
+                {
+                    /* Set our index to the current hd */
+                    int idx = ctx->full_hd;
+                    /* Set the signature to the new value */
+                    ctx->full_samples[idx].signature = arena_strdup(ctx->sample_arena, full_sig);
+                    /* Set correct info for exit/entry */
+                    ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
+                    ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
+                    /* Reset the full_hd position */
+                    ctx->full_hd = (ctx->full_hd + 1) % FULL_SAMPLE_SZ;
+                }
             }
 
-nth_sampling:
+            /* Handle nth sample collection (every ctx->config.rate events) */
             ctx->event_counter++;
             if (ctx->event_counter % ctx->config.rate == 0)
             {
+                /* Check if this method signature is already in the nth samples */
+                int found_in_nth_samples = 0;
                 for (int i = 0; i < ctx->nth_count; i++)
                 {
                     int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
                     if (ctx->nth_samples[idx].signature && strcmp(ctx->nth_samples[idx].signature, full_sig) == 0)
                     {
+                        /* Update the existing sample with entry/exit count */
                         e.is_entry ? ctx->nth_samples[idx].entry_count++ : ctx->nth_samples[idx].exit_count++;
-                        goto cleanup;
+                        found_in_nth_samples = 1;
+                        break;
                     }
                 }
-                if (ctx->nth_count < NTH_SAMPLE_SZ)
-                {
-                    ctx->nth_samples[ctx->nth_count].signature = strdup(full_sig);
-                    ctx->nth_samples[ctx->nth_count].entry_count = e.is_entry ? 1 : 0;
-                    ctx->nth_samples[ctx->nth_count].exit_count = e.is_entry ? 0 : 1;
-                    ctx->nth_count++;
-                }
-                else
-                {
-                    int idx = ctx->nth_hd;
-                    if (ctx->nth_samples[idx].signature)
-                        free(ctx->nth_samples[idx].signature);
 
-                    ctx->nth_samples[idx].signature = strdup(full_sig);
-                    ctx->nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                    ctx->nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                    ctx->nth_hd = (ctx->nth_hd + 1) % NTH_SAMPLE_SZ;
+                if (!found_in_nth_samples)
+                {
+                    /* Add to nth_samples if we cannot find method signature */
+                    if (ctx->nth_count < NTH_SAMPLE_SZ)
+                    {
+                        ctx->nth_samples[ctx->nth_count].signature = arena_strdup(ctx->sample_arena, full_sig);
+                        ctx->nth_samples[ctx->nth_count].entry_count = e.is_entry ? 1 : 0;
+                        ctx->nth_samples[ctx->nth_count].exit_count = e.is_entry ? 0 : 1;
+                        ctx->nth_count++;
+                    }
+                    else /* Replace the oldest entry */
+                    {
+                        int idx = ctx->nth_hd;
+                        ctx->nth_samples[idx].signature = arena_strdup(ctx->sample_arena, full_sig);
+                        ctx->nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
+                        ctx->nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
+                        ctx->nth_hd = (ctx->nth_hd + 1) % NTH_SAMPLE_SZ;
+                    }
                 }
             }
-cleanup:
-            free(e.class_sig);
-            free(e.method_name);
-            free(e.method_sig);
+
+            /* Unlock the samples lock now we've finished updating */
+            pthread_mutex_unlock(&ctx->samples_lock);
+
             continue;
         }        
         pthread_mutex_unlock(&ctx->event_queue.lock);
@@ -486,6 +519,14 @@ void cleanup_event_system(agent_context_t *ctx)
 
     /* Now that the thread is either terminated or detached, we can clean up */
     cleanup_samples(ctx);
+
+    /* Destroy the event_arena which will cleanup any allocated strings */
+    if (ctx->event_arena)
+    {
+        arena_destroy(ctx->event_arena);
+        ctx->event_arena = NULL;
+    }
+
     pthread_cond_destroy(&ctx->event_queue.cond);
     pthread_mutex_destroy(&ctx->event_queue.lock);
 }
@@ -1257,12 +1298,42 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
 
     /* Initialize exception arena */
-    /* TODO these numbers need tweaking / investigation */
+    /* TODO these numbers need tweaking / investigation 
+
+    we should probably have a linked-list of arenas
+    we should probably have a macro to create an arena since this is duplicated code
+    on unload we need to loop over the list and destroy each arena - simple
+
+    */
     size_t exception_arena_sz = 1024 * 1024;
     global_ctx->exception_arena = arena_init("exception_arena", exception_arena_sz, 1024);
     if (!global_ctx->exception_arena) 
     {
         LOG(global_ctx, "ERROR: Failed to create exception arena\n");
+        return JNI_ERR;
+    }
+
+    size_t log_arena_sz = 1024 * 1024;
+    global_ctx->log_arena = arena_init("log_arena", log_arena_sz, 1024);
+    if (!global_ctx->log_arena) 
+    {
+        LOG(global_ctx, "ERROR: Failed to create log arena\n");
+        return JNI_ERR;
+    }
+
+    size_t event_arena_sz = 2048 * 1024;
+    global_ctx->event_arena = arena_init("event_arena", event_arena_sz, 1024);
+    if (!global_ctx->event_arena) 
+    {
+        LOG(global_ctx, "ERROR: Failed to create event arena\n");
+        return JNI_ERR;
+    }
+
+    size_t sample_arena_sz = 2048 * 1024;
+    global_ctx->sample_arena = arena_init("sample_arena", sample_arena_sz, 1024);
+    if (!global_ctx->sample_arena) 
+    {
+        LOG(global_ctx, "ERROR: Failed to create sample arena\n");
         return JNI_ERR;
     }
 
