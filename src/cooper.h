@@ -15,6 +15,8 @@
 #include <unistd.h>
 #include <assert.h>
 #include <ctype.h>
+#include <time.h>
+#include <errno.h>
 #include <sys/mman.h>
 
 #include "arena.h"

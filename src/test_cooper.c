@@ -278,8 +278,8 @@ static void test_arena()
     arena_t *arena = arena_init("test_arena", 1024, 10);
     assert(arena != NULL);
     assert(strcmp(arena->name, "test_arena") == 0);
-    assert(arena->total_size <= 1024);
-    assert(arena->total_size > 0);
+    assert(arena->total_sz <= 1024);
+    assert(arena->total_sz > 0);
     assert(arena->used == 0);
     assert(arena->free_count == 0);
     assert(arena->max_free_blocks == 10);
@@ -302,7 +302,7 @@ static void test_arena()
     memset(block2, 'B', 200);
     
     /* Test arena_free */
-    int result = arena_free(arena, block1, 100);
+    int result = arena_free(arena, block1);
     assert(result == 1);
     assert(arena->free_count == 1);
     
@@ -316,7 +316,7 @@ static void test_arena()
     }
     
     /* Try to free a block with size 0 */
-    result = arena_free(arena, block2, 0);
+    result = arena_free(arena, block2);
     assert(result == 0);
     
     /* Test arena_destroy */
@@ -349,7 +349,7 @@ static void test_arena()
     }
     
     for (i = 0; i < max_blocks; i++) {
-        result = arena_free(arena, small_blocks[i], 10);
+        result = arena_free(arena, small_blocks[i]);
         assert(result == 1);
     }
     
@@ -357,7 +357,7 @@ static void test_arena()
     if (arena->free_count >= arena->max_free_blocks) {
         block1 = arena_alloc(arena, 10);
         assert(block1 != NULL);
-        result = arena_free(arena, block1, 10);
+        result = arena_free(arena, block1);
         assert(result == 0);
     }
     

@@ -11,10 +11,23 @@
 
 #include "arena.h"
 
-/* Initialize the arena with its own allocated memory */
-arena_t *arena_init(const char *name, size_t size, size_t max_blocks)
+/**
+ * Initialize a new memory arena
+ * 
+ * Creates and initializes a memory arena with the specified size and capacity
+ * for tracking free blocks. The arena allocates a contiguous block of memory
+ * and manages allocations from this block to reduce the overhead of frequent
+ * small allocations.
+ * 
+ * @param name          Descriptive name for the arena (for debugging)
+ * @param size          Total size of the memory pool in bytes
+ * @param max_blocks    Maximum number of free blocks that can be tracked
+ * 
+ * @return              Pointer to the initialized arena, or NULL on failure
+ */
+arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
 {
-    if (size == 0 || max_blocks == 0)
+    if (sz == 0 || max_blocks == 0)
         return NULL;
     
     /* Allocate the arena struct itself */
@@ -30,22 +43,22 @@ arena_t *arena_init(const char *name, size_t size, size_t max_blocks)
      * Store the allocation size for future reference - this will help
      * with arena cleanup during shutdown 
      */
-    arena->alloc_size = size;
+    arena->alloc_sz = sz;
     
     /* Allocate the memory pool */
-    void* memory = malloc(size);
+    void* memory = malloc(sz);
     if (!memory) {
         free(arena);
         return NULL;
     }
     
     arena->memory = memory;
-    arena->total_size = size;
+    arena->total_sz = sz;
     arena->used = 0;
     
     /* Allocate tracking arrays from the pre-allocated memory */
-    size_t tracking_size = max_blocks * (sizeof(void*) + sizeof(size_t));
-    if (tracking_size >= size) {
+    size_t tracking_sz = max_blocks * (sizeof(void*) + sizeof(size_t));
+    if (tracking_sz >= sz) {
         free(memory);
         free(arena);
         return NULL;
@@ -60,75 +73,138 @@ arena_t *arena_init(const char *name, size_t size, size_t max_blocks)
     arena->original_memory = memory;
     
     /* Adjust available memory */
-    arena->memory = (char*)memory + tracking_size;
-    arena->total_size -= tracking_size;
+    arena->memory = (char*)memory + tracking_sz;
+    arena->total_sz -= tracking_sz;
     
     return arena;
 }
 
-/* Allocate memory from the arena */
-void *arena_alloc(arena_t *arena, size_t size)
+/**
+ * Allocate memory from the arena
+ * 
+ * This function attempts to allocate memory from the arena's pool. It first tries to
+ * reuse a previously freed block of adequate size, and if none is available, allocates
+ * from the remaining arena space. Each allocation includes a hidden header that stores
+ * the size and a magic number for validation.
+ * 
+ * Memory is aligned to 8-byte boundaries to ensure proper alignment for all data types.
+ * 
+ * @param arena         Pointer to the arena
+ * @param size          Number of bytes to allocate
+ * 
+ * @return              Pointer to the allocated memory, or NULL if:
+ *                      - arena is NULL
+ *                      - size is 0
+ *                      - not enough memory is available in the arena
+ */
+void *arena_alloc(arena_t *arena, size_t sz)
 {
     assert(arena != NULL);
-    assert(size > 0);
+    assert(sz > 0);
     
-    if (size == 0)
+    if (sz == 0)
         return NULL;
     
-    /* Align size to prevent fragmentation issues */
-    size = (size + 7) & ~7;  /* Align to 8 bytes */
+    /* Calculate total size needed including header */
+    size_t header_size = sizeof(block_header_t);
+    size_t total_size = sz + header_size;
+    
+    /* Align total size to prevent fragmentation issues */
+    total_size = (total_size + 7) & ~7;  /* Align to 8 bytes */
     
     /* First, check if we have a suitable free block */
     for (size_t i = 0; i < arena->free_count; i++) {
-        if (arena->block_sizes[i] >= size) {
-            void* ptr = arena->free_blocks[i];
-            
-            /* If this block is significantly larger than requested,
-             * we could split it (omitted for simplicity) */
+        if (arena->block_sizes[i] >= total_size) {
+            void* block = arena->free_blocks[i];
             
             /* Remove this block from free list by moving the last one here */
             arena->free_blocks[i] = arena->free_blocks[arena->free_count - 1];
             arena->block_sizes[i] = arena->block_sizes[arena->free_count - 1];
             arena->free_count--;
             
-            return ptr;
+            /* Initialize block header */
+            block_header_t *header = (block_header_t*)block;
+            header->block_sz = sz;
+            header->total_block_sz = total_size;
+            header->magic = ARENA_BLOCK_MAGIC;
+            
+            /* Return pointer to user data (after the header) */
+            return (char*)block + header_size;
         }
     }
     
     /* No suitable free block, allocate from remaining space */
-    if (arena->used + size > arena->total_size)
+    if (arena->used + total_size > arena->total_sz)
         return NULL;  /* Out of memory */
         
-    void* ptr = (char*)arena->memory + arena->used;
-    arena->used += size;
+    void* block = (char*)arena->memory + arena->used;
+    arena->used += total_size;
     
-    return ptr;
+    /* Initialize block header */
+    block_header_t *header = (block_header_t*)block;
+    header->block_sz = sz;
+    header->total_block_sz = total_size;
+    header->magic = ARENA_BLOCK_MAGIC;
+    
+    /* Return pointer to user data (after the header) */
+    return (char*)block + header_size;
 }
 
-/* Free memory back to the arena */
-int arena_free(arena_t *arena, void *ptr, size_t size) 
+/**
+ * Free memory back to the arena
+ * 
+ * Returns a previously allocated block to the arena's free list for potential reuse.
+ * The function validates that the pointer was allocated from this arena by checking
+ * its header magic number. The size is automatically retrieved from the block header.
+ * 
+ * Note: This doesn't actually release memory back to the system, but makes it available
+ * for future allocations from the same arena.
+ * 
+ * @param arena         Pointer to the arena
+ * @param ptr           Pointer to memory previously allocated with arena_alloc
+ * 
+ * @return              1 on success, 0 on failure (NULL pointer, invalid pointer, 
+ *                      or arena free list full)
+ */
+int arena_free(arena_t *arena, void *ptr) 
 {
     assert(arena != NULL);
     
-    if (!ptr || size == 0)
+    if (!ptr)
         return 0;
         
-    /* Align size to match allocation */
-    size = (size + 7) & ~7;
+    
+    /* Get block header by going back from the user pointer */
+    block_header_t *header = (block_header_t*)((char*)ptr - sizeof(block_header_t));
+    
+    /* Validate the header */
+    if (header->magic != ARENA_BLOCK_MAGIC) 
+    {
+        /* Invalid pointer or corrupted memory */
+        return 0;
+    }
     
     /* Check if we can track more free blocks */
     if (arena->free_count >= arena->max_free_blocks)
         return 0;
         
     /* Add to free list */
-    arena->free_blocks[arena->free_count] = ptr;
-    arena->block_sizes[arena->free_count] = size;
+    arena->free_blocks[arena->free_count] = header; /* Store pointer to header, not user data */
+    arena->block_sizes[arena->free_count] = header->total_block_sz;
     arena->free_count++;
     
     return 1;
 }
 
-/* Destroy arena and free all associated memory */
+/**
+ * Destroy an arena and free all associated memory
+ * 
+ * Releases all memory managed by the arena, including the arena structure itself.
+ * This invalidates all memory previously allocated from this arena, and the arena
+ * pointer should not be used after this call.
+ * 
+ * @param arena         Pointer to the arena to destroy
+ */
 void arena_destroy(arena_t *arena)
 {
     assert(arena != NULL);

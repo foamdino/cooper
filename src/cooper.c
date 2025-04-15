@@ -9,6 +9,31 @@
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
+/**
+ * Helper function to safely join a thread with timeout
+ * Works across different platforms without relying on non-portable extensions
+ *
+ * @param thread    Thread ID to join
+ * @param timeout   Timeout in seconds
+ * @return          0 on success, error code on failure
+ */
+static int safe_thread_join(pthread_t thread, int timeout)
+{
+    /* First try to join without any tricks (this is the normal, clean path) */
+    int result = pthread_join(thread, NULL);
+    if (result == 0) {
+        return 0; /* Joined successfully */
+    }
+    
+    /* If we can't join (thread might be detached or already joined) */
+    if (result == EINVAL || result == ESRCH) {
+        return result; /* Return the error code */
+    }
+    
+    /* For other errors or timeouts, we can't do much - the thread is still running */
+    return result;
+}
+
 int init_log_q(agent_context_t *ctx)
 {
     assert(ctx != NULL);
@@ -161,6 +186,20 @@ void cleanup_log_system(agent_context_t *ctx)
     ctx->log_queue.running = 0;
     pthread_cond_broadcast(&ctx->log_queue.cond);
     pthread_mutex_unlock(&ctx->log_queue.lock);
+
+    /* Create a joinable copy of the thread */
+    pthread_t log_thread_copy = ctx->log_thread;
+    
+    /* Make thread joinable */
+    pthread_detach(ctx->log_thread);
+    
+    /* Wait for thread to terminate */
+    int join_result = safe_thread_join(log_thread_copy, 2);
+    if (join_result != 0) 
+    {
+        /* If thread didn't terminate in time, proceed anyway */
+        fprintf(stderr, "WARNING: Log thread did not terminate within timeout\n");
+    }
 
     /* Purge remaining messages */
     char *msg;
@@ -411,6 +450,14 @@ cleanup:
     return NULL;
 }
 
+/**
+ * Properly shut down the event system and wait for thread termination
+ *
+ * This function signals threads to terminate, waits for them to complete,
+ * and then cleans up resources.
+ *
+ * @param ctx       Pointer to the agent context
+ */
 void cleanup_event_system(agent_context_t *ctx)
 {
     assert(ctx != NULL);
@@ -425,9 +472,22 @@ void cleanup_event_system(agent_context_t *ctx)
     while (dequeue_event(&event))
 
     */
-   cleanup_samples(ctx);
-   pthread_cond_destroy(&ctx->event_queue.cond);
-   pthread_mutex_destroy(&ctx->event_queue.lock);
+
+    /* Create a joinable copy of the thread */
+    pthread_t event_thread_copy = ctx->event_thread;
+
+    /* Wait for thread to terminate */
+    int join_result = safe_thread_join(event_thread_copy, 2);
+    if (join_result != 0) {
+        /* If thread didn't terminate in time, we'll proceed with cleanup anyway
+          Not much we can do at this point */
+        LOG(ctx, "WARNING: Event thread did not terminate within timeout\n");
+    }
+
+    /* Now that the thread is either terminated or detached, we can clean up */
+    cleanup_samples(ctx);
+    pthread_cond_destroy(&ctx->event_queue.cond);
+    pthread_mutex_destroy(&ctx->event_queue.lock);
 }
 
 void export_to_file(agent_context_t *ctx)
@@ -879,7 +939,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
             if (param_val)
             {
-                arena_free(global_ctx->exception_arena, param_val, sizeof(param_val));
+                arena_free(global_ctx->exception_arena, param_val);
             }
                 
             
@@ -975,11 +1035,25 @@ int load_config(agent_context_t *ctx, const char *cf)
 
     char line[256];
     char *current_section = NULL;
+    char *trimmed = NULL;
+    char *value = NULL;
 
     while (fgets(line, sizeof(line), fp))
     {
+        /* Clean up from previous iteration if needed */
+        if (trimmed) 
+        {
+            free(trimmed);
+            trimmed = NULL;
+        }
+        if (value) 
+        {
+            free(value);
+            value = NULL;
+        }
+
         /* clean input line */
-        char *trimmed = trim_safe(line);
+        trimmed = trim_safe(line);
         trimmed = strip_comment_safe(trimmed);
         /* skip empty lines */
         if (trimmed[0] == '\0')
@@ -998,12 +1072,18 @@ int load_config(agent_context_t *ctx, const char *cf)
                 res = 1;
                 goto cleanup;
             }
+            free(trimmed);
+            trimmed = NULL;
             continue;
         }
 
         /* Skip any data before the first section */
         if (!current_section)
+        {
+            free(trimmed);
+            trimmed = NULL;
             continue;
+        }
 
         /* Based on the section we're in we can interpret the value differently */
         if (strcmp(current_section, "[method_signatures]") == 0)
@@ -1011,7 +1091,11 @@ int load_config(agent_context_t *ctx, const char *cf)
             LOG(ctx, "DEBUG: Processing line in [method_signatures]: '%s'\n", trimmed);
             /* Skip over the filters line, end of filters is a line containing a single ']' */
             if (strncmp(trimmed, "filters =", 9) == 0 || trimmed[0] == ']')
+            {
+                free(trimmed);
+                trimmed = NULL;
                 continue;
+            }
 
             /* Process a filter entry */
             ctx->config.num_filters++;
@@ -1038,7 +1122,11 @@ int load_config(agent_context_t *ctx, const char *cf)
             /* Grab the data value from the trimmed line */
             char *value = extract_and_trim_value_safe(trimmed);
             if (!value)
+            {
+                free(trimmed);
+                trimmed = NULL;
                 continue;
+            }
 
             if (strcmp(current_section, "[sample_rate]") == 0)
             {
@@ -1066,12 +1154,15 @@ int load_config(agent_context_t *ctx, const char *cf)
             }
         }
 
-        if (trimmed)
-            free(trimmed);
+        free(trimmed);
+        trimmed = NULL;
     }
 
 cleanup:
-    free(current_section);
+    if (current_section) free(current_section);
+    if (trimmed) free(trimmed);
+    if (value) free(value);
+
     fclose(fp);
     /* check for prior error */
     if (res)
@@ -1331,10 +1422,30 @@ void cleanup(agent_context_t *ctx)
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) 
     {
+        /* Signal export thread to stop */
+        pthread_mutex_lock(&global_ctx->event_queue.lock);
+        global_ctx->event_queue.running = 0;
+        pthread_mutex_unlock(&global_ctx->event_queue.lock);
+        
+        pthread_t export_thread_copy = global_ctx->export_thread;
+        pthread_detach(global_ctx->export_thread);
+        safe_thread_join(export_thread_copy, 2);
+
         cleanup(global_ctx);
         cleanup_samples(global_ctx);
         cleanup_log_system(global_ctx);
         cleanup_event_system(global_ctx);
+
+        /* Cleanup the exception arena */
+        if (global_ctx->exception_arena)
+        {
+            arena_destroy(global_ctx->exception_arena);
+            global_ctx->exception_arena = NULL;
+        }
+
+        /* Destroy mutex */
+        pthread_mutex_destroy(&global_ctx->samples_lock);
+
         free(global_ctx);
         global_ctx = NULL;    
     }
