@@ -15,9 +15,11 @@
 #include <unistd.h>
 #include <assert.h>
 #include <ctype.h>
-#include <time.h>
 #include <errno.h>
 #include <sys/mman.h>
+
+
+#include <time.h>
 
 #include "arena.h"
 
@@ -37,13 +39,92 @@
     } \
 } while (0)
 
+/* Metric flags for method sampling */
+#define METRIC_FLAG_TIME    0x0001
+#define METRIC_FLAG_MEMORY  0x0002
+#define METRIC_FLAG_CPU     0x0004
+
 typedef struct log_q log_q_t;
 typedef struct trace_event trace_event_t;
 typedef struct event_q event_q_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
+typedef struct method_sample method_sample_t;
+typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct agent_context agent_context_t;
 typedef void *thread_fn(void *args);
+
+/**
+ * Struct-of-Arrays for storing method metrics
+ * 
+ * This structure organizes metrics in a columnar format for better
+ * cache locality and more efficient data processing.
+ */
+struct method_metrics_soa {
+    size_t capacity;          /**< Total capacity allocated */
+    size_t count;             /**< Current number of methods being tracked */
+    
+    /* Identification data */
+    char **signatures;        /**< Array of method signatures */
+    int *sample_rates;        /**< Configured sample rate for each method */
+    
+    /* Counters */
+    uint64_t *call_counts;    /**< Number of times each method has been called */
+    uint64_t *sample_counts;  /**< Number of times each method has been sampled */
+    
+    /* Timing metrics */
+    uint64_t *total_time_ns;  /**< Total execution time in nanoseconds */
+    uint64_t *min_time_ns;    /**< Minimum execution time */
+    uint64_t *max_time_ns;    /**< Maximum execution time */
+    
+    /* Memory metrics */
+    uint64_t *alloc_bytes;    /**< Total bytes allocated */
+    uint64_t *peak_memory;    /**< Peak memory usage */
+    
+    /* CPU metrics */
+    uint64_t *cpu_cycles;     /**< CPU cycles used */
+    
+    /* Flags for which metrics are collected for each method */
+    unsigned int *metric_flags;
+};
+
+/**
+ * Thread-local storage for tracking method execution
+ * 
+ * While our JVM agent itself only runs a few dedicated threads (main, event processing, 
+ * logging, etc.), the JVMTI callbacks (method_entry_callback and method_exit_callback)
+ * are executed in the context of the Java application threads that are running the
+ * methods we're monitoring.
+ * 
+ * This is a critical design consideration: when we receive these callbacks, we're
+ * actually running in the thread that's executing the Java method. Since multiple
+ * Java threads can simultaneously execute different methods that we're monitoring,
+ * we need per-thread state to track each method's execution independently.
+ * 
+ * For example:
+ * 1. Java Thread A enters method foo() → we store its start time
+ * 2. Java Thread B enters method bar() → we store its start time
+ * 3. Thread A exits foo() → we need Thread A's original start time to calculate duration
+ * 4. Thread B exits bar() → we need Thread B's original start time to calculate duration
+ * 
+ * Without thread-local storage, we would have a single global structure that would
+ * get overwritten by each thread, leading to incorrect timing measurements.
+ * 
+ * The thread-local sample structure stores:
+ * - The method index being monitored in this thread
+ * - The starting timestamp when the method was entered
+ * - Starting values for any metrics we want to measure (memory, CPU, etc.)
+ * 
+ * When the method exits, we retrieve this thread's sample data to calculate
+ * the differences for metrics recording.
+ */
+struct method_sample
+{
+    int method_index;       /* Index in the metrics arrays, -1 if not sampling */
+    uint64_t start_time;    /* Starting timestamp in nanoseconds */
+    uint64_t start_memory;  /* Starting memory usage in bytes */
+    uint64_t start_cpu;     /* Starting CPU cycle count */
+};
 
 struct config
 {
@@ -117,6 +198,8 @@ struct agent_context
     arena_t *event_arena;           /**< Arena for events memory allocation */
     arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
     arena_t *config_arena;          /**< Arena for config file strings (filters etc) */
+    arena_t *metrics_arena;         /**< Arena for metrics data */
+    method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
 };
 
 /* jmvti callback functions */
@@ -124,23 +207,37 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
 void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location);
 
-int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
+/* Methods sampling functions */
+int should_sample_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(agent_context_t *ctx, const char *cf);
 void cleanup(agent_context_t *ctx);
 int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
 
+/* Metrics management functions */
+method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
+int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags);
+int find_method_index(method_metrics_soa_t *metrics, const char *signature);
+void record_method_execution(agent_context_t *ctx, int method_index, uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles);
+
+/* Logging system functions */
 int init_log_q(agent_context_t *ctx);
 void log_enq(agent_context_t *ctx, const char *msg);
 char *log_deq(agent_context_t *ctx);
 void *log_thread_func(void *arg);
 void cleanup_log_system(agent_context_t *ctx);
+
+/* Sample management functions */
 void init_samples(agent_context_t *ctx);
 void cleanup_samples(agent_context_t *ctx);
+
+/* Event system functions */
 int init_event_q(agent_context_t *ctx);
 void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry);
 int event_deq(agent_context_t *ctx, trace_event_t *e);
 void *event_thread_func(void *arg);
 void cleanup_event_system(agent_context_t *ctx);
+
+/* Export functions */
 void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
 

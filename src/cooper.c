@@ -9,6 +9,108 @@
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
+/* Thread-local storage key and initialization mutex */
+static pthread_key_t sample_key;
+static int tls_initialized = 0;
+static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Initialize thread-local storage */
+static void init_thread_local_storage() {
+    /* Double-checked locking pattern */
+    if (!tls_initialized) {
+        pthread_mutex_lock(&tls_init_mutex);
+        if (!tls_initialized) {
+            /* The 'free' function will be automatically called when a thread exits */
+            pthread_key_create(&sample_key, free);
+            tls_initialized = 1;
+        }
+        pthread_mutex_unlock(&tls_init_mutex);
+    }
+}
+
+/* Get the thread-local sample structure */
+static method_sample_t *get_thread_local_sample() {
+    if (!tls_initialized) {
+        init_thread_local_storage();
+    }
+    
+    method_sample_t *sample = pthread_getspecific(sample_key);
+    if (!sample) {
+        /* First time this thread is accessing the key */
+        sample = calloc(1, sizeof(method_sample_t));
+        if (sample) {
+            sample->method_index = -1;  /* Not sampling */
+            pthread_setspecific(sample_key, sample);
+        }
+    }
+    
+    return sample;
+}
+
+/* Get current time in nanoseconds */
+static uint64_t get_current_time_ns() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* Mock implementations for memory and CPU metrics */
+static uint64_t get_current_memory() {
+    /* In a real implementation, this would use system calls to get memory usage */
+    return 0;
+}
+
+static uint64_t get_current_cpu_cycles() {
+    /* In a real implementation, this would use CPU performance counters */
+    return 0;
+}
+
+/* Record method execution metrics */
+void record_method_execution(agent_context_t *ctx, int method_index, 
+    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles) {
+
+    method_metrics_soa_t *metrics = ctx->metrics;
+
+    /* Check for valid index */
+    if (method_index < 0 || (size_t)method_index >= metrics->count) {
+        return;
+    }
+
+    /* Lock metrics for thread safety */
+    pthread_mutex_lock(&ctx->samples_lock);
+
+    /* Update sample count */
+    metrics->sample_counts[method_index]++;
+
+    /* Update timing metrics if enabled */
+    if (metrics->metric_flags[method_index] & METRIC_FLAG_TIME) {
+        metrics->total_time_ns[method_index] += exec_time_ns;
+
+        /* Update min/max */
+        if (exec_time_ns < metrics->min_time_ns[method_index]) {
+            metrics->min_time_ns[method_index] = exec_time_ns;
+        }
+        if (exec_time_ns > metrics->max_time_ns[method_index]) {
+            metrics->max_time_ns[method_index] = exec_time_ns;
+        }
+    }
+
+    /* Update memory metrics if enabled */
+    if (metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) {
+        metrics->alloc_bytes[method_index] += memory_bytes;
+        if (memory_bytes > metrics->peak_memory[method_index]) {
+            metrics->peak_memory[method_index] = memory_bytes;
+        }
+    }
+
+    /* Update CPU metrics if enabled */
+    if (metrics->metric_flags[method_index] & METRIC_FLAG_CPU) {
+        metrics->cpu_cycles[method_index] += cycles;
+    }
+
+    pthread_mutex_unlock(&ctx->samples_lock);
+}
+
 /**
  * Helper function to safely join a thread with timeout
  * Works across different platforms without relying on non-portable extensions
@@ -786,11 +888,37 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     // }
 
     /* TODO need to also count the calls - need a histogram style datastructure - or maxheap (bounded mem) */
-    if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
-    {
-        event_enq(global_ctx, class_signature, method_name, method_signature, 1);
-        LOG(global_ctx, "[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
-    } 
+    // if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
+    // {
+    //     event_enq(global_ctx, class_signature, method_name, method_signature, 1);
+    //     LOG(global_ctx, "[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
+    // }
+
+    /* Check if we should sample this method call */
+    int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
+
+    if (sample_index > 0) {
+        /* We're sampling this call */
+        method_sample_t *sample = get_thread_local_sample();
+        if (sample) {
+            sample->method_index = sample_index - 1;  /* Convert back to 0-based index */
+            sample->start_time = get_current_time_ns();
+            
+            /* Only collect these metrics if enabled for this method */
+            unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
+            
+            if (flags & METRIC_FLAG_MEMORY) {
+                sample->start_memory = get_current_memory();
+            }
+            
+            if (flags & METRIC_FLAG_CPU) {
+                sample->start_cpu = get_current_cpu_cycles();
+            }
+            
+            LOG(global_ctx, "[ENTRY] Sampling method %s.%s%s\n", 
+                class_signature, method_name, method_signature);
+        }
+    }
 
 deallocate:
     /* Deallocate memory allocated by JVMTI */
@@ -804,38 +932,67 @@ deallocate:
  */
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value)
 {
+    method_sample_t *sample = get_thread_local_sample();
+    
+    /* If we're not sampling this method, return early */
+    if (!sample || sample->method_index < 0) {
+        return;
+    }
+    
+    /* Calculate execution time */
+    uint64_t end_time = get_current_time_ns();
+    uint64_t exec_time = end_time - sample->start_time;
+    
+    /* Get metrics if they were enabled */
+    uint64_t memory_delta = 0;
+    uint64_t cpu_delta = 0;
+    
+    unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
+    
+    if (flags & METRIC_FLAG_MEMORY) {
+        uint64_t end_memory = get_current_memory();
+        memory_delta = (end_memory > sample->start_memory) ? 
+                      (end_memory - sample->start_memory) : 0;
+    }
+    
+    if (flags & METRIC_FLAG_CPU) {
+        uint64_t end_cpu = get_current_cpu_cycles();
+        cpu_delta = end_cpu - sample->start_cpu;
+    }
+    
+    
     char *method_name = NULL;
     char *method_signature = NULL;
     char *class_signature = NULL;
     jclass declaringClass;
     jvmtiError err;
 
-    if (jvmti != global_ctx->jvmti_env)
-        LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
+    // if (jvmti != global_ctx->jvmti_env)
+    //     LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
 
-    /* Get method name */
-    err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
-        goto deallocate;
-    }
+    // /* Get method name */
+    // err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
+    // if (err != JVMTI_ERROR_NONE) 
+    // {
+    //     LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
+    //     goto deallocate;
+    // }
 
-    /* Get declaring class */
-    err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
-        goto deallocate;
-    }
+    // /* Get declaring class */
+    // err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
+    // if (err != JVMTI_ERROR_NONE) 
+    // {
+    //     LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+    //     goto deallocate;
+    // }
 
-    /* Get class signature */
-    err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
-        goto deallocate;
-    }
+    // /* Get class signature */
+    // err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
+    // if (err != JVMTI_ERROR_NONE) 
+    // {
+    //     LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
+    //     goto deallocate;
+    // }
 
     // if (strcmp(class_signature, "Lcom/github/foamdino/Test;") == 0 &&
     //     strcmp(method_name, "a") == 0) {
@@ -843,11 +1000,47 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     // }
     
     /* TODO count exits from method - same as entry traces */
-    if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
-    {
-        event_enq(global_ctx, class_signature, method_name, method_signature, 0);
-        LOG(global_ctx, "[EXIT] Method from class (%s): %s\n", class_signature, method_name);
+    // if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
+    // {
+    //     event_enq(global_ctx, class_signature, method_name, method_signature, 0);
+    //     LOG(global_ctx, "[EXIT] Method from class (%s): %s\n", class_signature, method_name);
+    // }
+
+    /* Get method details for logging */
+    if (tls_initialized && global_ctx->metrics->metric_flags[sample->method_index] != 0) {
+        /* Get method name */
+        err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
+        if (err != JVMTI_ERROR_NONE) {
+            LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
+            goto record_metrics;
+        }
+
+        /* Get declaring class */
+        err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
+        if (err != JVMTI_ERROR_NONE) {
+            LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+            goto deallocate;
+        }
+
+        /* Get class signature */
+        err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
+        if (err != JVMTI_ERROR_NONE) {
+            LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
+            goto deallocate;
+        }
+        
+        LOG(global_ctx, "[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu bytes\n", 
+            class_signature, method_name, method_signature, 
+            (unsigned long long)exec_time, (unsigned long long)memory_delta);
     }
+
+record_metrics:
+    /* Record the metrics */
+    record_method_execution(global_ctx, sample->method_index, exec_time, memory_delta, cpu_delta);
+    
+    /* Reset sample for reuse */
+    sample->method_index = -1;
+    
 
 deallocate:
     /* Deallocate memory allocated by JVMTI */
@@ -1039,8 +1232,8 @@ deallocate:
  * Load agent configuration from a file
  * 
  * Uses arena-based memory management for all string operations.
- * The config_arena persists for the lifetime of the agent, so all
- * config strings remain valid until agent shutdown.
+ * Parses the new format for method signature filters that includes
+ * per-method sampling rates and metrics to collect.
  * 
  * @param ctx       Pointer to agent context
  * @param cf        Path to config file, or NULL to use default
@@ -1074,7 +1267,7 @@ int load_config(agent_context_t *ctx, const char *cf)
         /* Process the line (strip comments, trim whitespace) */
         char *processed = arena_process_config_line(ctx->config_arena, line);
         if (!processed || processed[0] == '\0')
-            continue;  // Skip empty lines
+            continue;  /* Skip empty lines */
         
         /* Handle section headers */
         if (processed[0] == '[')
@@ -1095,23 +1288,54 @@ int load_config(agent_context_t *ctx, const char *cf)
             if (strncmp(processed, "filters =", 9) == 0 || processed[0] == ']')
                 continue;
             
-            /* Process a filter entry */
-            ctx->config.num_filters++;
-            LOG(ctx, "DEBUG: Adding filter #%d: '%s'\n", ctx->config.num_filters, processed);
+            /* Process a filter entry in the new format: 
+               class_signature:method_name:method_signature:sample_rate:metrics */
+            char class_sig[MAX_SIG_SZ], method_name[MAX_SIG_SZ], method_sig[MAX_SIG_SZ];
+            int sample_rate;
+            char metrics[MAX_SIG_SZ] = {0};
             
-            /* Adjust filter storage */
-            char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
-            if (!tmp)
-            {
-                LOG(ctx, "ERROR: Failed to allocate memory for filters\n");
-                res = 1;
-                goto cleanup;
+            /* Initialize with default values */
+            strcpy(method_name, "*");        /* Default to wildcard method */
+            strcpy(method_sig, "*");         /* Default to wildcard signature */
+            sample_rate = ctx->config.rate;  /* Default to global rate */
+            
+            /* Try to parse with the new format first */
+            int parsed = sscanf(processed, "%[^:]:%[^:]:%[^:]:%d:%s", 
+                              class_sig, method_name, method_sig, &sample_rate, metrics);
+            
+            /* Handle partially specified entries */
+            if (parsed < 1) {
+                LOG(ctx, "ERROR: Invalid method filter format: %s\n", processed);
+                continue;
             }
-            ctx->config.filters = tmp;
             
-            /* Use the string directly from the arena - no need for strdup */
-            ctx->config.filters[ctx->config.num_filters - 1] = processed;
-            LOG(ctx, "DEBUG: Added filter: %s\n", ctx->config.filters[ctx->config.num_filters - 1]);
+            /* Build the full signature for matching */
+            char full_sig[MAX_SIG_SZ * 3];
+            snprintf(full_sig, sizeof(full_sig), "%s %s %s", class_sig, method_name, method_sig);
+            
+            /* Determine which metrics to collect */
+            unsigned int metric_flags = 0;
+            if (parsed >= 5) {
+                if (strstr(metrics, "time"))   metric_flags |= METRIC_FLAG_TIME;
+                if (strstr(metrics, "memory")) metric_flags |= METRIC_FLAG_MEMORY;
+                if (strstr(metrics, "cpu"))    metric_flags |= METRIC_FLAG_CPU;
+            } else {
+                /* Default to collecting time if not specified */
+                metric_flags = METRIC_FLAG_TIME;
+            }
+            
+            /* Add to metrics SoA structure */
+            int method_index = add_method_to_metrics(ctx, full_sig, sample_rate, metric_flags);
+            if (method_index < 0) {
+                LOG(ctx, "ERROR: Failed to add method filter: %s\n", full_sig);
+                continue;
+            }
+            
+            LOG(ctx, "DEBUG: Added method filter #%d: '%s' with rate=%d\n", 
+                method_index, full_sig, sample_rate);
+            
+            /* Keep track of the number of filters */
+            ctx->config.num_filters++;
         }
         else
         {
@@ -1122,6 +1346,7 @@ int load_config(agent_context_t *ctx, const char *cf)
             
             if (strcmp(current_section, "[sample_rate]") == 0)
             {
+                /* This is now the default/global sample rate */
                 int rate;
                 if (sscanf(value, "%d", &rate) == 1)
                     ctx->config.rate = rate > 0 ? rate : 1;
@@ -1147,21 +1372,7 @@ int load_config(agent_context_t *ctx, const char *cf)
         }
     }
     
-cleanup:
     fclose(fp);
-    
-    /* Check for prior error */
-    if (res)
-    {
-        /* Just free the array of pointers, not the strings themselves */
-        if (ctx->config.filters) 
-        {
-            free(ctx->config.filters);
-            ctx->config.filters = NULL;
-            ctx->config.num_filters = 0;
-        }
-        return res;
-    }
     
     /* Set defaults if needed */
     if (!ctx->config.export_method) 
@@ -1171,47 +1382,165 @@ cleanup:
             LOG(ctx, "ERROR: Failed to set default export_method\n");
     }
     
-    /* Setup method filters */
-    ctx->method_filters = ctx->config.filters;
-    ctx->num_filters = ctx->config.num_filters;
-    
-    LOG(ctx, "Config loaded: rate=%d, filters=%d, path=%s, method=%s\n",
-        ctx->config.rate, ctx->num_filters,
+    LOG(ctx, "Config loaded: default_rate=%d, filters=%d, path=%s, method=%s\n",
+        ctx->config.rate, ctx->config.num_filters,
         ctx->config.sample_file_path ? ctx->config.sample_file_path : "NULL",
         ctx->config.export_method ? ctx->config.export_method : "NULL");
     
-    return 0;
+    return res;
 }
 
 /**
- * Check if a method matches the filter
+ * Helper function to initialize the metrics Struct-of-Arrays structure
  */
-int should_trace_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature) 
-{
+method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity) {
+    method_metrics_soa_t *metrics = arena_alloc(arena, sizeof(method_metrics_soa_t));
+    if (!metrics) return NULL;
+    
+    metrics->capacity = initial_capacity;
+    metrics->count = 0;
+    
+    /* Allocate all arrays */
+    metrics->signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
+    metrics->sample_rates = arena_alloc(arena, initial_capacity * sizeof(int));
+    metrics->call_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->sample_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->total_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->min_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
+    
+    /* Check if all allocations succeeded */
+    if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
+        !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns ||
+        !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory ||
+        !metrics->cpu_cycles || !metrics->metric_flags) {
+        return NULL;
+    }
+    
+    /* Initialize arrays with zeros */
+    memset(metrics->sample_rates, 0, initial_capacity * sizeof(int));
+    memset(metrics->call_counts, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->sample_counts, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->total_time_ns, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->min_time_ns, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->max_time_ns, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->alloc_bytes, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->peak_memory, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->cpu_cycles, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
+    
+    /* Set min_time_ns to maximum value initially */
+    for (size_t i = 0; i < initial_capacity; i++) {
+        metrics->min_time_ns[i] = UINT64_MAX;
+    }
+    
+    return metrics;
+}
 
-    /* This is a fixed size as we cannot afford mallocs in this hot code path */
-    char full_signature[MAX_SIG_SZ];
-    int written = snprintf(full_signature, sizeof(full_signature), "%s %s %s", class_signature, method_name, method_signature);
+/**
+ * Add a method to the metrics structure
+ */
+int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags) {
+    method_metrics_soa_t *metrics = ctx->metrics;
+    
+    assert(ctx != NULL);
+    assert(ctx->metrics != NULL);
 
-    // printf("filter: %s signature: %s, class_sig: %s, method_name: %s, method_sig: %s\n", method_filters[0], full_signature, class_signature, method_name, method_signature);
+    /* Check if method already exists */
+    int index = find_method_index(metrics, signature);
+    if (index >= 0) {
+        /* Update existing entry */
+        metrics->sample_rates[index] = sample_rate;
+        metrics->metric_flags[index] = flags;
+        return index;
+    }
+    
+    /* Need to add a new entry */
+    if (metrics->count >= metrics->capacity) {
+        /* Cannot grow in the current implementation with arenas */
+        LOG(ctx, "ERROR: Method metrics capacity reached (%zu)\n", metrics->capacity);
+        return -1;
+    }
+    
+    /* Add new entry */
+    index = metrics->count;
+    metrics->signatures[index] = arena_strdup(ctx->metrics_arena, signature);
+    metrics->sample_rates[index] = sample_rate;
+    metrics->call_counts[index] = 0;
+    metrics->sample_counts[index] = 0;
+    metrics->total_time_ns[index] = 0;
+    metrics->min_time_ns[index] = UINT64_MAX;
+    metrics->max_time_ns[index] = 0;
+    metrics->alloc_bytes[index] = 0;
+    metrics->peak_memory[index] = 0;
+    metrics->cpu_cycles[index] = 0;
+    metrics->metric_flags[index] = flags;
+    
+    metrics->count++;
+    return index;
+}
 
-    if (written < 0 || written >= MAX_SIG_SZ)
-    {
-        /* snprintf has truncated this method name so we cannot trust this value */
-        LOG(ctx, "WARN: Method signature too long for buffer (%d chars)\n", written);
+/**
+ * Find the index of a method in the metrics structure
+ */
+int find_method_index(method_metrics_soa_t *metrics, const char *signature) {
+    if (!metrics || !signature) return -1;
+    
+    for (size_t i = 0; i < metrics->count; i++) {
+        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0) {
+            return (int)i;
+        }
+    }
+    
+    return -1;  /* Not found */
+}
+
+/**
+ * Check if a method should be sampled and return its index if it should
+ */
+int should_sample_method(agent_context_t *ctx, const char *class_signature, 
+                         const char *method_name, const char *method_signature) {
+    /* We need to find the method in our metrics structure */
+    char full_sig[MAX_SIG_SZ];
+    int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", 
+                        class_signature, method_name, method_signature);
+    
+    if (written < 0 || written >= MAX_SIG_SZ) {
+        /* Signature is too long, skip */
         return 0;
     }
     
-    for (int i = 0; i < ctx->num_filters; i++) {
-        //printf("filter: %s signature: %s", method_filters[i], full_signature);
-        // if (strcmp(method_filters[i], full_signature) == 0) {
-        //     return 1; // Match found
-        // }
-        if (strstr(ctx->method_filters[i], class_signature))
-            return 1;
+    int method_index = find_method_index(ctx->metrics, full_sig);
+    
+    /* If exact match not found, try class wildcard */
+    if (method_index < 0) {
+        written = snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
+        if (written >= 0 && written < MAX_SIG_SZ) {
+            method_index = find_method_index(ctx->metrics, full_sig);
+        }
     }
-    return 0; /* No match */
+    
+    /* If still not found, not a method we want to sample */
+    if (method_index < 0) {
+        return 0;
+    }
+    
+    /* We found the method, increment its call count */
+    ctx->metrics->call_counts[method_index]++;
+    
+    /* Check if we should sample this call based on the sample rate */
+    if (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index] == 0) {
+        return method_index + 1;  /* +1 because 0 means "don't sample" */
+    }
+    
+    return 0;  /* Don't sample this call */
 }
+
+// should_trace_method removed - replaced by should_sample_method
 
 /*
  * Entry point
@@ -1239,6 +1568,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.sample_file_path = NULL;
     global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
+    global_ctx->metrics = NULL;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
 
     /* Initialize exception arena */
@@ -1286,6 +1616,23 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->config_arena) 
     {
         LOG(global_ctx, "ERROR: Failed to create config arena\n");
+        return JNI_ERR;
+    }
+
+    /* Initialize metrics arena */
+    size_t metrics_arena_sz = 8 * 1024 * 1024;  /* 8 MB for metrics */
+    global_ctx->metrics_arena = arena_init("metrics_arena", metrics_arena_sz, 1024);
+    if (!global_ctx->metrics_arena) 
+    {
+        LOG(global_ctx, "ERROR: Failed to create metrics arena\n");
+        return JNI_ERR;
+    }
+
+    /* Initialize metrics if needed */
+    size_t initial_capacity = 256;
+    global_ctx->metrics = init_method_metrics(global_ctx->metrics_arena, initial_capacity);
+    if (!global_ctx->metrics) {
+        LOG(global_ctx, "ERROR: Failed to initialize metrics structure\n");
         return JNI_ERR;
     }
 
@@ -1452,7 +1799,40 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         cleanup_log_system(global_ctx);
         cleanup_event_system(global_ctx);
 
+        /* Clean up thread-local storage */
+        if (tls_initialized) 
+        {
+            /* Free the current thread's TLS data */
+            method_sample_t *sample = pthread_getspecific(sample_key);
+            if (sample) {
+                free(sample);
+                pthread_setspecific(sample_key, NULL);
+            }
+            
+            /* Unfortunately, with pthreads there's no direct way to iterate and free 
+               thread-local storage from all threads. It relies on thread exit handlers.
+               We can at least delete the key to prevent further allocations. */
+            /* Clean up TLS resources */
+            pthread_key_delete(sample_key);
+            tls_initialized = 0;
+            
+            /* Destroy the initialization mutex */
+            pthread_mutex_destroy(&tls_init_mutex);
+            
+            /* Note: Any other thread that was using TLS will have its destructor called
+               when that thread exits. If the JVM creates a lot of threads that don't exit,
+               there could still be leaks. This is a limitation of the pthreads API. */
+            LOG(global_ctx, "WARNING: Thread-local storage cleanup may be incomplete for threads that don't exit\n");
+        }
+
         /* Cleanup the arenas */
+        if (global_ctx->metrics_arena) 
+        {
+            arena_destroy(global_ctx->metrics_arena);
+            global_ctx->metrics_arena = NULL;
+            global_ctx->metrics = NULL;  /* Points to memory within metrics_arena */
+        }
+
         if (global_ctx->exception_arena)
         {
             arena_destroy(global_ctx->exception_arena);
