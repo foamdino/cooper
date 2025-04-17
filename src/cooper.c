@@ -1071,35 +1071,35 @@ int load_config(agent_context_t *ctx, const char *cf)
     
     while (fgets(line, sizeof(line), fp))
     {
-        // Process the line (strip comments, trim whitespace)
+        /* Process the line (strip comments, trim whitespace) */
         char *processed = arena_process_config_line(ctx->config_arena, line);
         if (!processed || processed[0] == '\0')
             continue;  // Skip empty lines
         
-        // Handle section headers
+        /* Handle section headers */
         if (processed[0] == '[')
         {
-            current_section = processed;  // Just point to the arena-allocated string
+            current_section = processed;  /* Just point to the arena-allocated string */
             continue;
         }
         
-        // Skip any data before the first section
+        /* Skip any data before the first section */
         if (!current_section)
             continue;
         
-        // Based on the section we're in, interpret the value differently
+        /* Based on the section we're in, interpret the value differently */
         if (strcmp(current_section, "[method_signatures]") == 0)
         {
             LOG(ctx, "DEBUG: Processing line in [method_signatures]: '%s'\n", processed);
-            // Skip over the filters line, end of filters is a line containing a single ']'
+            /* Skip over the filters line, end of filters is a line containing a single ']' */
             if (strncmp(processed, "filters =", 9) == 0 || processed[0] == ']')
                 continue;
             
-            // Process a filter entry
+            /* Process a filter entry */
             ctx->config.num_filters++;
             LOG(ctx, "DEBUG: Adding filter #%d: '%s'\n", ctx->config.num_filters, processed);
             
-            // Adjust filter storage
+            /* Adjust filter storage */
             char **tmp = realloc(ctx->config.filters, ctx->config.num_filters * sizeof(char *));
             if (!tmp)
             {
@@ -1109,13 +1109,13 @@ int load_config(agent_context_t *ctx, const char *cf)
             }
             ctx->config.filters = tmp;
             
-            // Use the string directly from the arena - no need for strdup
+            /* Use the string directly from the arena - no need for strdup */
             ctx->config.filters[ctx->config.num_filters - 1] = processed;
             LOG(ctx, "DEBUG: Added filter: %s\n", ctx->config.filters[ctx->config.num_filters - 1]);
         }
         else
         {
-            // Extract and trim the value part
+            /* Extract and trim the value part */
             char *value = arena_extract_and_trim_value(ctx->config_arena, processed);
             if (!value)
                 continue;
@@ -1128,14 +1128,14 @@ int load_config(agent_context_t *ctx, const char *cf)
             }
             else if (strcmp(current_section, "[sample_file_location]") == 0)
             {
-                // Store the arena-allocated string directly
+                /* Store the arena-allocated string directly */
                 ctx->config.sample_file_path = value;
             }
             else if (strcmp(current_section, "[export]") == 0)
             {
                 if (strstr(processed, "method"))
                 {
-                    // Store the arena-allocated string directly
+                    /* Store the arena-allocated string directly */
                     ctx->config.export_method = value;
                 }
                 else if (strstr(processed, "interval"))
@@ -1150,10 +1150,10 @@ int load_config(agent_context_t *ctx, const char *cf)
 cleanup:
     fclose(fp);
     
-    // Check for prior error
+    /* Check for prior error */
     if (res)
     {
-        // Just free the array of pointers, not the strings themselves
+        /* Just free the array of pointers, not the strings themselves */
         if (ctx->config.filters) 
         {
             free(ctx->config.filters);
@@ -1163,7 +1163,7 @@ cleanup:
         return res;
     }
     
-    // Set defaults if needed
+    /* Set defaults if needed */
     if (!ctx->config.export_method) 
     {
         ctx->config.export_method = arena_strdup(ctx->config_arena, "file");
@@ -1171,7 +1171,7 @@ cleanup:
             LOG(ctx, "ERROR: Failed to set default export_method\n");
     }
     
-    // Setup method filters
+    /* Setup method filters */
     ctx->method_filters = ctx->config.filters;
     ctx->num_filters = ctx->config.num_filters;
     

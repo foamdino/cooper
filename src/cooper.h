@@ -154,6 +154,7 @@ void *export_thread_func(void *arg);
 
 /**
  * Strip trailing comment from a string using arena allocation
+ * Preserves '#' characters inside quoted strings
  * 
  * @param arena     Pointer to the arena
  * @param str       String to process
@@ -167,17 +168,29 @@ static char *arena_strip_comment(arena_t *arena, const char *str)
     if (!arena || !str)
         return NULL;
     
-    // Find the comment marker
-    const char *comment = strchr(str, '#');
-    size_t len;
+    /* Find the comment marker, but ignore '#' inside quotes */
+    const char *p = str;
+    const char *comment = NULL;
+    int in_quotes = 0;
     
+    while (*p) {
+        if (*p == '"') {
+            in_quotes = !in_quotes; /* Toggle quote state */
+        } else if (*p == '#' && !in_quotes) {
+            comment = p;
+            break;
+        }
+        p++;
+    }
+    
+    size_t len;
     if (comment) {
         len = comment - str;
     } else {
         len = strlen(str);
     }
     
-    // Allocate and copy the substring
+    /* Allocate and copy the substring */
     char *result = arena_alloc(arena, len + 1);
     if (!result)
         return NULL;
@@ -203,11 +216,11 @@ static char *arena_trim(arena_t *arena, const char *str)
     if (!arena || !str)
         return NULL;
     
-    // Skip leading whitespace
+    /* Skip leading whitespace */
     while (isspace((unsigned char)*str))
         str++;
     
-    // All whitespace or empty string
+    /* All whitespace or empty string */
     if (*str == '\0') {
         char *result = arena_alloc(arena, 1);
         if (result)
@@ -215,18 +228,18 @@ static char *arena_trim(arena_t *arena, const char *str)
         return result;
     }
     
-    // Find the end of the string
+    /* Find the end of the string */
     size_t len = strlen(str);
     const char *end = str + len - 1;
     
-    // Move backward to find the last non-whitespace character
+    /* Move backward to find the last non-whitespace character */
     while (end > str && isspace((unsigned char)*end))
         end--;
     
-    // Calculate the trimmed length
+    /* Calculate the trimmed length */
     size_t trimmed_len = end - str + 1;
     
-    // Allocate and copy the trimmed string
+    /* Allocate and copy the trimmed string */
     char *result = arena_alloc(arena, trimmed_len + 1);
     if (!result)
         return NULL;
@@ -253,12 +266,12 @@ static char *arena_extract_and_trim_value(arena_t *arena, const char *line)
     if (!arena || !line)
         return NULL;
     
-    // Find the equals sign
+    /* Find the equals sign */
     const char *eq = strchr(line, '=');
     if (!eq)
         return NULL;
     
-    // Move to the value part (after the equals sign)
+    /* Move to the value part (after the equals sign) */
     const char *value_start = eq + 1;
     
     // Trim the value part
@@ -266,15 +279,15 @@ static char *arena_extract_and_trim_value(arena_t *arena, const char *line)
     if (!trimmed_value)
         return NULL;
     
-    // Check for quoted value
+    /* Check for quoted value */
     size_t trimmed_len = strlen(trimmed_value);
     if (trimmed_len >= 2 && trimmed_value[0] == '"' && trimmed_value[trimmed_len - 1] == '"') {
-        // Allocate space for string without quotes
-        char *unquoted = arena_alloc(arena, trimmed_len - 1); // -1 because we're removing 2 quotes but need null terminator
+        /* Allocate space for string without quotes */
+        char *unquoted = arena_alloc(arena, trimmed_len - 1); /* -1 because we're removing 2 quotes but need null terminator */
         if (!unquoted)
             return NULL;
         
-        // Copy the string without quotes
+        /* Copy the string without quotes */
         memcpy(unquoted, trimmed_value + 1, trimmed_len - 2);
         unquoted[trimmed_len - 2] = '\0';
         return unquoted;
@@ -298,15 +311,15 @@ static char *arena_process_config_line(arena_t *arena, const char *line)
     if (!arena || !line)
         return NULL;
     
-    // First strip comments, then trim whitespace
+    /* First strip comments, then trim whitespace */
     char *without_comments = arena_strip_comment(arena, line);
     if (!without_comments)
         return NULL;
     
     char *trimmed = arena_trim(arena, without_comments);
     
-    // We can return trimmed directly - no need to free without_comments
-    // as it's managed by the arena
+    /* We can return trimmed directly - no need to free without_comments
+      as it's managed by the arena */
     return trimmed;
 }
 

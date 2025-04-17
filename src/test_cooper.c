@@ -445,6 +445,54 @@ static void test_arena()
     printf("[TEST] arena: All tests passed\n");
 }
 
+// Test arena_process_config_line function
+static void test_arena_process_config_line() 
+{
+    agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
+    size_t config_arena_sz = 512 * 1024;
+    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+
+    // Line with a comment
+    char *result1 = arena_process_config_line(ctx->config_arena, "key = value # comment");
+    assert(result1 != NULL);
+    assert(strcmp(result1, "key = value") == 0);
+
+    // Line with just whitespace
+    char *result2 = arena_process_config_line(ctx->config_arena, "  \t\n");
+    assert(result2 != NULL);
+    assert(strlen(result2) == 0);
+
+    // Line with both leading/trailing whitespace and comment
+    char *result3 = arena_process_config_line(ctx->config_arena, "   key = value   # comment ");
+    assert(result3 != NULL);
+    assert(strcmp(result3, "key = value") == 0);
+
+    // Line with only a comment
+    char *result4 = arena_process_config_line(ctx->config_arena, "# just a comment");
+    assert(result4 != NULL);
+    assert(strlen(result4) == 0);
+
+    // Empty line
+    char *result5 = arena_process_config_line(ctx->config_arena, "");
+    assert(result5 != NULL);
+    assert(strlen(result5) == 0);
+
+    // Line with quoted value and comment
+    char *result6 = arena_process_config_line(ctx->config_arena, "key = \"quoted value\" # comment");
+    assert(result6 != NULL);
+    assert(strcmp(result6, "key = \"quoted value\"") == 0);
+
+    // Line with embedded '#' in quoted value
+    char *result7 = arena_process_config_line(ctx->config_arena, "key = \"value with # inside quotes\"");
+    assert(result7 != NULL);
+    assert(strcmp(result7, "key = \"value with # inside quotes\"") == 0);
+
+    arena_destroy(ctx->config_arena);
+    free(ctx);
+
+    printf("[TEST] test_arena_process_config_line: All tests passed\n");
+}
+
 int main() 
 {
     printf("Running unit tests for cooper.c...\n");
@@ -452,6 +500,7 @@ int main()
     test_arena_trim();
     test_arena_strip_comment();
     test_arena_extract_and_trim_value();
+    test_arena_process_config_line();
     test_load_config();
     test_should_trace_method();
     test_arena();
