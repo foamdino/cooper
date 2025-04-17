@@ -123,6 +123,36 @@ static void test_arena_extract_and_trim_value()
     char *result7 = arena_extract_and_trim_value(ctx->config_arena, "");
     assert(result7 == NULL);
 
+    // Quoted value - should remove quotes
+    char *result8 = arena_extract_and_trim_value(ctx->config_arena, "key = \"quoted value\"");
+    assert(result8 != NULL);
+    assert(strcmp(result8, "quoted value") == 0);
+
+    // Quoted value with spaces around quotes
+    char *result9 = arena_extract_and_trim_value(ctx->config_arena, "key =  \"quoted value\"  ");
+    assert(result9 != NULL);
+    assert(strcmp(result9, "quoted value") == 0);
+
+    // Quoted value with only opening quote - should not remove quotes as it's malformed
+    char *result10 = arena_extract_and_trim_value(ctx->config_arena, "key = \"quoted value");
+    assert(result10 != NULL);
+    assert(strcmp(result10, "\"quoted value") == 0);
+
+    // Quoted value with only closing quote - should not remove quotes as it's malformed
+    char *result11 = arena_extract_and_trim_value(ctx->config_arena, "key = quoted value\"");
+    assert(result11 != NULL);
+    assert(strcmp(result11, "quoted value\"") == 0);
+
+    // Empty quoted value - should return empty string
+    char *result12 = arena_extract_and_trim_value(ctx->config_arena, "key = \"\"");
+    assert(result12 != NULL);
+    assert(strlen(result12) == 0);
+
+    // Quoted value with embedded equals sign
+    char *result13 = arena_extract_and_trim_value(ctx->config_arena, "key = \"value=with=equals\"");
+    assert(result13 != NULL);
+    assert(strcmp(result13, "value=with=equals") == 0);
+
     arena_destroy(ctx->config_arena);
     free(ctx);
 
@@ -162,9 +192,9 @@ static void test_load_config()
         "\"LTest;\"\n"
         "]\n"
         "[sample_file_location]\n"
-        "path = /tmp/test.txt\n"
+        "path = \"/tmp/test.txt\"\n"
         "[export]\n"
-        "method = file\n"
+        "method = \"file\"\n"
         "interval = 30\n";
 
     const char *config_file = create_temp_config(config_content);

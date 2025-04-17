@@ -239,6 +239,7 @@ static char *arena_trim(arena_t *arena, const char *str)
 
 /**
  * Extract value part from a "key = value" string and trim it, using arena allocation
+ * Also handles quoted values by removing surrounding quotes
  * 
  * @param arena     Pointer to the arena
  * @param line      Line to process
@@ -261,7 +262,25 @@ static char *arena_extract_and_trim_value(arena_t *arena, const char *line)
     const char *value_start = eq + 1;
     
     // Trim the value part
-    return arena_trim(arena, value_start);
+    char *trimmed_value = arena_trim(arena, value_start);
+    if (!trimmed_value)
+        return NULL;
+    
+    // Check for quoted value
+    size_t trimmed_len = strlen(trimmed_value);
+    if (trimmed_len >= 2 && trimmed_value[0] == '"' && trimmed_value[trimmed_len - 1] == '"') {
+        // Allocate space for string without quotes
+        char *unquoted = arena_alloc(arena, trimmed_len - 1); // -1 because we're removing 2 quotes but need null terminator
+        if (!unquoted)
+            return NULL;
+        
+        // Copy the string without quotes
+        memcpy(unquoted, trimmed_value + 1, trimmed_len - 2);
+        unquoted[trimmed_len - 2] = '\0';
+        return unquoted;
+    }
+    
+    return trimmed_value;
 }
 
 /**
