@@ -882,18 +882,6 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         goto deallocate;
     }
 
-    // if (strcmp(class_signature, "Lcom/github/foamdino/Test;") == 0 &&
-    //     strcmp(method_name, "a") == 0) {
-    //     printf("[ENTRY] Method from class %s: %s invoked\n", class_signature, method_name);
-    // }
-
-    /* TODO need to also count the calls - need a histogram style datastructure - or maxheap (bounded mem) */
-    // if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
-    // {
-    //     event_enq(global_ctx, class_signature, method_name, method_signature, 1);
-    //     LOG(global_ctx, "[ENTRY] Method from class (%s): %s invoked\n", class_signature, method_name);
-    // }
-
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
 
@@ -967,64 +955,28 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jclass declaringClass;
     jvmtiError err;
 
-    // if (jvmti != global_ctx->jvmti_env)
-    //     LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
-
-    // /* Get method name */
-    // err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
-    // if (err != JVMTI_ERROR_NONE) 
-    // {
-    //     LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
-    //     goto deallocate;
-    // }
-
-    // /* Get declaring class */
-    // err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-    // if (err != JVMTI_ERROR_NONE) 
-    // {
-    //     LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
-    //     goto deallocate;
-    // }
-
-    // /* Get class signature */
-    // err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
-    // if (err != JVMTI_ERROR_NONE) 
-    // {
-    //     LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
-    //     goto deallocate;
-    // }
-
-    // if (strcmp(class_signature, "Lcom/github/foamdino/Test;") == 0 &&
-    //     strcmp(method_name, "a") == 0) {
-    //     printf("[EXIT] Method from class%s: %s\n", class_signature, method_name);
-    // }
-    
-    /* TODO count exits from method - same as entry traces */
-    // if (should_trace_method(global_ctx, class_signature, method_name, method_signature))
-    // {
-    //     event_enq(global_ctx, class_signature, method_name, method_signature, 0);
-    //     LOG(global_ctx, "[EXIT] Method from class (%s): %s\n", class_signature, method_name);
-    // }
-
     /* Get method details for logging */
     if (tls_initialized && global_ctx->metrics->metric_flags[sample->method_index] != 0) {
         /* Get method name */
         err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
-        if (err != JVMTI_ERROR_NONE) {
+        if (err != JVMTI_ERROR_NONE) 
+        {
             LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
             goto record_metrics;
         }
 
         /* Get declaring class */
         err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-        if (err != JVMTI_ERROR_NONE) {
+        if (err != JVMTI_ERROR_NONE) 
+        {
             LOG(global_ctx, "ERROR: GetMethodDeclaringClass failed with error %d\n", err);
             goto deallocate;
         }
 
         /* Get class signature */
         err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
-        if (err != JVMTI_ERROR_NONE) {
+        if (err != JVMTI_ERROR_NONE)
+        {
             LOG(global_ctx, "ERROR: GetClassSignature failed with error %d\n", err);
             goto deallocate;
         }
@@ -1304,7 +1256,8 @@ int load_config(agent_context_t *ctx, const char *cf)
                               class_sig, method_name, method_sig, &sample_rate, metrics);
             
             /* Handle partially specified entries */
-            if (parsed < 1) {
+            if (parsed < 1) 
+            {
                 LOG(ctx, "ERROR: Invalid method filter format: %s\n", processed);
                 continue;
             }
@@ -1315,11 +1268,14 @@ int load_config(agent_context_t *ctx, const char *cf)
             
             /* Determine which metrics to collect */
             unsigned int metric_flags = 0;
-            if (parsed >= 5) {
+            if (parsed >= 5) 
+            {
                 if (strstr(metrics, "time"))   metric_flags |= METRIC_FLAG_TIME;
                 if (strstr(metrics, "memory")) metric_flags |= METRIC_FLAG_MEMORY;
                 if (strstr(metrics, "cpu"))    metric_flags |= METRIC_FLAG_CPU;
-            } else {
+            } 
+            else 
+            {
                 /* Default to collecting time if not specified */
                 metric_flags = METRIC_FLAG_TIME;
             }
@@ -1452,7 +1408,8 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
 
     /* Check if method already exists */
     int index = find_method_index(metrics, signature);
-    if (index >= 0) {
+    if (index >= 0) 
+    {
         /* Update existing entry */
         metrics->sample_rates[index] = sample_rate;
         metrics->metric_flags[index] = flags;
@@ -1460,7 +1417,8 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Need to add a new entry */
-    if (metrics->count >= metrics->capacity) {
+    if (metrics->count >= metrics->capacity) 
+    {
         /* Cannot grow in the current implementation with arenas */
         LOG(ctx, "ERROR: Method metrics capacity reached (%zu)\n", metrics->capacity);
         return -1;
@@ -1539,8 +1497,6 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     
     return 0;  /* Don't sample this call */
 }
-
-// should_trace_method removed - replaced by should_sample_method
 
 /*
  * Entry point
