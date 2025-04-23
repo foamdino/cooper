@@ -1377,7 +1377,10 @@ int load_config(agent_context_t *ctx, const char *cf)
 /**
  * Helper function to initialize the metrics Struct-of-Arrays structure
  */
-method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity) {
+method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity) 
+{
+    assert(arena != NULL);
+
     method_metrics_soa_t *metrics = arena_alloc(arena, sizeof(method_metrics_soa_t));
     if (!metrics) return NULL;
     
@@ -1418,9 +1421,8 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
     
     /* Set min_time_ns to maximum value initially */
-    for (size_t i = 0; i < initial_capacity; i++) {
+    for (size_t i = 0; i < initial_capacity; i++)
         metrics->min_time_ns[i] = UINT64_MAX;
-    }
     
     return metrics;
 }
@@ -1428,11 +1430,13 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
 /**
  * Add a method to the metrics structure
  */
-int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags) {
-    method_metrics_soa_t *metrics = ctx->metrics;
+int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags) 
+{
     
     assert(ctx != NULL);
     assert(ctx->metrics != NULL);
+
+    method_metrics_soa_t *metrics = ctx->metrics;
 
     /* Check if method already exists */
     int index = find_method_index(metrics, signature);
@@ -1474,7 +1478,8 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
 /**
  * Find the index of a method in the metrics structure
  */
-int find_method_index(method_metrics_soa_t *metrics, const char *signature) {
+int find_method_index(method_metrics_soa_t *metrics, const char *signature) 
+{
     if (!metrics || !signature) return -1;
     
     for (size_t i = 0; i < metrics->count; i++) {
@@ -1490,16 +1495,16 @@ int find_method_index(method_metrics_soa_t *metrics, const char *signature) {
  * Check if a method should be sampled and return its index if it should
  */
 int should_sample_method(agent_context_t *ctx, const char *class_signature, 
-                         const char *method_name, const char *method_signature) {
+                         const char *method_name, const char *method_signature) 
+{
     /* We need to find the method in our metrics structure */
     char full_sig[MAX_SIG_SZ];
     int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", 
                         class_signature, method_name, method_signature);
     
-    if (written < 0 || written >= MAX_SIG_SZ) {
-        /* Signature is too long, skip */
+    /* Signature is too long, skip */
+    if (written < 0 || written >= MAX_SIG_SZ)
         return 0;
-    }
     
     int method_index = find_method_index(ctx->metrics, full_sig);
     
@@ -1512,17 +1517,15 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     }
     
     /* If still not found, not a method we want to sample */
-    if (method_index < 0) {
+    if (method_index < 0)
         return 0;
-    }
     
     /* We found the method, increment its call count */
     ctx->metrics->call_counts[method_index]++;
     
     /* Check if we should sample this call based on the sample rate */
-    if (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index] == 0) {
+    if (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index] == 0)
         return method_index + 1;  /* +1 because 0 means "don't sample" */
-    }
     
     return 0;  /* Don't sample this call */
 }
@@ -1538,7 +1541,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     /* Allocate and initialize the agent context */
     global_ctx = malloc(sizeof(agent_context_t));
-    if (!global_ctx) {
+    if (!global_ctx) 
+    {
         printf("ERROR: Failed to allocate agent context\n");
         return JNI_ERR;
     }
