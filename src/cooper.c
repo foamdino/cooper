@@ -133,8 +133,41 @@ static int safe_thread_join(pthread_t thread, int timeout)
         return result; /* Return the error code */
     }
     
-    /* For other errors or timeouts, we can't do much - the thread is still running */
-    return result;
+    /* For threads that can't be joined immediately but timeout > 0,
+       we need to wait and retry */
+       if (timeout > 0) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += timeout;
+        
+        /* Sleep in small increments and retry joining */
+        while (timeout > 0) {
+            /* Sleep for 100ms at a time */
+            usleep(100000);
+            
+            /* Try joining again */
+            result = pthread_join(thread, NULL);
+            if (result == 0) {
+                return 0; /* Successfully joined */
+            }
+            
+            /* If thread is invalid or already joined/detached, return */
+            if (result == EINVAL || result == ESRCH) {
+                return result;
+            }
+            
+            /* Check if we've exceeded the timeout */
+            struct timespec current;
+            clock_gettime(CLOCK_REALTIME, &current);
+            if (current.tv_sec >= ts.tv_sec && 
+                current.tv_nsec >= ts.tv_nsec) {
+                break;
+            }
+        }
+    }
+    
+    /* If we reach here, we couldn't join within the timeout period */
+    return ETIMEDOUT;
 }
 
 int init_log_q(agent_context_t *ctx)
