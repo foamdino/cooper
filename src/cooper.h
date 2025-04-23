@@ -211,12 +211,6 @@ struct agent_context
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
-    // arena_t *exception_arena;       /**< Arena for exception memory allocation */
-    // arena_t *log_arena;             /**< Arena for log strings memory allocation */
-    // arena_t *event_arena;           /**< Arena for events memory allocation */
-    // arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
-    // arena_t *config_arena;          /**< Arena for config file strings (filters etc) */
-    // arena_t *metrics_arena;         /**< Arena for metrics data */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
 };
 
