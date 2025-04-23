@@ -22,6 +22,14 @@
 typedef struct arena arena_t;
 typedef struct block_header block_header_t;
 typedef struct arena_node arena_node_t;
+typedef struct arena_config arena_config_t;
+
+struct arena_config
+{
+    const char *name;        /**< Arena name */
+    size_t size;             /**< Arena size in bytes */
+    size_t block_count;      /**< Maximum number of free blocks to track */
+};
 
 struct block_header 
 {

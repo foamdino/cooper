@@ -14,6 +14,16 @@ static pthread_key_t sample_key;
 static int tls_initialized = 0;
 static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Arena configurations */
+static const arena_config_t arena_configs[] = {
+    {"exception_arena", EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
+    {"log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
+    {"event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS},
+    {"sample_arena", SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
+    {"config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
+    {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
+};
+
 /* Initialize thread-local storage */
 static void init_thread_local_storage() {
     /* Double-checked locking pattern */
@@ -1567,46 +1577,30 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
       destroy all the arenas in the corresponding Agent_OnUnload
     */
 
-    /* TODO use a loop here... */
-    arena_t *exception_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "exception_arena", EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS);
-    if (!exception_arena)
-    {
-        LOG(global_ctx, "ERROR: Failed to create exception arena\n");
-        return JNI_ERR;
+    /* Number of arena configurations in the table */
+    const size_t num_arenas = sizeof(arena_configs) / sizeof(arena_configs[0]);
+    /* Create each arena from the configuration table */
+    for (size_t i = 0; i < num_arenas; i++) {
+        arena_t *arena = create_arena(
+            &global_ctx->arena_head, 
+            &global_ctx->arena_tail, 
+            arena_configs[i].name, 
+            arena_configs[i].size, 
+            arena_configs[i].block_count
+        );
+        
+        if (!arena) 
+        {
+            LOG(global_ctx, "ERROR: Failed to create %s\n", arena_configs[i].name);
+            return JNI_ERR;
+        }
     }
 
-    arena_t *log_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
-    if (!log_arena)
+    /* Initialize metrics after all arenas are created */
+    arena_t *metrics_arena = find_arena(global_ctx->arena_head, "metrics_arena");
+    if (!metrics_arena) 
     {
-        LOG(global_ctx, "ERROR: Failed to create log arena\n");
-        return JNI_ERR;
-    }
-
-    arena_t *event_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS);
-    if (!event_arena)
-    {
-        LOG(global_ctx, "ERROR: Failed to create event arena\n");
-        return JNI_ERR;
-    }
-
-    arena_t *sample_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "sample_arena", SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS);
-    if (!sample_arena)
-    {
-        LOG(global_ctx, "ERROR: Failed to create sample arena\n");
-        return JNI_ERR;
-    }
-
-    arena_t *config_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
-    if (!config_arena)
-    {
-        LOG(global_ctx, "ERROR: Failed to create config arena\n");
-        return JNI_ERR;
-    }
-
-    arena_t *metrics_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
-    if (!metrics_arena)
-    {
-        LOG(global_ctx, "ERROR: Failed to create metrics arena\n");
+        LOG(global_ctx, "ERROR: Metrics arena not found\n");
         return JNI_ERR;
     }
 
