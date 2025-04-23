@@ -28,26 +28,26 @@ static const char *create_temp_config(const char *content)
 static void test_arena_trim() 
 {
     agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
-    size_t config_arena_sz = 512 * 1024;
-    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
-    char *result1 = arena_trim(ctx->config_arena, "  hello  \n");
+    char *result1 = arena_trim(config_arena, "  hello  \n");
     assert(result1 != NULL);
     assert(strcmp(result1, "hello") == 0);
 
-    char *result2 = arena_trim(ctx->config_arena, " \t\n");
+    char *result2 = arena_trim(config_arena, " \t\n");
     assert(result2 != NULL);
     assert(strlen(result2) == 0);
 
-    char *result3 = arena_trim(ctx->config_arena, "no_spaces");
+    char *result3 = arena_trim(config_arena, "no_spaces");
     assert(result3 != NULL);
     assert(strcmp(result3, "no_spaces") == 0);
 
-    char *result4 = arena_trim(ctx->config_arena, "");
+    char *result4 = arena_trim(config_arena, "");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
-    arena_destroy(ctx->config_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+
     free(ctx);
 
     printf("[TEST] test_arena_trim: All tests passed\n");
@@ -57,27 +57,26 @@ static void test_arena_trim()
 static void test_arena_strip_comment() 
 {
     agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
-    size_t config_arena_sz = 512 * 1024;
-    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
-    char *result1 = arena_strip_comment(ctx->config_arena, "hello # comment");
+    char *result1 = arena_strip_comment(config_arena, "hello # comment");
     assert(result1 != NULL);
     assert(strcmp(result1, "hello ") == 0);
 
-    char *result2 = arena_strip_comment(ctx->config_arena, "no comment here");
+    char *result2 = arena_strip_comment(config_arena, "no comment here");
     assert(result2 != NULL);
     assert(strcmp(result2, "no comment here") == 0);
 
 
-    char *result3 = arena_strip_comment(ctx->config_arena, "# comment only");
+    char *result3 = arena_strip_comment(config_arena, "# comment only");
     assert(result3 != NULL);
     assert(strcmp(result3, "") == 0);
 
-    char *result4 = arena_strip_comment(ctx->config_arena, "");
+    char *result4 = arena_strip_comment(config_arena, "");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
-    arena_destroy(ctx->config_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     free(ctx);
 
     printf("[TEST] test_arena_strip_comment: All tests passed\n");
@@ -87,73 +86,72 @@ static void test_arena_strip_comment()
 static void test_arena_extract_and_trim_value() 
 {
     agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
-    size_t config_arena_sz = 512 * 1024;
-    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
     // Standard key-value pair
-    char *result1 = arena_extract_and_trim_value(ctx->config_arena, "key = value");
+    char *result1 = arena_extract_and_trim_value(config_arena, "key = value");
     assert(result1 != NULL);
     assert(strcmp(result1, "value") == 0);
 
     // Key-value pair with extra whitespace
-    char *result2 = arena_extract_and_trim_value(ctx->config_arena, "key =   value   ");
+    char *result2 = arena_extract_and_trim_value(config_arena, "key =   value   ");
     assert(result2 != NULL);
     assert(strcmp(result2, "value") == 0);
 
     // Key-value pair with no space after equals
-    char *result3 = arena_extract_and_trim_value(ctx->config_arena, "key=value");
+    char *result3 = arena_extract_and_trim_value(config_arena, "key=value");
     assert(result3 != NULL);
     assert(strcmp(result3, "value") == 0);
     
     // Key with no value (should return NULL)
-    char *result4 = arena_extract_and_trim_value(ctx->config_arena, "key = ");
+    char *result4 = arena_extract_and_trim_value(config_arena, "key = ");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
     // No equals sign (should return NULL)
-    char *result5 = arena_extract_and_trim_value(ctx->config_arena, "key value");
+    char *result5 = arena_extract_and_trim_value(config_arena, "key value");
     assert(result5 == NULL);
 
     // Only equals sign
-    char *result6 = arena_extract_and_trim_value(ctx->config_arena, "=value");
+    char *result6 = arena_extract_and_trim_value(config_arena, "=value");
     assert(result6 != NULL);
     assert(strcmp(result6, "value") == 0);
 
     // Empty string
-    char *result7 = arena_extract_and_trim_value(ctx->config_arena, "");
+    char *result7 = arena_extract_and_trim_value(config_arena, "");
     assert(result7 == NULL);
 
     // Quoted value - should remove quotes
-    char *result8 = arena_extract_and_trim_value(ctx->config_arena, "key = \"quoted value\"");
+    char *result8 = arena_extract_and_trim_value(config_arena, "key = \"quoted value\"");
     assert(result8 != NULL);
     assert(strcmp(result8, "quoted value") == 0);
 
     // Quoted value with spaces around quotes
-    char *result9 = arena_extract_and_trim_value(ctx->config_arena, "key =  \"quoted value\"  ");
+    char *result9 = arena_extract_and_trim_value(config_arena, "key =  \"quoted value\"  ");
     assert(result9 != NULL);
     assert(strcmp(result9, "quoted value") == 0);
 
     // Quoted value with only opening quote - should not remove quotes as it's malformed
-    char *result10 = arena_extract_and_trim_value(ctx->config_arena, "key = \"quoted value");
+    char *result10 = arena_extract_and_trim_value(config_arena, "key = \"quoted value");
     assert(result10 != NULL);
     assert(strcmp(result10, "\"quoted value") == 0);
 
     // Quoted value with only closing quote - should not remove quotes as it's malformed
-    char *result11 = arena_extract_and_trim_value(ctx->config_arena, "key = quoted value\"");
+    char *result11 = arena_extract_and_trim_value(config_arena, "key = quoted value\"");
     assert(result11 != NULL);
     assert(strcmp(result11, "quoted value\"") == 0);
 
     // Empty quoted value - should return empty string
-    char *result12 = arena_extract_and_trim_value(ctx->config_arena, "key = \"\"");
+    char *result12 = arena_extract_and_trim_value(config_arena, "key = \"\"");
     assert(result12 != NULL);
     assert(strlen(result12) == 0);
 
     // Quoted value with embedded equals sign
-    char *result13 = arena_extract_and_trim_value(ctx->config_arena, "key = \"value=with=equals\"");
+    char *result13 = arena_extract_and_trim_value(config_arena, "key = \"value=with=equals\"");
     assert(result13 != NULL);
     assert(strcmp(result13, "value=with=equals") == 0);
 
-    arena_destroy(ctx->config_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     free(ctx);
 
     printf("[TEST] test_arena_extract_and_trim_value: All tests passed\n");
@@ -178,19 +176,12 @@ static void test_load_config()
 
     assert(ctx != NULL);
     assert(init_log_q(ctx) == 0);
-    size_t config_arena_sz = 512 * 1024;
-    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
-
-    size_t log_arena_sz = 512 * 1024;
-    ctx->log_arena = arena_init("log_arena", log_arena_sz, 1024);
-    
-    // Initialize metrics arena for metrics data
-    size_t metrics_arena_sz = 8 * 1024 * 1024;  // 8 MB for metrics
-    ctx->metrics_arena = arena_init("metrics_arena", metrics_arena_sz, 1024);
-    assert(ctx->metrics_arena != NULL);
+    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    arena_t *log_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
 
     size_t initial_capacity = 256;
-    ctx->metrics = init_method_metrics(ctx->metrics_arena, initial_capacity);
+    ctx->metrics = init_method_metrics(metrics_arena, initial_capacity);
     assert(ctx->metrics != NULL);
 
     const char *config_content =
@@ -259,9 +250,7 @@ static void test_load_config()
     assert(ctx->metrics->sample_rates[method2_index] == 10);
     assert(ctx->metrics->metric_flags[method2_index] == METRIC_FLAG_TIME);
 
-    arena_destroy(ctx->config_arena);
-    arena_destroy(ctx->log_arena);
-    arena_destroy(ctx->metrics_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     free(ctx);
     printf("[TEST] load_config: All tests passed\n");
 }
@@ -274,9 +263,8 @@ static void test_log_queue()
     assert(init_log_q(ctx) == 0);
     
     // Initialize log arena for message storage
-    size_t log_arena_sz = 512 * 1024;
-    ctx->log_arena = arena_init("log_arena", log_arena_sz, 1024);
-    assert(ctx->log_arena != NULL);
+    arena_t *log_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    assert(log_arena != NULL);
 
     // Now enqueue messages (using arena_strdup in the implementation)
     log_enq(ctx, "Test message 1\n");
@@ -296,7 +284,7 @@ static void test_log_queue()
     assert(msg3 == NULL);
 
     // Clean up arenas first
-    arena_destroy(ctx->log_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     
     // // Clean up remaining resources
     // cleanup_log_system(ctx);
@@ -312,9 +300,8 @@ static void test_event_queue()
     assert(init_event_q(ctx) == 0);
     
     // Initialize event arena for event data storage
-    size_t event_arena_sz = 512 * 1024;
-    ctx->event_arena = arena_init("event_arena", event_arena_sz, 1024);
-    assert(ctx->event_arena != NULL);
+    arena_t *event_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS);
+    assert(event_arena != NULL);
 
     event_enq(ctx, "LTest;", "method", "()V", 1);
 
@@ -327,7 +314,7 @@ static void test_event_queue()
     assert(event_deq(ctx, &e) == 0);
 
     // Clean up arena first
-    arena_destroy(ctx->event_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     free(ctx);
     printf("[TEST] event_queue: All tests passed\n");
 }
@@ -466,45 +453,44 @@ static void test_arena()
 static void test_arena_process_config_line() 
 {
     agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
-    size_t config_arena_sz = 512 * 1024;
-    ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
+    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
     // Line with a comment
-    char *result1 = arena_process_config_line(ctx->config_arena, "key = value # comment");
+    char *result1 = arena_process_config_line(config_arena, "key = value # comment");
     assert(result1 != NULL);
     assert(strcmp(result1, "key = value") == 0);
 
     // Line with just whitespace
-    char *result2 = arena_process_config_line(ctx->config_arena, "  \t\n");
+    char *result2 = arena_process_config_line(config_arena, "  \t\n");
     assert(result2 != NULL);
     assert(strlen(result2) == 0);
 
     // Line with both leading/trailing whitespace and comment
-    char *result3 = arena_process_config_line(ctx->config_arena, "   key = value   # comment ");
+    char *result3 = arena_process_config_line(config_arena, "   key = value   # comment ");
     assert(result3 != NULL);
     assert(strcmp(result3, "key = value") == 0);
 
     // Line with only a comment
-    char *result4 = arena_process_config_line(ctx->config_arena, "# just a comment");
+    char *result4 = arena_process_config_line(config_arena, "# just a comment");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
     // Empty line
-    char *result5 = arena_process_config_line(ctx->config_arena, "");
+    char *result5 = arena_process_config_line(config_arena, "");
     assert(result5 != NULL);
     assert(strlen(result5) == 0);
 
     // Line with quoted value and comment
-    char *result6 = arena_process_config_line(ctx->config_arena, "key = \"quoted value\" # comment");
+    char *result6 = arena_process_config_line(config_arena, "key = \"quoted value\" # comment");
     assert(result6 != NULL);
     assert(strcmp(result6, "key = \"quoted value\"") == 0);
 
     // Line with embedded '#' in quoted value
-    char *result7 = arena_process_config_line(ctx->config_arena, "key = \"value with # inside quotes\"");
+    char *result7 = arena_process_config_line(config_arena, "key = \"value with # inside quotes\"");
     assert(result7 != NULL);
     assert(strcmp(result7, "key = \"value with # inside quotes\"") == 0);
 
-    arena_destroy(ctx->config_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     free(ctx);
 
     printf("[TEST] test_arena_process_config_line: All tests passed\n");
@@ -518,15 +504,13 @@ static void test_should_sample_method()
     pthread_mutex_init(&ctx->samples_lock, NULL);
     
     // Initialize metrics arena for metrics data
-    size_t metrics_arena_sz = 8 * 1024 * 1024;  // 8 MB for metrics
-    ctx->metrics_arena = arena_init("metrics_arena", metrics_arena_sz, 1024);
-    assert(ctx->metrics_arena != NULL);
+    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
     
     // Initialize event_counter (for rate-based sampling)
     ctx->event_counter = 0;
     
     // Initialize metrics structure
-    ctx->metrics = init_method_metrics(ctx->metrics_arena, 10);
+    ctx->metrics = init_method_metrics(metrics_arena, 10);
     assert(ctx->metrics != NULL);
     
     // Add a method with rate=1 (sample every call)
@@ -595,7 +579,7 @@ static void test_should_sample_method()
     assert(sample4 == 0); // Should not be sampled
     
     // Clean up
-    arena_destroy(ctx->metrics_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     pthread_mutex_destroy(&ctx->samples_lock);
     free(ctx);
     printf("[TEST] should_sample_method: All tests passed\n");
@@ -609,12 +593,11 @@ static void test_record_method_execution()
     pthread_mutex_init(&ctx->samples_lock, NULL);
     
     // Initialize metrics arena for metrics data
-    size_t metrics_arena_sz = 8 * 1024 * 1024;  // 8 MB for metrics
-    ctx->metrics_arena = arena_init("metrics_arena", metrics_arena_sz, 1024);
-    assert(ctx->metrics_arena != NULL);
+    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    assert(metrics_arena != NULL);
     
     // Initialize metrics structure
-    ctx->metrics = init_method_metrics(ctx->metrics_arena, 10);
+    ctx->metrics = init_method_metrics(metrics_arena, 10);
     assert(ctx->metrics != NULL);
     
     // Add methods with different metric flags
@@ -688,7 +671,7 @@ static void test_record_method_execution()
     record_method_execution(ctx, -1, 1000, 512, 2000);
     
     // Clean up
-    arena_destroy(ctx->metrics_arena);
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     pthread_mutex_destroy(&ctx->samples_lock);
     free(ctx);
     printf("[TEST] record_method_execution: All tests passed\n");

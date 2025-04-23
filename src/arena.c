@@ -222,3 +222,93 @@ void arena_destroy(arena_t *arena)
     /* Free the arena struct itself */
     free(arena);
 }
+
+/**
+ * Create a new arena, initialize it and add it to a list
+ * 
+ * @param head      Pointer to the head pointer of the list (modified)
+ * @param tail      Pointer to the tail pointer of the list (modified)
+ * @param name      Name of the arena
+ * @param size      Size of the arena
+ * @param max_blocks Maximum number of free blocks to track
+ * 
+ * @return          Pointer to the created arena, or NULL on failure
+ */
+arena_t *create_arena(arena_node_t **head, arena_node_t **tail, 
+    const char *name, size_t size, size_t max_blocks)
+{
+    arena_node_t *node = malloc(sizeof(arena_node_t));
+    if (!node) {
+        return NULL;
+    }
+
+    /* Initialize the arena */
+    arena_t *arena = arena_init(name, size, max_blocks);
+    if (!arena) {
+        free(node);
+        return NULL;
+    }
+
+    /* Set up the node */
+    strncpy(node->name, name, sizeof(node->name) - 1);
+    node->name[sizeof(node->name) - 1] = '\0';
+    node->arena = arena;
+    node->sz = size;
+    node->next = NULL;
+
+    /* Add to the list */
+    if (*tail) {
+        /* List is not empty, append to tail */
+        node->prev = *tail;
+        (*tail)->next = node;
+        *tail = node;
+    } else {
+        /* List is empty, update both head and tail */
+        node->prev = NULL;
+        *head = node;
+        *tail = node;
+    }
+
+    return arena;
+}
+
+/**
+* Find an arena by name
+* 
+* @param head      Head of the arena list
+* @param name      Name of the arena to find
+* 
+* @return          Pointer to the found arena, or NULL if not found
+*/
+arena_t *find_arena(arena_node_t *head, const char *name) {
+    arena_node_t *node = head;
+    while (node) {
+        if (strcmp(node->name, name) == 0) {
+            return node->arena;
+        }
+        node = node->next;
+    }
+    return NULL;
+}
+
+/**
+* Destroy all arenas in the list
+* 
+* @param head      Pointer to the head pointer of the list (modified)
+* @param tail      Pointer to the tail pointer of the list (modified)
+*/
+void destroy_all_arenas(arena_node_t **head, arena_node_t **tail) {
+    arena_node_t *node = *head;
+
+    while (node) {
+        arena_node_t *next = node->next;
+        if (node->arena) {
+            arena_destroy(node->arena);
+        }
+        free(node);
+        node = next;
+    }
+
+    *head = NULL;
+    *tail = NULL;
+}

@@ -37,6 +37,7 @@ static method_sample_t *get_thread_local_sample() {
     method_sample_t *sample = pthread_getspecific(sample_key);
     if (!sample) {
         /* First time this thread is accessing the key */
+        // TODO fix this calloc as it is not correctly free'd later
         sample = calloc(1, sizeof(method_sample_t));
         if (sample) {
             sample->method_index = -1;  /* Not sampling */
@@ -169,9 +170,6 @@ int init_log_q(agent_context_t *ctx)
 /**
  * Enqueue a msg to the log q
  * 
- * Note: This function allocates memory for the message using strdup.
- * The allocated memory must be freed by the log cleanup system.
- * 
  * @param msg Pointer to msg to add
  * 
  */
@@ -183,9 +181,11 @@ void log_enq(agent_context_t *ctx, const char *msg)
     /* Obtain lock to q */
     pthread_mutex_lock(&ctx->log_queue.lock);
 
+    arena_t *arena = find_arena(ctx->arena_head, "log_arena");
+
     if (ctx->log_queue.count < LOG_Q_SZ)
     {
-        ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(ctx->log_arena, msg);
+        ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(arena, msg);
         if (ctx->log_queue.messages[ctx->log_queue.hd])
         {
             ctx->log_queue.hd = (ctx->log_queue.hd + 1) % LOG_Q_SZ;
@@ -325,13 +325,6 @@ void cleanup_log_system(agent_context_t *ctx)
     if (ctx->log_file != stdout && ctx->log_file != stderr)
         fclose(ctx->log_file);
 
-    /* With an arena we can free all the log strings at once */
-    if (ctx->log_arena)
-    {
-        arena_destroy(ctx->log_arena);
-        ctx->log_arena = NULL;
-    }
-
     pthread_cond_destroy(&ctx->log_queue.cond);
     pthread_mutex_destroy(&ctx->log_queue.lock);
 }
@@ -373,12 +366,6 @@ void cleanup_samples(agent_context_t *ctx)
         
     }
     ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
-
-    if (ctx->sample_arena)
-    {
-        arena_destroy(ctx->sample_arena);
-        ctx->sample_arena = NULL;
-    }
 }
 
 int init_event_q(agent_context_t *ctx)
@@ -413,12 +400,14 @@ void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_n
     assert(ctx != NULL);
     
     pthread_mutex_lock(&ctx->event_queue.lock);
+
+    arena_t *arena = find_arena(ctx->arena_head, "event_arena");
     if (ctx->event_queue.count < EVENT_Q_SZ)
     {
         trace_event_t *e = &ctx->event_queue.events[ctx->event_queue.hd];
-        e->class_sig = arena_strdup(ctx->event_arena, class_sig);
-        e->method_name = arena_strdup(ctx->event_arena, method_name);
-        e->method_sig = arena_strdup(ctx->event_arena, method_sig);
+        e->class_sig = arena_strdup(arena, class_sig);
+        e->method_name = arena_strdup(arena, method_name);
+        e->method_sig = arena_strdup(arena, method_sig);
         e->is_entry = is_entry;
 
         if (!e->class_sig || !e->method_name || !e->method_sig) 
@@ -465,6 +454,9 @@ void *event_thread_func(void *arg)
     trace_event_t e;
     agent_context_t *ctx = (agent_context_t *)arg;
     
+    arena_t *event_arena = find_arena(ctx->arena_head, "event_arena");
+    arena_t *sample_arena = find_arena(ctx->arena_head, "sample_arena");
+
     while (1)
     {
         pthread_mutex_lock(&ctx->event_queue.lock);
@@ -516,7 +508,7 @@ void *event_thread_func(void *arg)
                 if (ctx->full_count < FULL_SAMPLE_SZ)
                 {
                     /* Copy the full_sig value to the samples signature as full_sig is a stack allocated buffer */
-                    ctx->full_samples[ctx->full_count].signature = arena_strdup(ctx->event_arena, full_sig);
+                    ctx->full_samples[ctx->full_count].signature = arena_strdup(event_arena, full_sig);
                     /* Set correct info for exit/entry */
                     ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
                     ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
@@ -527,7 +519,7 @@ void *event_thread_func(void *arg)
                     /* Set our index to the current hd */
                     int idx = ctx->full_hd;
                     /* Set the signature to the new value */
-                    ctx->full_samples[idx].signature = arena_strdup(ctx->sample_arena, full_sig);
+                    ctx->full_samples[idx].signature = arena_strdup(sample_arena, full_sig);
                     /* Set correct info for exit/entry */
                     ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
                     ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
@@ -559,7 +551,7 @@ void *event_thread_func(void *arg)
                     /* Add to nth_samples if we cannot find method signature */
                     if (ctx->nth_count < NTH_SAMPLE_SZ)
                     {
-                        ctx->nth_samples[ctx->nth_count].signature = arena_strdup(ctx->sample_arena, full_sig);
+                        ctx->nth_samples[ctx->nth_count].signature = arena_strdup(sample_arena, full_sig);
                         ctx->nth_samples[ctx->nth_count].entry_count = e.is_entry ? 1 : 0;
                         ctx->nth_samples[ctx->nth_count].exit_count = e.is_entry ? 0 : 1;
                         ctx->nth_count++;
@@ -567,7 +559,7 @@ void *event_thread_func(void *arg)
                     else /* Replace the oldest entry */
                     {
                         int idx = ctx->nth_hd;
-                        ctx->nth_samples[idx].signature = arena_strdup(ctx->sample_arena, full_sig);
+                        ctx->nth_samples[idx].signature = arena_strdup(sample_arena, full_sig);
                         ctx->nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
                         ctx->nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
                         ctx->nth_hd = (ctx->nth_hd + 1) % NTH_SAMPLE_SZ;
@@ -622,12 +614,13 @@ void cleanup_event_system(agent_context_t *ctx)
     /* Now that the thread is either terminated or detached, we can clean up */
     cleanup_samples(ctx);
 
-    /* Destroy the event_arena which will cleanup any allocated strings */
-    if (ctx->event_arena)
-    {
-        arena_destroy(ctx->event_arena);
-        ctx->event_arena = NULL;
-    }
+    // /* Destroy the event_arena which will cleanup any allocated strings */
+    // arena_t *arena = find_arena(ctx->arena_head, "event_arena");
+    // if (arena)
+    // {
+    //     arena_destroy(arena);
+    //     arena = NULL;
+    // }
 
     pthread_cond_destroy(&ctx->event_queue.cond);
     pthread_mutex_destroy(&ctx->event_queue.lock);
@@ -692,9 +685,8 @@ void *export_thread_func(void *arg)
 /**
  * get a param value for a method
  * 
- * TODO think about how malloc/free works here - cannot have this dynamic memory, need an arena or something
  */
-static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env, 
+static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_env, 
     jthread thread, jmethodID method, jint param_index, jint param_slot, char param_type)
 {
     char *result = NULL;
@@ -709,7 +701,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             if (err == JVMTI_ERROR_NONE)
             {
                 /* Allocate space for result (max int digist + sign + null) */
-                result = arena_alloc(global_ctx->exception_arena, 12);
+                result = arena_alloc(arena, 12);
                 if (result)
                     sprintf(result, "%d", value.i);
             }
@@ -720,7 +712,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalLong(jvmti, thread, 0, param_slot, &value.j);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = arena_alloc(global_ctx->exception_arena, 21);
+                result = arena_alloc(arena, 21);
                 if (result)
                     sprintf(result, "%lld", (long long)value.j);
             }
@@ -731,7 +723,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalFloat(jvmti, thread, 0, param_slot, &value.f);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = arena_alloc(global_ctx->exception_arena, 32);
+                result = arena_alloc(arena, 32);
                 if (result)
                     sprintf(result, "%f", value.f);
             }
@@ -743,7 +735,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             if (err == JVMTI_ERROR_NONE)
             {
                 /* TODO check this as it's the same size as a float?? */
-                result = arena_alloc(global_ctx->exception_arena, 32);
+                result = arena_alloc(arena, 32);
                 if (result)
                     sprintf(result, "%f", value.d);
             }
@@ -754,7 +746,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = arena_alloc(global_ctx->exception_arena, 6);
+                result = arena_alloc(arena, 6);
                 if (result)
                     sprintf(result, "%s", value.i ? "true" : "false");
             }
@@ -766,7 +758,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             err = (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
             if (err == JVMTI_ERROR_NONE)
             {
-                result = arena_alloc(global_ctx->exception_arena, 12);
+                result = arena_alloc(arena, 12);
                 if (result)
                     sprintf(result, "%d", value.i);
             }
@@ -787,7 +779,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                         const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, obj, NULL);
                         if (str_value)
                         {
-                            result = arena_alloc(global_ctx->exception_arena, strlen(str_value) + 3); /* includes quotes and null */
+                            result = arena_alloc(arena, strlen(str_value) + 3); /* includes quotes and null */
                             if (result)
                                 sprintf(result, "\"%s\"", str_value);
                             
@@ -805,7 +797,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                             const char *str_value = (*jni_env)->GetStringUTFChars(jni_env, str, NULL);
                             if (str_value)
                             {
-                                result = arena_alloc(global_ctx->exception_arena, strlen(str_value) + 1);
+                                result = arena_alloc(arena, strlen(str_value) + 1);
                                 if (result)
                                     strcpy(result, str_value);
 
@@ -814,7 +806,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                         }
                         else
                         {
-                            result = arena_alloc(global_ctx->exception_arena, 5);
+                            result = arena_alloc(arena, 5);
                             if (result)
                                 strcpy(result, "null");
                         }
@@ -822,7 +814,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
                 }
                 else
                 {
-                    result = arena_alloc(global_ctx->exception_arena, 5);
+                    result = arena_alloc(arena, 5);
                     if (result)
                         strcpy(result, "null");
                 }
@@ -830,7 +822,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
             break;
         
         default:
-            result = arena_alloc(global_ctx->exception_arena, 16);
+            result = arena_alloc(arena, 16);
             if (result)
                 sprintf(result, "<unknown type>");
 
@@ -839,7 +831,7 @@ static char *get_parameter_value(jvmtiEnv *jvmti, JNIEnv *jni_env,
 
     if (!result)
     {
-        result = arena_alloc(global_ctx->exception_arena, 10);
+        result = arena_alloc(arena, 10);
         if (result)
             sprintf(result, "<error>");
     }
@@ -895,13 +887,11 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
             /* Only collect these metrics if enabled for this method */
             unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
             
-            if (flags & METRIC_FLAG_MEMORY) {
+            if (flags & METRIC_FLAG_MEMORY)
                 sample->start_memory = get_current_memory();
-            }
             
-            if (flags & METRIC_FLAG_CPU) {
+            if (flags & METRIC_FLAG_CPU)
                 sample->start_cpu = get_current_cpu_cycles();
-            }
             
             LOG(global_ctx, "[ENTRY] Sampling method %s.%s%s\n", 
                 class_signature, method_name, method_signature);
@@ -923,9 +913,8 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     method_sample_t *sample = get_thread_local_sample();
     
     /* If we're not sampling this method, return early */
-    if (!sample || sample->method_index < 0) {
+    if (!sample || sample->method_index < 0)
         return;
-    }
     
     /* Calculate execution time */
     uint64_t end_time = get_current_time_ns();
@@ -1087,6 +1076,13 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
         LOG(global_ctx, "Method params: \n");
 
+        arena_t *arena = find_arena(global_ctx->arena_head, "exception_arena");
+        if (arena == NULL)
+        {
+            LOG(global_ctx, ">> Unable to find exception arena on list! <<\n");
+            goto deallocate;
+        }
+
         while (*params != ')' && *params != '\0')
         {
             char param_type = *params;
@@ -1114,9 +1110,9 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
                     break;
                 }
             }
-
+            
             /* Get the param value */
-            char *param_val = get_parameter_value(jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
+            char *param_val = get_parameter_value(arena, jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
 
             LOG(global_ctx, "\tParam %d (%s): %s\n", 
                 param_idx, 
@@ -1124,10 +1120,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
                 param_val ? param_val : "<error>");
 
             if (param_val)
-            {
-                arena_free(global_ctx->exception_arena, param_val);
-            }
-                
+                arena_free(arena, param_val);
             
             slot++;
             param_idx++;
@@ -1214,10 +1207,12 @@ int load_config(agent_context_t *ctx, const char *cf)
     char line[256];
     char *current_section = NULL;
     
+    arena_t *arena = find_arena(ctx->arena_head, "config_arena");
+
     while (fgets(line, sizeof(line), fp))
     {
         /* Process the line (strip comments, trim whitespace) */
-        char *processed = arena_process_config_line(ctx->config_arena, line);
+        char *processed = arena_process_config_line(arena, line);
         if (!processed || processed[0] == '\0')
             continue;  /* Skip empty lines */
         
@@ -1296,7 +1291,7 @@ int load_config(agent_context_t *ctx, const char *cf)
         else
         {
             /* Extract and trim the value part */
-            char *value = arena_extract_and_trim_value(ctx->config_arena, processed);
+            char *value = arena_extract_and_trim_value(arena, processed);
             if (!value)
                 continue;
             
@@ -1333,7 +1328,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     /* Set defaults if needed */
     if (!ctx->config.export_method) 
     {
-        ctx->config.export_method = arena_strdup(ctx->config_arena, "file");
+        ctx->config.export_method = arena_strdup(arena, "file");
         if (!ctx->config.export_method)
             LOG(ctx, "ERROR: Failed to set default export_method\n");
     }
@@ -1425,8 +1420,9 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Add new entry */
+    arena_t *arena = find_arena(ctx->arena_head, "metrics_arena"); 
     index = metrics->count;
-    metrics->signatures[index] = arena_strdup(ctx->metrics_arena, signature);
+    metrics->signatures[index] = arena_strdup(arena, signature);
     metrics->sample_rates[index] = sample_rate;
     metrics->call_counts[index] = 0;
     metrics->sample_counts[index] = 0;
@@ -1525,68 +1521,60 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
     global_ctx->metrics = NULL;
+    global_ctx->arena_head = NULL;
+    global_ctx->arena_tail = NULL;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
 
-    /* Initialize exception arena */
-    /* TODO these numbers need tweaking / investigation 
-
-    we should probably have a linked-list of arenas
-    we should probably have a macro to create an arena since this is duplicated code
-    on unload we need to loop over the list and destroy each arena - simple
-
+    /* 
+      We initialise all the arenas we need in this function and we
+      destroy all the arenas in the corresponding Agent_OnUnload
     */
-    size_t exception_arena_sz = 1024 * 1024;
-    global_ctx->exception_arena = arena_init("exception_arena", exception_arena_sz, 1024);
-    if (!global_ctx->exception_arena) 
+
+    /* TODO use a loop here... */
+    arena_t *exception_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "exception_arena", EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS);
+    if (!exception_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create exception arena\n");
         return JNI_ERR;
     }
 
-    size_t log_arena_sz = 1024 * 1024;
-    global_ctx->log_arena = arena_init("log_arena", log_arena_sz, 1024);
-    if (!global_ctx->log_arena) 
+    arena_t *log_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    if (!log_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create log arena\n");
         return JNI_ERR;
     }
 
-    size_t event_arena_sz = 2048 * 1024;
-    global_ctx->event_arena = arena_init("event_arena", event_arena_sz, 1024);
-    if (!global_ctx->event_arena) 
+    arena_t *event_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS);
+    if (!event_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create event arena\n");
         return JNI_ERR;
     }
 
-    size_t sample_arena_sz = 2048 * 1024;
-    global_ctx->sample_arena = arena_init("sample_arena", sample_arena_sz, 1024);
-    if (!global_ctx->sample_arena) 
+    arena_t *sample_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "sample_arena", SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS);
+    if (!sample_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create sample arena\n");
         return JNI_ERR;
     }
 
-    size_t config_arena_sz = 512 * 1024;
-    global_ctx->config_arena = arena_init("config_arena", config_arena_sz, 1024);
-    if (!global_ctx->config_arena) 
+    arena_t *config_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    if (!config_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create config arena\n");
         return JNI_ERR;
     }
 
-    /* Initialize metrics arena */
-    size_t metrics_arena_sz = 8 * 1024 * 1024;  /* 8 MB for metrics */
-    global_ctx->metrics_arena = arena_init("metrics_arena", metrics_arena_sz, 1024);
-    if (!global_ctx->metrics_arena) 
+    arena_t *metrics_arena = create_arena(&global_ctx->arena_head, &global_ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    if (!metrics_arena)
     {
         LOG(global_ctx, "ERROR: Failed to create metrics arena\n");
         return JNI_ERR;
     }
 
-    /* Initialize metrics if needed */
     size_t initial_capacity = 256;
-    global_ctx->metrics = init_method_metrics(global_ctx->metrics_arena, initial_capacity);
+    global_ctx->metrics = init_method_metrics(metrics_arena, initial_capacity);
     if (!global_ctx->metrics) {
         LOG(global_ctx, "ERROR: Failed to initialize metrics structure\n");
         return JNI_ERR;
@@ -1752,7 +1740,7 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
 
         cleanup(global_ctx);
         cleanup_samples(global_ctx);
-        cleanup_log_system(global_ctx);
+        
         cleanup_event_system(global_ctx);
 
         /* Clean up thread-local storage */
@@ -1781,43 +1769,13 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
             LOG(global_ctx, "WARNING: Thread-local storage cleanup may be incomplete for threads that don't exit\n");
         }
 
+        /* Finally shutdown logging */
+        cleanup_log_system(global_ctx);
+
         /* Cleanup the arenas */
-        if (global_ctx->metrics_arena) 
-        {
-            arena_destroy(global_ctx->metrics_arena);
-            global_ctx->metrics_arena = NULL;
-            global_ctx->metrics = NULL;  /* Points to memory within metrics_arena */
-        }
-
-        if (global_ctx->exception_arena)
-        {
-            arena_destroy(global_ctx->exception_arena);
-            global_ctx->exception_arena = NULL;
-        }
-
-        if (global_ctx->sample_arena) 
-        {
-            arena_destroy(global_ctx->sample_arena);
-            global_ctx->sample_arena = NULL;
-        }
-        
-        if (global_ctx->event_arena) 
-        {
-            arena_destroy(global_ctx->event_arena);
-            global_ctx->event_arena = NULL;
-        }
-        
-        if (global_ctx->log_arena) 
-        {
-            arena_destroy(global_ctx->log_arena);
-            global_ctx->log_arena = NULL;
-        }
-        
-        if (global_ctx->config_arena) 
-        {
-            arena_destroy(global_ctx->config_arena);
-            global_ctx->config_arena = NULL;
-        }
+        destroy_all_arenas(&global_ctx->arena_head, &global_ctx->arena_tail);
+        /* Null out metrics */
+        global_ctx->metrics = NULL;
 
         /* Destroy mutex */
         pthread_mutex_destroy(&global_ctx->samples_lock);

@@ -39,6 +39,22 @@
     } \
 } while (0)
 
+/* Arena Sizes - Amount of memory to be allocated by each arena */
+#define EXCEPTION_ARENA_SZ 1024 * 1024
+#define LOG_ARENA_SZ 1024 * 1024
+#define EVENT_ARENA_SZ 2048 * 1024
+#define SAMPLE_ARENA_SZ 2048 * 1024
+#define CONFIG_ARENA_SZ 512 * 1024
+#define METRICS_ARENA_SZ 8 * 1024 * 1024
+
+/* Arena Counts - Amount of blocks for each arena */
+#define EXCEPTION_ARENA_BLOCKS 1024
+#define LOG_ARENA_BLOCKS 1024
+#define EVENT_ARENA_BLOCKS 1024
+#define SAMPLE_ARENA_BLOCKS 1024
+#define CONFIG_ARENA_BLOCKS 1024
+#define METRICS_ARENA_BLOCKS 1024
+
 /* Metric flags for method sampling */
 #define METRIC_FLAG_TIME    0x0001
 #define METRIC_FLAG_MEMORY  0x0002
@@ -193,12 +209,14 @@ struct agent_context
     pthread_t export_thread;        /**< Export thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     config_t config;                /**< Agent configuration */
-    arena_t *exception_arena;       /**< Arena for exception memory allocation */
-    arena_t *log_arena;             /**< Arena for log strings memory allocation */
-    arena_t *event_arena;           /**< Arena for events memory allocation */
-    arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
-    arena_t *config_arena;          /**< Arena for config file strings (filters etc) */
-    arena_t *metrics_arena;         /**< Arena for metrics data */
+    arena_node_t *arena_head;       /**< First arena in the list */
+    arena_node_t *arena_tail;       /**< Last arena in the list */
+    // arena_t *exception_arena;       /**< Arena for exception memory allocation */
+    // arena_t *log_arena;             /**< Arena for log strings memory allocation */
+    // arena_t *event_arena;           /**< Arena for events memory allocation */
+    // arena_t *sample_arena;          /**< Arena for sample strings (full_sig etc) */
+    // arena_t *config_arena;          /**< Arena for config file strings (filters etc) */
+    // arena_t *metrics_arena;         /**< Arena for metrics data */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
 };
 
