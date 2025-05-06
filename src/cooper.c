@@ -58,17 +58,168 @@ static method_sample_t *get_thread_local_sample() {
     return sample;
 }
 
+/* Get a native thread id for a given java vm thread */
+static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread)
+{
+#ifdef __linux__
+    static jclass thread_class = NULL;
+    static jmethodID getId_method = NULL;
+    pid_t result = 0;
+
+    /* Cache frequently used JNI refs */
+    if (thread_class == NULL)
+    {
+        thread_class = (*jni)->FindClass(jni, "java/lang/Thread");
+        if (thread_class != NULL)
+        {
+            thread_class = (*jni)->NewGlobalRef(jni, thread_class);
+            getId_method = (*jni)->GetMethodID(jni, thread_class, "getId", "()J");
+        }
+    }
+
+    if (thread_class != NULL && getId_method != NULL)
+    {
+        /* Get the jvm thread id */
+        jlong thread_id = (*jni)->CallLongMethod(jni, thread, getId_method);
+
+        /* Use Thread.getId() as a key to our mapping table */
+        pthread_mutex_lock(&global_ctx->samples_lock);
+
+        /* Check for previous mapping */
+        for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
+        {
+            if (global_ctx->thread_mappings[i].java_thread_id == thread_id)
+            {
+                result = global_ctx->thread_mappings[i].native_thread_id;
+                pthread_mutex_unlock(&global_ctx->samples_lock);
+                return result;
+            }
+        }
+
+        pthread_mutex_unlock(&global_ctx->samples_lock);
+
+        /* 
+        This is a new thread id, not previously found in our mappings.
+        We'll need to have the thread tell us its native ID. This part
+        can only be done from within the thread itself...
+        */
+
+        if (result == 0)
+        {
+            /* check if current thread */
+            jthread current_thread;
+            (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
+            jboolean is_same_thread = (*jni)->IsSameObject(jni, thread, current_thread);
+
+            if (is_same_thread)
+            {
+                result = syscall(SYS_gettid);
+
+                /* Add to our map */
+                pthread_mutex_lock(&global_ctx->samples_lock);
+                for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
+                {
+                    if (global_ctx->thread_mappings[i].java_thread_id == 0)
+                    {
+                        global_ctx->thread_mappings[i].java_thread_id = thread_id;
+                        global_ctx->thread_mappings[i].native_thread_id = result;
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&global_ctx->samples_lock);
+            }
+        }
+    }
+    return result;
+#else
+    return 0; /* Not implemented for other platforms */
+#endif
+}
+
+/* Process-wide mem tracking for linux */
+static uint64_t get_process_memory()
+{
+#ifdef __linux__
+    static int proc_fd = -1;
+    static char buf[4096];
+
+    /* init file descriptor if required */
+    if (proc_fd < 0)
+    {
+        char proc_path[64];
+        snprintf(proc_path, sizeof(proc_path), "/proc/%d/statm", getpid());
+        proc_fd = open(proc_path, O_RDONLY);
+        if (proc_fd < 0)
+            return 0;
+    }
+
+    /* reset file position to beginning */
+    if (lseek(proc_fd, 0, SEEK_SET) < 0)
+        return 0;
+
+    ssize_t bytes_read = read(proc_fd, buf, sizeof(buf) -1);
+    close(proc_fd);
+    if (bytes_read <= 0)
+        return 0;
+        
+    buf[bytes_read] = '\0';
+
+    /* Parse resident set size */
+    unsigned long vm_size, rss;
+    if (sscanf(buf, "%lu %lu", &vm_size, &rss) != 2)
+        return 0;
+
+    /* Convert from pages to bytes */
+    return (uint64_t)(rss * sysconf(_SC_PAGESIZE));
+#else
+    return 0; /* Not on linux, so 0 */
+#endif
+}
+
+/* thread specific tracking for linux */
+static uint64_t get_thread_memory(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread)
+{
+#ifdef __linux__
+    /* get the native thread ID from the jthread */
+    pid_t thread_id = get_native_thread_id(jvmti_env, jni, thread);
+    if (thread_id == 0)
+        return 0;
+
+    /* Get thread-specific mem info */
+    char proc_path[128];
+    char buf[4096];
+
+    snprintf(proc_path, sizeof(proc_path), "/proc/%d/task/%d/statm", getpid(), thread_id);
+
+    int fd = open(proc_path, O_RDONLY);
+    if (fd < 0)
+        return 0;
+
+    ssize_t bytes_read = read(fd, buf, sizeof(buf) -1);
+    close(fd);
+
+    if (bytes_read <=0)
+        return 0;
+
+    buf[bytes_read] = '\0';
+
+    /* parse values */
+    unsigned long vm_size, rss;
+    if (sscanf(buf, "%lu %lu", &vm_size, &rss) != 2)
+        return 0;
+
+    /* Convert from pages to bytes */
+    return (uint64_t)(rss * sysconf(_SC_PAGESIZE));
+#else
+    return 0; /* Not on linux, so 0 */
+#endif
+}
+
 /* Get current time in nanoseconds */
 static uint64_t get_current_time_ns() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-/* Mock implementations for memory and CPU metrics */
-static uint64_t get_current_memory() {
-    /* In a real implementation, this would use system calls to get memory usage */
-    return 0;
 }
 
 static uint64_t get_current_cpu_cycles() {
@@ -83,7 +234,9 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     method_metrics_soa_t *metrics = ctx->metrics;
 
     /* Check for valid index */
-    if (method_index < 0 || (size_t)method_index >= metrics->count) {
+    if (method_index < 0 || (size_t)method_index >= metrics->count) 
+    {
+        LOG(ctx, "WARNING: method_index: %d not found in soa struct\n");
         return;
     }
 
@@ -922,16 +1075,23 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 
     if (sample_index > 0) {
         /* We're sampling this call */
+        LOG(global_ctx, "DEBUG sampling : %s (%d)", method_name, sample_index);
         method_sample_t *sample = get_thread_local_sample();
         if (sample) {
             sample->method_index = sample_index - 1;  /* Convert back to 0-based index */
             sample->start_time = get_current_time_ns();
             
+            /* Reset the allocation counter for this method execution */
+            sample->current_alloc_bytes = 0;
+
             /* Only collect these metrics if enabled for this method */
             unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
             
             if (flags & METRIC_FLAG_MEMORY)
-                sample->start_memory = get_current_memory();
+            {
+                sample->start_process_memory = get_process_memory(global_ctx);
+                sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
+            }
             
             if (flags & METRIC_FLAG_CPU)
                 sample->start_cpu = get_current_cpu_cycles();
@@ -970,9 +1130,30 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
     
     if (flags & METRIC_FLAG_MEMORY) {
-        uint64_t end_memory = get_current_memory();
-        memory_delta = (end_memory > sample->start_memory) ? 
-                      (end_memory - sample->start_memory) : 0;
+        /* Select the most specific memory metric available:
+         * 1. Direct object allocations (most specific)
+         * 2. Thread memory change
+         * 3. Process memory change
+         */
+
+         /* JVM heap allocations during method execution */
+        memory_delta = sample->current_alloc_bytes;
+
+        /* If no direct allocations check OS-level thread mem changes */
+        if (memory_delta == 0 && sample->start_thread_memory > 0)
+        {
+            uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
+            if (end_thread_memory > sample->start_thread_memory)
+                memory_delta = end_thread_memory - sample->start_thread_memory;
+        }
+
+        /* If there's still no change, look for process wide memory changes */
+        if (memory_delta == 0 && sample->start_thread_memory > 0)
+        {
+            uint64_t end_process_memory = get_process_memory();
+            if (end_process_memory > sample->start_process_memory)
+                memory_delta = end_process_memory - sample->start_process_memory;
+        }
     }
     
     if (flags & METRIC_FLAG_CPU) {
@@ -1214,6 +1395,44 @@ deallocate:
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_signature);
+}
+
+static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread, jobject object, jclass klass, jlong size)
+{
+    /* get the thread-local sample */
+    method_sample_t *sample = get_thread_local_sample();
+
+    /* Only track if we're actively sampling this method */
+    if (sample && sample->method_index >= 0)
+        sample->current_alloc_bytes += size; /* add to running total */
+}
+
+static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
+{
+    if (!thread)
+        return;
+
+    /* Get the thread Id */
+    jclass thread_class = (*jni)->GetObjectClass(jni, thread);
+    jmethodID get_id_method = (*jni)->GetMethodID(jni, thread_class, "getId", "()J");
+
+    if (get_id_method)
+    {
+        jlong thread_id = (*jni)->CallLongMethod(jni, thread, get_id_method);
+
+        /* remove from our mapping table */
+        pthread_mutex_lock(&global_ctx->samples_lock);
+        for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) 
+        {
+            if (global_ctx->thread_mappings[i].java_thread_id == thread_id) 
+            {
+                global_ctx->thread_mappings[i].java_thread_id = 0;
+                global_ctx->thread_mappings[i].native_thread_id = 0;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&global_ctx->samples_lock);
+    }
 }
 
 /**
@@ -1540,6 +1759,54 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     return 0;  /* Don't sample this call */
 }
 
+static void init_mem_tracking(agent_context_t *ctx)
+{
+    //TODO - I don't like having the jvmti spread across multiple places, perhaps put all jvmti code in init_jvmti function?
+
+    /* Enable JVMTI capabilities */
+    jvmtiCapabilities capabilities;
+    memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.can_generate_vm_object_alloc_events = 1;
+    capabilities.can_tag_objects = 1;
+
+    jvmtiError err = (*ctx->jvmti_env)->AddCapabilities(ctx->jvmti_env, &capabilities);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(ctx, "WARNING: Could not enable memory tracking capabilities: %d\n", err);
+        return;
+    }
+
+    /* set up jvm callbacks */
+    jvmtiEventCallbacks callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.VMObjectAlloc = &object_alloc_callback;
+    callbacks.ThreadEnd = &thread_end_callback;
+
+    err = (*ctx->jvmti_env)->SetEventCallbacks(ctx->jvmti_env, &callbacks, sizeof(callbacks));
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(ctx, "WARNING: Could not set memory tracking callbacks: %d\n", err);
+        return;
+    }
+
+    /* enable events */
+    err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(ctx, "WARNING: Could not enable allocation events: %d\n", err);
+        return;
+    }
+
+    err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG(ctx, "WARNING: Could not enable thread end events: %d\n", err);
+        return;
+    }
+
+    LOG(ctx, "Memory tracking initialized successfully\n");
+}
+
 /*
  * Entry point
  */
@@ -1571,6 +1838,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->arena_head = NULL;
     global_ctx->arena_tail = NULL;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
+    memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 
     /* 
       We initialise all the arenas we need in this function and we
@@ -1680,6 +1948,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     capabilities.can_access_local_variables = 1;
     capabilities.can_get_source_file_name = 1;
     capabilities.can_get_line_numbers = 1;
+    capabilities.can_generate_vm_object_alloc_events = 1;
+    capabilities.can_tag_objects = 1;
 
     err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
     if (err != JVMTI_ERROR_NONE) 
@@ -1693,6 +1963,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     callbacks.MethodEntry = &method_entry_callback;
     callbacks.MethodExit = &method_exit_callback;
     callbacks.Exception = &exception_callback;
+    callbacks.VMObjectAlloc = &object_alloc_callback;
+    callbacks.ThreadEnd = &thread_end_callback;
 
     err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) 
@@ -1724,6 +1996,18 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (err != JVMTI_ERROR_NONE)
     {
         LOG(global_ctx, "ERROR: SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
+        return JNI_ERR;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG(global_ctx, "WARNING: Could not enable allocation events: %d\n", err);
+        return JNI_ERR;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG(global_ctx, "WARNING: Could not enable thread end events: %d\n", err);
         return JNI_ERR;
     }
 

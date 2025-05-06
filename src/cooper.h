@@ -16,7 +16,9 @@
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 
 
 #include <time.h>
@@ -38,6 +40,7 @@
         log_enq(ctx, msg); \
     } \
 } while (0)
+#define MAX_THREAD_MAPPINGS 1024
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define EXCEPTION_ARENA_SZ 1024 * 1024
@@ -68,7 +71,11 @@ typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct agent_context agent_context_t;
+typedef struct thread_alloc thread_alloc_t;
+typedef struct thread_id_mapping thread_id_mapping_t;
+typedef struct memory_metrics_mgr memory_metrics_mgr_t;
 typedef void *thread_fn(void *args);
+
 
 /**
  * Struct-of-Arrays for storing method metrics
@@ -136,10 +143,27 @@ struct method_metrics_soa {
  */
 struct method_sample
 {
-    int method_index;       /* Index in the metrics arrays, -1 if not sampling */
-    uint64_t start_time;    /* Starting timestamp in nanoseconds */
-    uint64_t start_memory;  /* Starting memory usage in bytes */
-    uint64_t start_cpu;     /* Starting CPU cycle count */
+    int method_index;       /**< Index in the metrics arrays, -1 if not sampling */
+    uint64_t start_time;    /**< Starting timestamp in nanoseconds */
+    uint64_t start_process_memory;  /**< Starting memory usage in bytes */
+    uint64_t start_thread_memory; /**< Starting thread specific memory */
+    uint64_t start_stack_depth; /**< Starting stack depth */
+    uint64_t current_alloc_bytes; /**< Running total of allocations during method */
+    uint64_t start_cpu;     /**< Starting CPU cycle count */
+};
+
+struct thread_alloc
+{
+    jlong thread_id; /**< Java thread ID */
+    uint64_t total_allocated; /**< Total bytes allocated */
+    uint64_t current_live_bytes; /**< Current live allocation */
+    thread_alloc_t *next; /**< Pointer to next thread alloc in list */
+};
+
+struct thread_id_mapping
+{
+    jlong java_thread_id; /**< Java thread id from Thread.getId() */
+    pid_t native_thread_id; /**< Native thread id from Linux: gettid */
 };
 
 struct config
@@ -212,6 +236,7 @@ struct agent_context
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
+    thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
 };
 
 /* jmvti callback functions */
