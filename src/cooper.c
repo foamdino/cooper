@@ -624,24 +624,24 @@ void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_n
     pthread_mutex_unlock(&ctx->event_queue.lock);
 }
 
-int event_deq(agent_context_t *ctx, trace_event_t *e)
-{
-    assert(ctx != NULL);
+// int event_deq(agent_context_t *ctx, trace_event_t *e)
+// {
+//     assert(ctx != NULL);
     
-    pthread_mutex_lock(&ctx->event_queue.lock);
+//     pthread_mutex_lock(&ctx->event_queue.lock);
 
-    if (ctx->event_queue.count > 0)
-    {
-        *e = ctx->event_queue.events[ctx->event_queue.tl];
-        ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
-        ctx->event_queue.count--;
-        pthread_mutex_unlock(&ctx->event_queue.lock);
-        return 1;
-    }
+//     if (ctx->event_queue.count > 0)
+//     {
+//         *e = ctx->event_queue.events[ctx->event_queue.tl];
+//         ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
+//         ctx->event_queue.count--;
+//         pthread_mutex_unlock(&ctx->event_queue.lock);
+//         return 1;
+//     }
 
-    pthread_mutex_unlock(&ctx->event_queue.lock);
-    return 0;
-}
+//     pthread_mutex_unlock(&ctx->event_queue.lock);
+//     return 0;
+// }
 
 void *event_thread_func(void *arg)
 {
@@ -765,7 +765,6 @@ void *event_thread_func(void *arg)
 
             /* Unlock the samples lock now we've finished updating */
             pthread_mutex_unlock(&ctx->samples_lock);
-
             continue;
         }        
         pthread_mutex_unlock(&ctx->event_queue.lock);
@@ -1175,7 +1174,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         if (err != JVMTI_ERROR_NONE) 
         {
             LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
-            goto record_metrics;
+            goto cleanup;
         }
 
         /* Get declaring class */
@@ -1199,19 +1198,18 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
             (unsigned long long)exec_time, (unsigned long long)memory_delta);
     }
 
-record_metrics:
     /* Record the metrics */
     record_method_execution(global_ctx, sample->method_index, exec_time, memory_delta, cpu_delta);
-    
-    /* Reset sample for reuse */
-    sample->method_index = -1;
-    
 
 deallocate:
     /* Deallocate memory allocated by JVMTI */
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
+
+cleanup:
+    /* Reset sample for reuse */
+    sample->method_index = -1;
 }
 
 /**

@@ -216,12 +216,12 @@ struct method_stats
 struct agent_context
 {
     int event_counter;              /**< Counter for nth samples */
-    method_stats_t full_samples[FULL_SAMPLE_SZ]; /**< Full event samples */
-    int full_hd;                    /**< Head index for full samples */
-    int full_count;                 /**< Number of full samples */
-    method_stats_t nth_samples[NTH_SAMPLE_SZ];   /**< Nth event samples */
-    int nth_hd;                     /**< Head index for nth samples */
-    int nth_count;                  /**< Number of nth samples */
+    // method_stats_t full_samples[FULL_SAMPLE_SZ]; /**< Full event samples */
+    // int full_hd;                    /**< Head index for full samples */
+    // int full_count;                 /**< Number of full samples */
+    // method_stats_t nth_samples[NTH_SAMPLE_SZ];   /**< Nth event samples */
+    // int nth_hd;                     /**< Head index for nth samples */
+    // int nth_count;                  /**< Number of nth samples */
     jvmtiEnv *jvmti_env;            /**< JVMTI environment */
     char **method_filters;          /**< Method filter list */
     int num_filters;                /**< Number of filters */
@@ -270,7 +270,8 @@ void cleanup_samples(agent_context_t *ctx);
 /* Event system functions */
 int init_event_q(agent_context_t *ctx);
 void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry);
-int event_deq(agent_context_t *ctx, trace_event_t *e);
+//TODO remove this completely I guess
+// int event_deq(agent_context_t *ctx, trace_event_t *e);
 void *event_thread_func(void *arg);
 void cleanup_event_system(agent_context_t *ctx);
 
