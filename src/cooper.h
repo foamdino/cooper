@@ -69,6 +69,7 @@ typedef struct event_q event_q_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct agent_context agent_context_t;
 typedef struct thread_alloc thread_alloc_t;
@@ -150,6 +151,12 @@ struct method_sample
     uint64_t start_stack_depth; /**< Starting stack depth */
     uint64_t current_alloc_bytes; /**< Running total of allocations during method */
     uint64_t start_cpu;     /**< Starting CPU cycle count */
+};
+
+struct thread_context
+{
+    int inside_callback; /**< Flag to prevent re-entrancy */
+    method_sample_t sample;
 };
 
 struct thread_alloc

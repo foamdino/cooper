@@ -10,7 +10,7 @@
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
 /* Thread-local storage key and initialization mutex */
-static pthread_key_t sample_key;
+static pthread_key_t context_key;
 static int tls_initialized = 0;
 static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -31,7 +31,7 @@ static void init_thread_local_storage() {
         pthread_mutex_lock(&tls_init_mutex);
         if (!tls_initialized) {
             /* The 'free' function will be automatically called when a thread exits */
-            pthread_key_create(&sample_key, free);
+            pthread_key_create(&context_key, free);
             tls_initialized = 1;
         }
         pthread_mutex_unlock(&tls_init_mutex);
@@ -39,23 +39,26 @@ static void init_thread_local_storage() {
 }
 
 /* Get the thread-local sample structure */
-static method_sample_t *get_thread_local_sample() {
+static thread_context_t *get_thread_local_context() {
     if (!tls_initialized) {
         init_thread_local_storage();
     }
     
-    method_sample_t *sample = pthread_getspecific(sample_key);
-    if (!sample) {
+    thread_context_t *context = pthread_getspecific(context_key);
+    if (!context) {
         /* First time this thread is accessing the key */
         // TODO fix this calloc as it is not correctly free'd later
-        sample = calloc(1, sizeof(method_sample_t));
-        if (sample) {
-            sample->method_index = -1;  /* Not sampling */
-            pthread_setspecific(sample_key, sample);
+        context = calloc(1, sizeof(thread_context_t));
+        if (context) {
+            context->inside_callback = 0;
+            context->sample.method_index = -1;  /* Not sampling */
+            context->sample.start_time = 0;
+            context->sample.current_alloc_bytes = 0;
+            pthread_setspecific(context_key, context);
         }
     }
     
-    return sample;
+    return context;
 }
 
 /* Get a native thread id for a given java vm thread */
@@ -804,16 +807,31 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
     return result;
 }
 
+static int entry_count = 0;
+
 /*
  * Method entry callback
  */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method)
 {
+    
+    int my_count = ++entry_count;
+    fprintf(stderr, "DEBUG: Entering method_entry_callback #%d, thread=%p, method=%p\n", 
+        my_count, (void*)thread, (void*)method);
+    
     char *method_name = NULL;
     char *method_signature = NULL;
     char *class_signature = NULL;
     jclass declaring_class;
     jvmtiError err;
+
+    /* Get thread-local context to prevent re-entancy */
+    thread_context_t *context = get_thread_local_context();
+    if (!context || context->inside_callback)
+        return; /* Skip we may already be in a callback */
+
+    /* Now set that we're in a callback so any other callback will notice */
+    context->inside_callback = 1;
 
     if (jvmti != global_ctx->jvmti_env)
         LOG(global_ctx, "WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
@@ -848,25 +866,24 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     if (sample_index > 0) {
         /* We're sampling this call */
         LOG(global_ctx, "DEBUG sampling : %s (%d)\n", method_name, sample_index);
-        method_sample_t *sample = get_thread_local_sample();
-        if (sample) {
-            sample->method_index = sample_index - 1;  /* Convert back to 0-based index */
-            sample->start_time = get_current_time_ns();
+        if (context) {
+            context->sample.method_index = sample_index - 1;  /* Convert back to 0-based index */
+            context->sample.start_time = get_current_time_ns();
             
             /* Reset the allocation counter for this method execution */
-            sample->current_alloc_bytes = 0;
+            context->sample.current_alloc_bytes = 0;
 
             /* Only collect these metrics if enabled for this method */
-            unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
+            unsigned int flags = global_ctx->metrics->metric_flags[context->sample.method_index];
             
             if (flags & METRIC_FLAG_MEMORY)
             {
-                sample->start_process_memory = get_process_memory(global_ctx);
-                sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
+                context->sample.start_process_memory = get_process_memory(global_ctx);
+                context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
             }
             
             if (flags & METRIC_FLAG_CPU)
-                sample->start_cpu = get_current_cpu_cycles();
+                context->sample.start_cpu = get_current_cpu_cycles();
             
             LOG(global_ctx, "[ENTRY] Sampling method %s.%s%s\n", 
                 class_signature, method_name, method_signature);
@@ -878,6 +895,11 @@ deallocate:
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
+
+    /* Now we reset the flag as we are leaving the callback */
+    context->inside_callback = 0;
+
+    fprintf(stderr, "DEBUG: Leaving method_entry_callback #%d\n", my_count);
 }
 
 /*
@@ -885,11 +907,16 @@ deallocate:
  */
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value)
 {
-    method_sample_t *sample = get_thread_local_sample();
+    /* Get thread-local context to prevent re-emtrancy */
+    thread_context_t *context = get_thread_local_context();
+    if (!context || context->inside_callback)
+        return; /* Skip if we're in a callback already */
+    
+    method_sample_t *sample = &context->sample;
     
     /* If we're not sampling this method, return early */
     if (!sample || sample->method_index < 0)
-        return;
+        goto cleanup;
     
     /* Calculate execution time */
     uint64_t end_time = get_current_time_ns();
@@ -984,6 +1011,9 @@ deallocate:
 cleanup:
     /* Reset sample for reuse */
     sample->method_index = -1;
+
+    /* Reset flag before returning */
+    context->inside_callback = 0;
 }
 
 /**
@@ -1171,12 +1201,21 @@ deallocate:
 
 static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread, jobject object, jclass klass, jlong size)
 {
-    /* get the thread-local sample */
-    method_sample_t *sample = get_thread_local_sample();
+    /* Get thread-local context to prevent re-entrancy */
+    thread_context_t *context = get_thread_local_context();
+    if (!context || context->inside_callback)
+        return; /* Skip if already inside a callback */
+    
+    context->inside_callback = 1; /* Set flag to prevent re-entrancy */
+    
+    method_sample_t *sample = &context->sample;
 
     /* Only track if we're actively sampling this method */
     if (sample && sample->method_index >= 0)
         sample->current_alloc_bytes += size; /* add to running total */
+
+    /* Reset flag */
+    context->inside_callback = 0;
 }
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
@@ -1843,17 +1882,17 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         if (tls_initialized) 
         {
             /* Free the current thread's TLS data */
-            method_sample_t *sample = pthread_getspecific(sample_key);
-            if (sample) {
-                free(sample);
-                pthread_setspecific(sample_key, NULL);
+            thread_context_t *context = pthread_getspecific(context_key);
+            if (context) {
+                free(context);
+                pthread_setspecific(context_key, NULL);
             }
             
             /* Unfortunately, with pthreads there's no direct way to iterate and free 
                thread-local storage from all threads. It relies on thread exit handlers.
                We can at least delete the key to prevent further allocations. */
             /* Clean up TLS resources */
-            pthread_key_delete(sample_key);
+            pthread_key_delete(context_key);
             tls_initialized = 0;
             
             /* Destroy the initialization mutex */
