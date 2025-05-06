@@ -839,12 +839,15 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         goto deallocate;
     }
 
+    if (strstr(class_signature, "com/github"))
+        LOG(global_ctx, "DEBUG should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
+
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
 
     if (sample_index > 0) {
         /* We're sampling this call */
-        LOG(global_ctx, "DEBUG sampling : %s (%d)", method_name, sample_index);
+        LOG(global_ctx, "DEBUG sampling : %s (%d)\n", method_name, sample_index);
         method_sample_t *sample = get_thread_local_sample();
         if (sample) {
             sample->method_index = sample_index - 1;  /* Convert back to 0-based index */
@@ -1436,6 +1439,10 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
 
     method_metrics_soa_t *metrics = ctx->metrics;
 
+    /* Add debug output to see what's being added */
+    LOG(ctx, "DEBUG: Adding method to metrics: %s (rate=%d, flags=%u)\n", 
+        signature, sample_rate, flags);
+
     /* Check if method already exists */
     int index = find_method_index(metrics, signature);
     if (index >= 0) 
@@ -1443,6 +1450,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
         /* Update existing entry */
         metrics->sample_rates[index] = sample_rate;
         metrics->metric_flags[index] = flags;
+        LOG(ctx, "DEBUG: Updated existing method at index %d\n", index);
         return index;
     }
     
@@ -1455,7 +1463,12 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Add new entry */
-    arena_t *arena = find_arena(ctx->arena_head, "metrics_arena"); 
+    arena_t *arena = find_arena(ctx->arena_head, "metrics_arena");
+    if (!arena) 
+    {
+        LOG(ctx, "ERROR: Could not find metrics arena\n");
+        return -1;
+    }
     index = metrics->count;
     metrics->signatures[index] = arena_strdup(arena, signature);
     metrics->sample_rates[index] = sample_rate;
@@ -1470,6 +1483,8 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     metrics->metric_flags[index] = flags;
     
     metrics->count++;
+    LOG(ctx, "DEBUG: Added new method at index %d, total methods: %zu\n", 
+        index, metrics->count);
     return index;
 }
 
