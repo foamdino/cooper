@@ -187,32 +187,6 @@ struct log_q
     int running;
 };
 
-struct trace_event
-{
-    char *class_sig;
-    char *method_name;
-    char *method_sig;
-    int is_entry; /**< 1 for entry, 0 for exit */
-};
-
-struct event_q
-{
-    trace_event_t events[EVENT_Q_SZ];
-    int hd;
-    int tl;
-    int count;
-    pthread_mutex_t lock;
-    pthread_cond_t cond;
-    int running;
-};
-
-struct method_stats
-{
-    char *signature;
-    int entry_count;
-    int exit_count;
-};
-
 struct agent_context
 {
     int event_counter;              /**< Counter for nth samples */
@@ -228,10 +202,9 @@ struct agent_context
     log_q_t log_queue;              /**< Logging queue */
     FILE *log_file;                 /**< Log output file */
     pthread_t log_thread;           /**< Logging thread */
-    event_q_t event_queue;          /**< Event queue */
-    pthread_t event_thread;         /**< Event processing thread */
     pthread_t export_thread;        /**< Export thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
+    int export_running;             /**< Flag to signal if export thread should continue */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
@@ -266,14 +239,6 @@ void cleanup_log_system(agent_context_t *ctx);
 /* Sample management functions */
 void init_samples(agent_context_t *ctx);
 void cleanup_samples(agent_context_t *ctx);
-
-/* Event system functions */
-int init_event_q(agent_context_t *ctx);
-void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry);
-//TODO remove this completely I guess
-// int event_deq(agent_context_t *ctx, trace_event_t *e);
-void *event_thread_func(void *arg);
-void cleanup_event_system(agent_context_t *ctx);
 
 /* Export functions */
 void export_to_file(agent_context_t *ctx);

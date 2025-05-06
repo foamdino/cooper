@@ -292,33 +292,6 @@ static void test_log_queue()
     printf("[TEST] log_queue: All tests passed\n");
 }
 
-// Test event_enq and event_deq
-static void test_event_queue() 
-{
-    agent_context_t *ctx = calloc(1, sizeof(agent_context_t));
-    assert(ctx != NULL);
-    assert(init_event_q(ctx) == 0);
-    
-    // Initialize event arena for event data storage
-    arena_t *event_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS);
-    assert(event_arena != NULL);
-
-    event_enq(ctx, "LTest;", "method", "()V", 1);
-
-    trace_event_t e;
-    assert(event_deq(ctx, &e) == 1);
-    assert(strcmp(e.class_sig, "LTest;") == 0);
-    assert(strcmp(e.method_name, "method") == 0);
-    assert(strcmp(e.method_sig, "()V") == 0);
-    assert(e.is_entry == 1);
-    assert(event_deq(ctx, &e) == 0);
-
-    // Clean up arena first
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
-    free(ctx);
-    printf("[TEST] event_queue: All tests passed\n");
-}
-
 /* Test arena memory management */
 static void test_arena()
 {
@@ -689,7 +662,6 @@ int main()
     test_should_sample_method();
     test_record_method_execution();
     test_arena();
-    test_event_queue();
     test_log_queue();
     printf("All tests completed successfully!\n");
     return 0;

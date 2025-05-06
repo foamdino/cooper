@@ -236,7 +236,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     /* Check for valid index */
     if (method_index < 0 || (size_t)method_index >= metrics->count) 
     {
-        LOG(ctx, "WARNING: method_index: %d not found in soa struct\n");
+        LOG(ctx, "WARNING: method_index: %d not found in soa struct\n", method_index);
         return;
     }
 
@@ -525,301 +525,45 @@ void cleanup_log_system(agent_context_t *ctx)
     pthread_mutex_destroy(&ctx->log_queue.lock);
 }
 
-void init_samples(agent_context_t *ctx)
-{
-    assert(ctx != NULL);
-    
-    for (int i = 0; i < FULL_SAMPLE_SZ; i++)
-    {
-        ctx->full_samples[i].signature = NULL;
-        ctx->full_samples[i].entry_count = 0;
-        ctx->full_samples[i].exit_count = 0;
-    }
-    for (int i = 0; i < NTH_SAMPLE_SZ; i++)
-    {
-        ctx->nth_samples[i].signature = NULL;
-        ctx->nth_samples[i].entry_count = 0;
-        ctx->nth_samples[i].exit_count = 0;
-    }
-}
-
-void cleanup_samples(agent_context_t *ctx)
-{
-    assert(ctx != NULL);
-    
-    for (int i = 0; i < FULL_SAMPLE_SZ; i++)
-    {
-        ctx->full_samples[i].signature = NULL;
-        ctx->full_samples[i].entry_count = 0;
-        ctx->full_samples[i].exit_count = 0;
-    }
-    for (int i = 0; i < NTH_SAMPLE_SZ; i++)
-    {
-        
-        ctx->nth_samples[i].signature = NULL;
-        ctx->nth_samples[i].entry_count = 0;
-        ctx->nth_samples[i].exit_count = 0;
-        
-    }
-    ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
-}
-
-int init_event_q(agent_context_t *ctx)
-{
-    assert(ctx != NULL);
-    
-    ctx->event_queue.hd = 0;
-    ctx->event_queue.tl = 0;
-    ctx->event_queue.count = 0;
-    ctx->event_queue.running = 1;
-    int err = 0;
-
-    err = pthread_mutex_init(&ctx->event_queue.lock, NULL);
-    if (err != 0)
-    {
-        LOG(ctx, "ERROR: Failed to init event q mutex: %d\n", err);
-        return 1;
-    }
-
-    err = pthread_cond_init(&ctx->event_queue.cond, NULL);
-    if (err != 0)
-    {
-        LOG(ctx, "ERROR: Failed to init event q condition: %d\n", err);
-        return 1;
-    }
-
-    return 0;
-}
-
-void event_enq(agent_context_t *ctx, const char *class_sig, const char *method_name, const char *method_sig, int is_entry)
-{
-    assert(ctx != NULL);
-    
-    pthread_mutex_lock(&ctx->event_queue.lock);
-
-    arena_t *arena = find_arena(ctx->arena_head, "event_arena");
-    if (ctx->event_queue.count < EVENT_Q_SZ)
-    {
-        trace_event_t *e = &ctx->event_queue.events[ctx->event_queue.hd];
-        e->class_sig = arena_strdup(arena, class_sig);
-        e->method_name = arena_strdup(arena, method_name);
-        e->method_sig = arena_strdup(arena, method_sig);
-        e->is_entry = is_entry;
-
-        if (!e->class_sig || !e->method_name || !e->method_sig) 
-        {
-            LOG(ctx, "ERROR: Failed to allocate event strings");
-            e->class_sig = e->method_name = e->method_sig = NULL;
-        } 
-        else 
-        {
-            ctx->event_queue.hd = (ctx->event_queue.hd + 1) % EVENT_Q_SZ;
-            ctx->event_queue.count++;
-            pthread_cond_signal(&ctx->event_queue.cond);
-        }
-    }
-    else
-        LOG(ctx, "WARNING: Event queue full, dropping event for %s %s %s", class_sig, method_name, method_sig);
-
-    pthread_mutex_unlock(&ctx->event_queue.lock);
-}
-
-// int event_deq(agent_context_t *ctx, trace_event_t *e)
+// void init_samples(agent_context_t *ctx)
 // {
 //     assert(ctx != NULL);
     
-//     pthread_mutex_lock(&ctx->event_queue.lock);
-
-//     if (ctx->event_queue.count > 0)
+//     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
 //     {
-//         *e = ctx->event_queue.events[ctx->event_queue.tl];
-//         ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
-//         ctx->event_queue.count--;
-//         pthread_mutex_unlock(&ctx->event_queue.lock);
-//         return 1;
+//         ctx->full_samples[i].signature = NULL;
+//         ctx->full_samples[i].entry_count = 0;
+//         ctx->full_samples[i].exit_count = 0;
 //     }
-
-//     pthread_mutex_unlock(&ctx->event_queue.lock);
-//     return 0;
+//     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
+//     {
+//         ctx->nth_samples[i].signature = NULL;
+//         ctx->nth_samples[i].entry_count = 0;
+//         ctx->nth_samples[i].exit_count = 0;
+//     }
 // }
 
-void *event_thread_func(void *arg)
-{
-    assert(arg != NULL);
-
-    trace_event_t e;
-    agent_context_t *ctx = (agent_context_t *)arg;
+// void cleanup_samples(agent_context_t *ctx)
+// {
+//     assert(ctx != NULL);
     
-    arena_t *event_arena = find_arena(ctx->arena_head, "event_arena");
-    arena_t *sample_arena = find_arena(ctx->arena_head, "sample_arena");
+//     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
+//     {
+//         ctx->full_samples[i].signature = NULL;
+//         ctx->full_samples[i].entry_count = 0;
+//         ctx->full_samples[i].exit_count = 0;
+//     }
+//     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
+//     {
+        
+//         ctx->nth_samples[i].signature = NULL;
+//         ctx->nth_samples[i].entry_count = 0;
+//         ctx->nth_samples[i].exit_count = 0;
+        
+//     }
+//     ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
+// }
 
-    while (1)
-    {
-        pthread_mutex_lock(&ctx->event_queue.lock);
-
-        if (!ctx->event_queue.running && ctx->event_queue.count == 0)
-        {
-            pthread_mutex_unlock(&ctx->event_queue.lock);
-            break;
-        }
-
-        while (ctx->event_queue.running && ctx->event_queue.count == 0)
-            pthread_cond_wait(&ctx->event_queue.cond, &ctx->event_queue.lock);
-
-        /* Process an event if available */
-        if (ctx->event_queue.count > 0)
-        {
-            e = ctx->event_queue.events[ctx->event_queue.tl];
-            ctx->event_queue.tl = (ctx->event_queue.tl + 1) % EVENT_Q_SZ;
-            ctx->event_queue.count--;
-            pthread_mutex_unlock(&ctx->event_queue.lock);
-
-            /* Now we copy the sig/method strings */
-            char full_sig[MAX_SIG_SZ];
-            
-            int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", e.class_sig, e.method_name, e.method_sig);
-            if (written < 0 || written >= MAX_SIG_SZ)
-                LOG(ctx, "WARNING: Full signature truncated: %s %s %s", e.class_sig, e.method_name, e.method_sig);
-            
-            /* Grab a lock before updating samples */
-            pthread_mutex_lock(&ctx->samples_lock);
-
-            /* Check if this method is already contained in full_samples */
-            int found_in_full_samples = 0;
-            for (int i=0; i < ctx->full_count; i++)
-            {
-                int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
-                if (ctx->full_samples[idx].signature && strcmp(ctx->full_samples[idx].signature, full_sig) == 0)
-                {
-                    /* Update an existing sample with entry/exit count */
-                    e.is_entry ? ctx->full_samples[idx].entry_count++ : ctx->full_samples[idx].exit_count++;
-                    found_in_full_samples = 1;
-                    break;
-                }
-            }
-
-            /* We did't find the signature in full_samples so add it here */
-            if (!found_in_full_samples)
-            {
-                if (ctx->full_count < FULL_SAMPLE_SZ)
-                {
-                    /* Copy the full_sig value to the samples signature as full_sig is a stack allocated buffer */
-                    ctx->full_samples[ctx->full_count].signature = arena_strdup(event_arena, full_sig);
-                    /* Set correct info for exit/entry */
-                    ctx->full_samples[ctx->full_count].entry_count = e.is_entry ? 1 : 0;
-                    ctx->full_samples[ctx->full_count].exit_count = e.is_entry ? 0 : 1;
-                    ctx->full_count++;
-                }
-                else /* We have FULL_SAMPLE_SZ number of samples already */
-                {
-                    /* Set our index to the current hd */
-                    int idx = ctx->full_hd;
-                    /* Set the signature to the new value */
-                    ctx->full_samples[idx].signature = arena_strdup(sample_arena, full_sig);
-                    /* Set correct info for exit/entry */
-                    ctx->full_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                    ctx->full_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                    /* Reset the full_hd position */
-                    ctx->full_hd = (ctx->full_hd + 1) % FULL_SAMPLE_SZ;
-                }
-            }
-
-            /* Handle nth sample collection (every ctx->config.rate events) */
-            ctx->event_counter++;
-            if (ctx->event_counter % ctx->config.rate == 0)
-            {
-                /* Check if this method signature is already in the nth samples */
-                int found_in_nth_samples = 0;
-                for (int i = 0; i < ctx->nth_count; i++)
-                {
-                    int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
-                    if (ctx->nth_samples[idx].signature && strcmp(ctx->nth_samples[idx].signature, full_sig) == 0)
-                    {
-                        /* Update the existing sample with entry/exit count */
-                        e.is_entry ? ctx->nth_samples[idx].entry_count++ : ctx->nth_samples[idx].exit_count++;
-                        found_in_nth_samples = 1;
-                        break;
-                    }
-                }
-
-                if (!found_in_nth_samples)
-                {
-                    /* Add to nth_samples if we cannot find method signature */
-                    if (ctx->nth_count < NTH_SAMPLE_SZ)
-                    {
-                        ctx->nth_samples[ctx->nth_count].signature = arena_strdup(sample_arena, full_sig);
-                        ctx->nth_samples[ctx->nth_count].entry_count = e.is_entry ? 1 : 0;
-                        ctx->nth_samples[ctx->nth_count].exit_count = e.is_entry ? 0 : 1;
-                        ctx->nth_count++;
-                    }
-                    else /* Replace the oldest entry */
-                    {
-                        int idx = ctx->nth_hd;
-                        ctx->nth_samples[idx].signature = arena_strdup(sample_arena, full_sig);
-                        ctx->nth_samples[idx].entry_count = e.is_entry ? 1 : 0;
-                        ctx->nth_samples[idx].exit_count = e.is_entry ? 0 : 1;
-                        ctx->nth_hd = (ctx->nth_hd + 1) % NTH_SAMPLE_SZ;
-                    }
-                }
-            }
-
-            /* Unlock the samples lock now we've finished updating */
-            pthread_mutex_unlock(&ctx->samples_lock);
-            continue;
-        }        
-        pthread_mutex_unlock(&ctx->event_queue.lock);
-    }
-    return NULL;
-}
-
-/**
- * Properly shut down the event system and wait for thread termination
- *
- * This function signals threads to terminate, waits for them to complete,
- * and then cleans up resources.
- *
- * @param ctx       Pointer to the agent context
- */
-void cleanup_event_system(agent_context_t *ctx)
-{
-    assert(ctx != NULL);
-
-    pthread_mutex_lock(&ctx->event_queue.lock);
-    ctx->event_queue.running = 0;
-    pthread_cond_broadcast(&ctx->event_queue.cond);
-    pthread_mutex_unlock(&ctx->event_queue.lock);
-
-    /* TODO Purge remaining events
-    Not sure this is required
-    while (dequeue_event(&event))
-
-    */
-
-    /* Create a joinable copy of the thread */
-    pthread_t event_thread_copy = ctx->event_thread;
-
-    /* Wait for thread to terminate */
-    int join_result = safe_thread_join(event_thread_copy, 2);
-    if (join_result != 0) {
-        /* If thread didn't terminate in time, we'll proceed with cleanup anyway
-          Not much we can do at this point */
-        LOG(ctx, "WARNING: Event thread did not terminate within timeout\n");
-    }
-
-    /* Now that the thread is either terminated or detached, we can clean up */
-    cleanup_samples(ctx);
-
-    // /* Destroy the event_arena which will cleanup any allocated strings */
-    // arena_t *arena = find_arena(ctx->arena_head, "event_arena");
-    // if (arena)
-    // {
-    //     arena_destroy(arena);
-    //     arena = NULL;
-    // }
-
-    pthread_cond_destroy(&ctx->event_queue.cond);
-    pthread_mutex_destroy(&ctx->event_queue.lock);
-}
 
 void export_to_file(agent_context_t *ctx)
 {
@@ -833,28 +577,54 @@ void export_to_file(agent_context_t *ctx)
     }
 
     pthread_mutex_lock(&ctx->samples_lock);
-    fprintf(fp, "# Full Samples (every event)\n");
-    for (int i = 0; i < ctx->full_count; i++) {
-        int idx = (ctx->full_hd + i) % FULL_SAMPLE_SZ;
-        LOG(ctx, "%d full sample for sig %s\n", idx, ctx->full_samples[idx].signature);
-        if (ctx->full_samples[idx].signature) {
-            fprintf(fp, "%s entries=%d exits=%d\n", 
-                    ctx->full_samples[idx].signature, 
-                    ctx->full_samples[idx].entry_count, 
-                    ctx->full_samples[idx].exit_count);
+    /* Write header with time stamp */
+    time_t now;
+    time(&now);
+    
+    fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
+    fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
+
+    /* Export the entire method_metrics_soa structure */
+    for (size_t i = 0; i < ctx->metrics->count; i++)
+    {
+        if (ctx->metrics->signatures[i])
+        {
+            /* Calculate avg time if samples exist */
+            uint64_t avg_time = 0;
+            if (ctx->metrics->sample_counts[i] > 0)
+                avg_time = ctx->metrics->total_time_ns[i] / ctx->metrics->sample_counts[i];
+
+            /* Print out the details */
+            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+                ctx->metrics->signatures[i],
+                (unsigned long)ctx->metrics->call_counts[i],
+                (unsigned long)ctx->metrics->sample_counts[i],
+                (unsigned long)ctx->metrics->total_time_ns[i],
+                (unsigned long)avg_time,
+                (unsigned long)(ctx->metrics->min_time_ns[i] == UINT64_MAX ? 0 : ctx->metrics->min_time_ns[i]),
+                (unsigned long)ctx->metrics->max_time_ns[i],
+                (unsigned long)ctx->metrics->alloc_bytes[i],
+                (unsigned long)ctx->metrics->peak_memory[i],
+                (unsigned long)ctx->metrics->cpu_cycles[i]);
         }
     }
-    fprintf(fp, "# Nth Samples (every %d events)\n", ctx->config.rate);
-    for (int i = 0; i < ctx->nth_count; i++) {
-        int idx = (ctx->nth_hd + i) % NTH_SAMPLE_SZ;
-        LOG(ctx, "%d nth sample for sig %s\n", idx, ctx->nth_samples[idx].signature);
-        if (ctx->nth_samples[idx].signature) {
-            fprintf(fp, "%s entries=%d exits=%d\n", 
-                    ctx->nth_samples[idx].signature, 
-                    ctx->nth_samples[idx].entry_count, 
-                    ctx->nth_samples[idx].exit_count);
-        }
+
+    /* Add summary statistics */
+    fprintf(fp, "\n# Summary Statistics\n");
+    
+    /* Count total calls across all methods */
+    uint64_t total_calls = 0;
+    uint64_t total_samples = 0;
+    for (size_t i = 0; i < ctx->metrics->count; i++) 
+    {
+        total_calls += ctx->metrics->call_counts[i];
+        total_samples += ctx->metrics->sample_counts[i];
     }
+    
+    fprintf(fp, "Total methods tracked: %zu\n", ctx->metrics->count);
+    fprintf(fp, "Total method calls: %lu\n", (unsigned long)total_calls);
+    fprintf(fp, "Total samples collected: %lu\n", (unsigned long)total_samples);
+
     pthread_mutex_unlock(&ctx->samples_lock);
 
     fclose(fp);
@@ -866,9 +636,9 @@ void *export_thread_func(void *arg)
 
     agent_context_t *ctx = (agent_context_t *)arg;
     
-    /* Reuse event_queue.running as a global stop flag */
-    while (ctx->event_queue.running) 
-    { 
+    /* export to file while export_running flag is set */
+    while (ctx->export_running) 
+    {
         export_to_file(ctx);
         sleep(ctx->config.export_interval);
     }
@@ -1127,8 +897,9 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     uint64_t cpu_delta = 0;
     
     unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
-    
+
     if (flags & METRIC_FLAG_MEMORY) {
+        LOG(global_ctx, "Debug: samplling memory for %d\n", sample->method_index);
         /* Select the most specific memory metric available:
          * 1. Direct object allocations (most specific)
          * 2. Thread memory change
@@ -1926,17 +1697,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Init the event/sample handling */
-    if (init_event_q(global_ctx) != 0 || 
-        start_thread(&global_ctx->event_thread, &event_thread_func, "event", global_ctx) != 0 || 
-        start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
+    if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
     {
         cleanup(global_ctx);
         cleanup_log_system(global_ctx);
-        cleanup_event_system(global_ctx);
         return JNI_ERR;
     }
 
-    init_samples(global_ctx);
+    // init_samples(global_ctx);
 
     /* Enable capabilities */
     memset(&capabilities, 0, sizeof(capabilities));
@@ -2043,18 +1811,18 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) 
     {
         /* Signal export thread to stop */
-        pthread_mutex_lock(&global_ctx->event_queue.lock);
-        global_ctx->event_queue.running = 0;
-        pthread_mutex_unlock(&global_ctx->event_queue.lock);
+        pthread_mutex_lock(&global_ctx->samples_lock);
+        global_ctx->export_running = 0;
+        pthread_mutex_unlock(&global_ctx->samples_lock);
         
         pthread_t export_thread_copy = global_ctx->export_thread;
         pthread_detach(global_ctx->export_thread);
         safe_thread_join(export_thread_copy, 2);
 
         cleanup(global_ctx);
-        cleanup_samples(global_ctx);
+        // cleanup_samples(global_ctx);
         
-        cleanup_event_system(global_ctx);
+        // cleanup_event_system(global_ctx);
 
         /* Clean up thread-local storage */
         if (tls_initialized) 
