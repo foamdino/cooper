@@ -158,7 +158,7 @@ struct method_sample
 struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
-    method_sample_t sample;
+    method_sample_t *sample; /**< Current top of metod sample stack - most recent call */
 };
 
 struct thread_alloc

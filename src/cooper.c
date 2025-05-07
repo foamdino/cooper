@@ -24,6 +24,8 @@ static const arena_config_t arena_configs[] = {
     {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
 };
 
+
+
 /* Initialize thread-local storage */
 static void init_thread_local_storage() {
     /* Double-checked locking pattern */
@@ -50,9 +52,8 @@ static thread_context_t *get_thread_local_context() {
         // TODO fix this calloc as it is not correctly free'd later
         context = calloc(1, sizeof(thread_context_t));
         if (context) {
-            context->sample.method_index = -1;  /* Not sampling */
-            context->sample.start_time = 0;
-            context->sample.current_alloc_bytes = 0;
+            context->sample = NULL;
+            context->stack_depth = 0;
             pthread_setspecific(context_key, context);
         }
     }
@@ -227,6 +228,40 @@ static uint64_t get_current_time_ns() {
 static uint64_t get_current_cpu_cycles() {
     /* In a real implementation, this would use CPU performance counters */
     return 0;
+}
+
+/**
+ * Initialise a method_sample_t structure
+ * 
+ * Return NULL if it fails to allocate space in the provided arena
+ */
+static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
+{
+    method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
+    if (!sample)
+        return NULL;
+
+
+    unsigned int flags = global_ctx->metrics->metric_flags[method_index];
+
+    sample->method_index = method_index;
+    sample->method_id = method_id;
+    sample->parent = NULL;
+
+    if (flags && METRIC_FLAG_TIME)
+        sample->start_time = get_current_time_ns();
+    
+    if (flags && METRIC_FLAG_MEMORY)
+    {
+        sample->start_process_memory = get_process_memory();
+        sample->start_thread_memory = 0; /* TODO try and fix thread memory tracking later */
+        sample->current_alloc_bytes = 0;
+    }
+        
+    if (flags && METRIC_FLAG_CPU)
+        sample->start_cpu = get_current_cpu_cycles();
+    
+    return sample;
 }
 
 /* Record method execution metrics */
@@ -856,30 +891,53 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     if (sample_index > 0) {
         /* We're sampling this call */
         LOG(global_ctx, "DEBUG sampling : %s (%d)\n", method_name, sample_index);
-        if (context) {
-            context->sample.method_index = sample_index - 1;  /* Convert back to 0-based index */
-            context->sample.method_id = method;
-            context->sample.start_time = get_current_time_ns();
-            LOG(global_ctx, "DEBUG method_entry_callback - Current sample_index: %d\n", context->sample.method_index);
-            
-            /* Reset the allocation counter for this method execution */
-            context->sample.current_alloc_bytes = 0;
 
-            /* Only collect these metrics if enabled for this method */
-            unsigned int flags = global_ctx->metrics->metric_flags[context->sample.method_index];
-            
-            if (flags & METRIC_FLAG_MEMORY)
-            {
-                context->sample.start_process_memory = get_process_memory(global_ctx);
-                // context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
-            }
-            
-            if (flags & METRIC_FLAG_CPU)
-                context->sample.start_cpu = get_current_cpu_cycles();
-            
-            LOG(global_ctx, "[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
-                class_signature, method_name, method_signature, method);
+        /* Create a new sample on our method stack */
+        arena_t *arena = find_arena(global_ctx->arena_head, "sample_arena");
+        if (!arena)
+        {
+            LOG(global_ctx, "ERROR: Could not find sample_arena!\n");
+            goto deallocate;
         }
+
+        /* Now create the actual sample with the correct data */
+        method_sample_t *sample = init_method_sample(arena, sample_index -1, method); /* Convert sample_index back to 0-based index */
+        if (!sample)
+        {
+            LOG(global_ctx, "ERROR: Failed to allocate method sample context!\n");
+            goto deallocate;
+        }
+
+        /* Now we update our sample stack */
+        /* 1. This sample's parent is whatever is in the current context... */
+        sample->parent = context->sample;
+        /* 2. Overwrite the context's sample with this sample */
+        context->sample = sample;
+        /* 3. Increase our stack depth */
+        context->stack_depth++;
+
+        // context->sample.method_index = sample_index - 1;  /* Convert back to 0-based index */
+        // context->sample.method_id = method;
+        // context->sample.start_time = get_current_time_ns();
+        // LOG(global_ctx, "DEBUG method_entry_callback - Current sample_index: %d\n", context->sample.method_index);
+        
+        // /* Reset the allocation counter for this method execution */
+        // context->sample.current_alloc_bytes = 0;
+
+        // /* Only collect these metrics if enabled for this method */
+        // unsigned int flags = global_ctx->metrics->metric_flags[context->sample.method_index];
+        
+        // if (flags & METRIC_FLAG_MEMORY)
+        // {
+        //     context->sample.start_process_memory = get_process_memory(global_ctx);
+        //     // context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
+        // }
+        
+        // if (flags & METRIC_FLAG_CPU)
+        //     context->sample.start_cpu = get_current_cpu_cycles();
+        
+        LOG(global_ctx, "[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
+            class_signature, method_name, method_signature, method);
     }
 
 deallocate:
@@ -897,31 +955,43 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Get thread-local context to prevent re-emtrancy */
     thread_context_t *context = get_thread_local_context();
 
-    if (!context)
+    if (!context || !context->sample)
         return;
     
-    method_sample_t *sample = &context->sample;
+    /* Only process the exit if it matches the current method at the top of our stack of samples */
+    if (context->sample->method_id != method)
+    {
+        LOG(global_ctx, "[EXIT] Exiting method with jmethodID [%p] but top of stack is [%p]\n", method, context->sample->method_id);
+        return; /* Not the method we're expecting */
+    }
 
-    if (!sample)
-        goto cleanup;
+    /* Get the sample of the method call being completed */
+    method_sample_t *sample = context->sample;
 
-    if (sample->method_index < 0)
-        goto cleanup;
+    // if (!sample)
+    //     goto cleanup;
 
-    LOG(global_ctx, "[EXIT] Exiting method with jmethodID [%p]\n", method);
+    // if (sample->method_index < 0)
+    //     goto cleanup;
 
-    if (sample->method_id != method)
-        goto cleanup;
+    // LOG(global_ctx, "[EXIT] Exiting method with jmethodID [%p]\n", method);
 
-    /* Calculate execution time */
-    uint64_t end_time = get_current_time_ns();
-    uint64_t exec_time = end_time - sample->start_time;
+    // if (sample->method_id != method)
+    //     goto cleanup;
+
+    unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
     
     /* Get metrics if they were enabled */
+    uint64_t exec_time = 0;
     uint64_t memory_delta = 0;
     uint64_t cpu_delta = 0;
     
-    unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
+    /* Calculate execution time */
+    if (flags && METRIC_FLAG_TIME)
+    {
+        uint64_t end_time = get_current_time_ns();
+        exec_time = end_time - sample->start_time;
+    }
 
     if (flags & METRIC_FLAG_MEMORY) {
         LOG(global_ctx, "Debug: sampling memory for %d\n", sample->method_index);
@@ -956,7 +1026,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         cpu_delta = end_cpu - sample->start_cpu;
     }
     
-    
     char *method_name = NULL;
     char *method_signature = NULL;
     char *class_signature = NULL;
@@ -964,7 +1033,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jvmtiError err;
 
     /* Get method details for logging */
-    if (tls_initialized && global_ctx->metrics->metric_flags[sample->method_index] != 0) {
+    if (tls_initialized && flags != 0) {
         /* Get method name */
         err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
         if (err != JVMTI_ERROR_NONE) 
@@ -992,10 +1061,10 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         LOG(global_ctx, "[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu bytes\n", 
             class_signature, method_name, method_signature, 
             (unsigned long long)exec_time, (unsigned long long)memory_delta);
-    }
 
-    /* Record the metrics */
-    record_method_execution(global_ctx, sample->method_index, exec_time, memory_delta, cpu_delta);
+        /* Record the metrics */
+        record_method_execution(global_ctx, sample->method_index, exec_time, memory_delta, cpu_delta);
+    }
 
 deallocate:
     /* Deallocate memory allocated by JVMTI */
@@ -1004,9 +1073,9 @@ deallocate:
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
 
 cleanup:
-    /* Reset sample for reuse */
-    sample->method_index = -1;
-    sample->method_id = NULL;
+    /* Pop the sample from the top of the stack */
+    context->sample = sample->parent;
+    context->stack_depth--;
 }
 
 /**
@@ -1196,24 +1265,41 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
 {
     /* Get thread-local context to prevent re-entrancy */
     thread_context_t *context = get_thread_local_context();
-    if (!context)
-        return; /* Skip if already inside a callback */
+    if (!context || !context->sample)
+        return;
     
     // char* class_sig;
     // (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
     // LOG(global_ctx, "DEBUG Allocated object of class: %s, size: %lld\n", class_sig, size);
     // (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
     
-    // context->inside_callback = 1; /* Set flag to prevent re-entrancy */
-    method_sample_t *sample = &context->sample;
+    method_sample_t *sample = context->sample;
 
-    LOG(global_ctx, "DEBUG In object_alloc_callback: method_index: %d, size to add: %lu\n", sample->method_index, size);
+    // LOG(global_ctx, "DEBUG In object_alloc_callback: method_index: %d, size to add: %lu\n", sample->method_index, size);
     /* Only track if we're actively sampling this method */
-    if (sample && sample->method_index >= 0)
-    {
-        LOG(global_ctx, "Sampling this, adding: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
-        sample->current_alloc_bytes += size; /* add to running total */
+    // if (sample && sample->method_index >= 0)
+    // {
+    //     LOG(global_ctx, "Sampling this, adding: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
+    //     sample->current_alloc_bytes += size; /* add to running total */
+    // }
+
+    /* Add allocation to the current method being sampled */
+    sample->current_alloc_bytes += size;
+
+    LOG(global_ctx, "DEBUG Allocation: %lld bytes for method_index %d, total: %lld\n", 
+        (long long)size, sample->method_index, (long long)sample->current_alloc_bytes);
+    
+    /* Optionally, get class name for detailed logging */
+    if (global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY) {
+        char* class_sig;
+        jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+        if (err == JVMTI_ERROR_NONE) {
+            LOG(global_ctx, "DEBUG Allocated object of class: %s, size: %lld\n", 
+                class_sig, (long long)size);
+            (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+        }
     }
+
     // else
     //     LOG(global_ctx, "Not sampling this so didn't add: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
         
@@ -1224,6 +1310,18 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
 {
+    thread_context_t *context = pthread_getspecific(context_key);
+    if (context) 
+    {
+        /* No need to manually free each call since they're arena-allocated */
+        context->sample = NULL;
+        context->stack_depth = 0;
+        
+        /* Free the context itself */
+        free(context);
+        pthread_setspecific(context_key, NULL);
+    }
+
     if (!thread)
         return;
 
@@ -1586,53 +1684,53 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     return 0;  /* Don't sample this call */
 }
 
-static void init_mem_tracking(agent_context_t *ctx)
-{
-    //TODO - I don't like having the jvmti spread across multiple places, perhaps put all jvmti code in init_jvmti function?
+// static void init_mem_tracking(agent_context_t *ctx)
+// {
+//     //TODO - I don't like having the jvmti spread across multiple places, perhaps put all jvmti code in init_jvmti function?
 
-    /* Enable JVMTI capabilities */
-    jvmtiCapabilities capabilities;
-    memset(&capabilities, 0, sizeof(capabilities));
-    capabilities.can_generate_vm_object_alloc_events = 1;
-    capabilities.can_tag_objects = 1;
+//     /* Enable JVMTI capabilities */
+//     jvmtiCapabilities capabilities;
+//     memset(&capabilities, 0, sizeof(capabilities));
+//     capabilities.can_generate_vm_object_alloc_events = 1;
+//     capabilities.can_tag_objects = 1;
 
-    jvmtiError err = (*ctx->jvmti_env)->AddCapabilities(ctx->jvmti_env, &capabilities);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG(ctx, "WARNING: Could not enable memory tracking capabilities: %d\n", err);
-        return;
-    }
+//     jvmtiError err = (*ctx->jvmti_env)->AddCapabilities(ctx->jvmti_env, &capabilities);
+//     if (err != JVMTI_ERROR_NONE)
+//     {
+//         LOG(ctx, "WARNING: Could not enable memory tracking capabilities: %d\n", err);
+//         return;
+//     }
 
-    /* set up jvm callbacks */
-    jvmtiEventCallbacks callbacks;
-    memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.VMObjectAlloc = &object_alloc_callback;
-    callbacks.ThreadEnd = &thread_end_callback;
+//     /* set up jvm callbacks */
+//     jvmtiEventCallbacks callbacks;
+//     memset(&callbacks, 0, sizeof(callbacks));
+//     callbacks.VMObjectAlloc = &object_alloc_callback;
+//     callbacks.ThreadEnd = &thread_end_callback;
 
-    err = (*ctx->jvmti_env)->SetEventCallbacks(ctx->jvmti_env, &callbacks, sizeof(callbacks));
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG(ctx, "WARNING: Could not set memory tracking callbacks: %d\n", err);
-        return;
-    }
+//     err = (*ctx->jvmti_env)->SetEventCallbacks(ctx->jvmti_env, &callbacks, sizeof(callbacks));
+//     if (err != JVMTI_ERROR_NONE)
+//     {
+//         LOG(ctx, "WARNING: Could not set memory tracking callbacks: %d\n", err);
+//         return;
+//     }
 
-    /* enable events */
-    err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG(ctx, "WARNING: Could not enable allocation events: %d\n", err);
-        return;
-    }
+//     /* enable events */
+//     err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
+//     if (err != JVMTI_ERROR_NONE)
+//     {
+//         LOG(ctx, "WARNING: Could not enable allocation events: %d\n", err);
+//         return;
+//     }
 
-    err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG(ctx, "WARNING: Could not enable thread end events: %d\n", err);
-        return;
-    }
+//     err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
+//     if (err != JVMTI_ERROR_NONE) 
+//     {
+//         LOG(ctx, "WARNING: Could not enable thread end events: %d\n", err);
+//         return;
+//     }
 
-    LOG(ctx, "Memory tracking initialized successfully\n");
-}
+//     LOG(ctx, "Memory tracking initialized successfully\n");
+// }
 
 /*
  * Entry point
