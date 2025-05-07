@@ -1,5 +1,8 @@
 package com.github.foamdino;
 
+import java.util.Random;
+import java.util.ArrayList;
+
 /* Just a test class that we can instantiate to trigger object allocation events */
 class Junk {
 
@@ -47,10 +50,16 @@ public class Test {
         message += "method ";
         message += " a()";
 
-        var j = new Junk("Test", new Long(1));
-        var j2 = new Junk("Another test", new Long(2));
-        j2.setId(new Long(10));
-        j2.setName("Changed name");
+        var l = new ArrayList<Junk>();
+        
+        for (int i=0; i<10; i++) {
+            Long id = (long)new Random().nextInt();
+            var j = new Junk("test", id);
+            l.add(j);
+        }
+
+        for (Junk ju: l)
+            System.out.printf("From the app: Junk(%d) name: %s\n", ju.getId(), ju.getName());
 
         return message;
     }
