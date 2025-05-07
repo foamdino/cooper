@@ -807,7 +807,7 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
     return result;
 }
 
-static int entry_count = 0;
+// static int entry_count = 0;
 
 /*
  * Method entry callback
@@ -815,9 +815,9 @@ static int entry_count = 0;
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method)
 {
     
-    int my_count = ++entry_count;
-    fprintf(stderr, "DEBUG: Entering method_entry_callback #%d, thread=%p, method=%p\n", 
-        my_count, (void*)thread, (void*)method);
+    // int my_count = ++entry_count;
+    // fprintf(stderr, "DEBUG: Entering method_entry_callback #%d, thread=%p, method=%p\n", 
+    //     my_count, (void*)thread, (void*)method);
     
     char *method_name = NULL;
     char *method_signature = NULL;
@@ -869,6 +869,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         if (context) {
             context->sample.method_index = sample_index - 1;  /* Convert back to 0-based index */
             context->sample.start_time = get_current_time_ns();
+            LOG(global_ctx, "DEBUG method_entry_callback - Current sample_index: %d\n", context->sample.method_index);
             
             /* Reset the allocation counter for this method execution */
             context->sample.current_alloc_bytes = 0;
@@ -879,7 +880,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
             if (flags & METRIC_FLAG_MEMORY)
             {
                 context->sample.start_process_memory = get_process_memory(global_ctx);
-                context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
+                // context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
             }
             
             if (flags & METRIC_FLAG_CPU)
@@ -899,7 +900,7 @@ deallocate:
     /* Now we reset the flag as we are leaving the callback */
     context->inside_callback = 0;
 
-    fprintf(stderr, "DEBUG: Leaving method_entry_callback #%d\n", my_count);
+    // fprintf(stderr, "DEBUG: Leaving method_entry_callback #%d\n", my_count);
 }
 
 /*
@@ -929,7 +930,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
 
     if (flags & METRIC_FLAG_MEMORY) {
-        LOG(global_ctx, "Debug: samplling memory for %d\n", sample->method_index);
+        // LOG(global_ctx, "Debug: samplling memory for %d\n", sample->method_index);
         /* Select the most specific memory metric available:
          * 1. Direct object allocations (most specific)
          * 2. Thread memory change
@@ -940,12 +941,12 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         memory_delta = sample->current_alloc_bytes;
 
         /* If no direct allocations check OS-level thread mem changes */
-        if (memory_delta == 0 && sample->start_thread_memory > 0)
-        {
-            uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
-            if (end_thread_memory > sample->start_thread_memory)
-                memory_delta = end_thread_memory - sample->start_thread_memory;
-        }
+        // if (memory_delta == 0 && sample->start_thread_memory > 0)
+        // {
+        //     uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
+        //     if (end_thread_memory > sample->start_thread_memory)
+        //         memory_delta = end_thread_memory - sample->start_thread_memory;
+        // }
 
         /* If there's still no change, look for process wide memory changes */
         if (memory_delta == 0 && sample->start_thread_memory > 0)
@@ -1206,13 +1207,24 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     if (!context || context->inside_callback)
         return; /* Skip if already inside a callback */
     
-    context->inside_callback = 1; /* Set flag to prevent re-entrancy */
+    char* class_sig;
+    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+    LOG(global_ctx, "DEBUG Allocated object of class: %s, size: %lld\n", class_sig, size);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
     
+    context->inside_callback = 1; /* Set flag to prevent re-entrancy */
     method_sample_t *sample = &context->sample;
 
+    LOG(global_ctx, "DEBUG In object_alloc_callback: method_index: %d, size to add: %lu\n", sample->method_index, size);
     /* Only track if we're actively sampling this method */
     if (sample && sample->method_index >= 0)
+    {
+        LOG(global_ctx, "Sampling this, adding: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
         sample->current_alloc_bytes += size; /* add to running total */
+    }
+    // else
+    //     LOG(global_ctx, "Not sampling this so didn't add: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
+        
 
     /* Reset flag */
     context->inside_callback = 0;
