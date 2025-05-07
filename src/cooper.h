@@ -145,17 +145,19 @@ struct method_metrics_soa {
 struct method_sample
 {
     int method_index;       /**< Index in the metrics arrays, -1 if not sampling */
+    jmethodID method_id; /**< ID of method assigned by jvm */
     uint64_t start_time;    /**< Starting timestamp in nanoseconds */
     uint64_t start_process_memory;  /**< Starting memory usage in bytes */
     uint64_t start_thread_memory; /**< Starting thread specific memory */
     uint64_t start_stack_depth; /**< Starting stack depth */
     uint64_t current_alloc_bytes; /**< Running total of allocations during method */
     uint64_t start_cpu;     /**< Starting CPU cycle count */
+    method_sample_t *parent; /**< Parent (or calling) method */
 };
 
 struct thread_context
 {
-    int inside_callback; /**< Flag to prevent re-entrancy */
+    int stack_depth; /**< Depth of call stack */
     method_sample_t sample;
 };
 
