@@ -18,13 +18,59 @@ static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static const arena_config_t arena_configs[] = {
     {"exception_arena", EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
     {"log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
-    {"event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS},
+    {"event_arena", EVENT_ARENA_SZ, EVENT_ARENA_BLOCKS}, //TODO cleanup event mem stuff as events are gone
     {"sample_arena", SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {"config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
 };
 
+/* Debug function for dumping method satck */
+static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
+{
+    if (!ctx || !tc) return;
 
+    LOG(ctx, "DEBUG: Method stack dump (depth=%d):\n", tc->stack_depth);
+
+    method_sample_t *current = tc->sample;
+    int level = 0;
+
+    while (current && level < 20) /* Have a depth cutoff */
+    {
+        /* Get method details */
+        char *method_name = NULL;
+        char *method_sig = NULL;
+
+        jvmtiError err = (*ctx->jvmti_env)->GetMethodName(ctx->jvmti_env, current->method_id, &method_name, &method_sig, NULL);
+        if (err == JVMTI_ERROR_NONE)
+        {
+            LOG(ctx, "  [%d] methodID=%p, index=%d, name=%s%s\n", 
+                level, current->method_id, current->method_index, 
+                method_name, method_sig);
+                
+            (*ctx->jvmti_env)->Deallocate(ctx->jvmti_env, (unsigned char*)method_name);
+            (*ctx->jvmti_env)->Deallocate(ctx->jvmti_env, (unsigned char*)method_sig);
+        }
+        else
+            LOG(ctx, "\t[%d] methodID=%p, index=%d, <name-error>\n", level, current->method_id, current->method_index);
+        
+        current = current->parent;
+        level++;
+    }
+}
+
+static void destroy_thread_context(void *data)
+{
+    thread_context_t *tc = (thread_context_t *)data;
+
+    /* We can ignore cleaning up the method_samples 
+    as they are arena allocated*/
+    if (tc)
+    {
+        tc->sample = NULL;
+        tc->stack_depth = 0;
+        free(tc);
+    }
+}
 
 /* Initialize thread-local storage */
 static void init_thread_local_storage() {
@@ -33,7 +79,7 @@ static void init_thread_local_storage() {
         pthread_mutex_lock(&tls_init_mutex);
         if (!tls_initialized) {
             /* The 'free' function will be automatically called when a thread exits */
-            pthread_key_create(&context_key, free);
+            pthread_key_create(&context_key, destroy_thread_context);
             tls_initialized = 1;
         }
         pthread_mutex_unlock(&tls_init_mutex);
@@ -42,9 +88,8 @@ static void init_thread_local_storage() {
 
 /* Get the thread-local sample structure */
 static thread_context_t *get_thread_local_context() {
-    if (!tls_initialized) {
+    if (!tls_initialized)
         init_thread_local_storage();
-    }
     
     thread_context_t *context = pthread_getspecific(context_key);
     if (!context) {
@@ -237,16 +282,25 @@ static uint64_t get_current_cpu_cycles() {
  */
 static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
 {
+
+    assert(arena != NULL);
+    assert(method_id != NULL);
+    assert(method_index >= 0);
+
+    if (!arena || method_index < 0 || !method_id)
+        return NULL;
+    
     method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
     if (!sample)
         return NULL;
 
-
-    unsigned int flags = global_ctx->metrics->metric_flags[method_index];
-
+    /* Initialise sample */
+    memset(sample, 0, sizeof(method_sample_t));
     sample->method_index = method_index;
     sample->method_id = method_id;
     sample->parent = NULL;
+    
+    unsigned int flags = global_ctx->metrics->metric_flags[method_index];
 
     if (flags && METRIC_FLAG_TIME)
         sample->start_time = get_current_time_ns();
@@ -852,7 +906,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     jclass declaring_class;
     jvmtiError err;
 
-    /* Get thread-local context to prevent re-entancy */
+    /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
     if (!context)
@@ -952,22 +1006,65 @@ deallocate:
  */
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value)
 {
-    /* Get thread-local context to prevent re-emtrancy */
+    /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
     if (!context || !context->sample)
         return;
     
-    /* Only process the exit if it matches the current method at the top of our stack of samples */
-    if (context->sample->method_id != method)
+
+    /* We need to look in our stack to find a corresponding method entry 
+    Note that the JVM doesn't guarantee ordering of method entry/exits for a variety of reasons:
+    - Threading
+    - Optimizations
+    - etc
+    */
+    method_sample_t *current = context->sample;
+    method_sample_t *parent = NULL;
+    method_sample_t *target = NULL;
+
+    /* Top of stack matches - quick case */
+    if (current->method_id == method)
     {
-        LOG(global_ctx, "[EXIT] Exiting method with jmethodID [%p] but top of stack is [%p]\n", method, context->sample->method_id);
-        return; /* Not the method we're expecting */
+        target = current;
+        context->sample = current->parent; /* Pop from top of stack */
+        context->stack_depth--;
+    }
+    else
+    {
+        /* We need to search the stack for a matching method - this seems to be the common case */
+        LOG(global_ctx, "DEBUG: Method exit mismatch, searching for method [%p] in stack\n");
+
+        /* Traverse stack to find target */
+        while(current)
+        {
+            if (current->method_id == method)
+            {
+                target = current;
+                /* Remove node from linked-list/stack */
+                if (parent)
+                    parent->parent = current->parent; /* Skip over this node */
+                else
+                    context->sample = current->parent; /* Update head of list */
+
+                context->stack_depth--;
+                break;
+            }
+            /* not found, move onto next */
+            parent = current;
+            current = current->parent;
+        }
     }
 
-    /* Get the sample of the method call being completed */
-    method_sample_t *sample = context->sample;
+    /* Only process the exit if it matches the current method at the top of our stack of samples */
+    if (!target)
+    {
+        LOG(global_ctx, "DEBUG: No matching method found for methodID [%p]\n", method);
+        return;
+    }
 
+
+    LOG(global_ctx, "DEBUG: Matching method found for methodID [%p]\n", method);
     // if (!sample)
     //     goto cleanup;
 
@@ -979,7 +1076,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     // if (sample->method_id != method)
     //     goto cleanup;
 
-    unsigned int flags = global_ctx->metrics->metric_flags[sample->method_index];
+    unsigned int flags = global_ctx->metrics->metric_flags[target->method_index];
     
     /* Get metrics if they were enabled */
     uint64_t exec_time = 0;
@@ -990,11 +1087,11 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     if (flags && METRIC_FLAG_TIME)
     {
         uint64_t end_time = get_current_time_ns();
-        exec_time = end_time - sample->start_time;
+        exec_time = end_time - target->start_time;
     }
 
     if (flags & METRIC_FLAG_MEMORY) {
-        LOG(global_ctx, "Debug: sampling memory for %d\n", sample->method_index);
+        LOG(global_ctx, "Debug: sampling memory for %d\n", target->method_index);
         /* Select the most specific memory metric available:
          * 1. Direct object allocations (most specific)
          * 2. Thread memory change
@@ -1002,7 +1099,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
          */
 
          /* JVM heap allocations during method execution */
-        memory_delta = sample->current_alloc_bytes;
+        memory_delta = target->current_alloc_bytes;
 
         /* If no direct allocations check OS-level thread mem changes */
         // if (memory_delta == 0 && sample->start_thread_memory > 0)
@@ -1013,17 +1110,17 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         // }
 
         /* If there's still no change, look for process wide memory changes */
-        if (memory_delta == 0 && sample->start_thread_memory > 0)
+        if (memory_delta == 0 && target->start_thread_memory > 0)
         {
             uint64_t end_process_memory = get_process_memory();
-            if (end_process_memory > sample->start_process_memory)
-                memory_delta = end_process_memory - sample->start_process_memory;
+            if (end_process_memory > target->start_process_memory)
+                memory_delta = end_process_memory - target->start_process_memory;
         }
     }
     
     if (flags & METRIC_FLAG_CPU) {
         uint64_t end_cpu = get_current_cpu_cycles();
-        cpu_delta = end_cpu - sample->start_cpu;
+        cpu_delta = end_cpu - target->start_cpu;
     }
     
     char *method_name = NULL;
@@ -1039,7 +1136,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         if (err != JVMTI_ERROR_NONE) 
         {
             LOG(global_ctx, "ERROR: GetMethodName failed with error %d\n", err);
-            goto cleanup;
+            return; /* Cannot do anything in this case */
         }
 
         /* Get declaring class */
@@ -1063,7 +1160,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
             (unsigned long long)exec_time, (unsigned long long)memory_delta);
 
         /* Record the metrics */
-        record_method_execution(global_ctx, sample->method_index, exec_time, memory_delta, cpu_delta);
+        record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
     }
 
 deallocate:
@@ -1072,10 +1169,6 @@ deallocate:
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
 
-cleanup:
-    /* Pop the sample from the top of the stack */
-    context->sample = sample->parent;
-    context->stack_depth--;
 }
 
 /**
