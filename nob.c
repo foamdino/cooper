@@ -54,7 +54,31 @@ int main(int argc, char **argv)
     /* Check that the build output dir exists */
     if (!nob_mkdir_if_not_exists(BUILD_FOLDER)) return 1;
 
-    nob_cmd_append(&cc_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-o", BUILD_FOLDER"libcooper.so", SRC_FOLDER"arena.c", SRC_FOLDER"cooper.c", "-pthread");
+    // Check for debug build
+    int debug_build = 0;
+    for (int i=1; i<argc; i++)
+    {
+        if (strcmp(argv[i], "--debug") == 0)
+        {
+            debug_build = 1;
+            break;
+        }
+    }
+
+    nob_cmd_append(&cc_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC",
+                   JAVA_INC, LINUX_INC, "-I.");
+
+    if (debug_build)
+    {
+        nob_cmd_append(&cc_cmd, "-DENABLE_DEBUG_LOGS", "-DENABLE_INFO_LOGS", "-g");
+        printf("Building in DEBUG mode with logs enabled\n");
+    }
+    else
+        nob_cmd_append(&cc_cmd, "-O2");
+
+    nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so", 
+        SRC_FOLDER"arena.c", SRC_FOLDER"log.c", SRC_FOLDER"cooper.c", "-pthread");
+
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
     /* compile java */
@@ -62,7 +86,10 @@ int main(int argc, char **argv)
     if (!nob_cmd_run_sync(javac_cmd)) return 1;
 
     /* compile tests */
-    nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-g", "-o", BUILD_FOLDER"test_cooper", SRC_FOLDER"arena.c", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread");
+    
+    nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-g", "-o", BUILD_FOLDER"test_cooper", 
+        SRC_FOLDER"arena.c", SRC_FOLDER"log.c", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread");
+    
     if (!nob_cmd_run_sync(test_cmd)) return 1;
 
     return 0;
