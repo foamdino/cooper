@@ -773,6 +773,9 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
 
+    LOG_DEBUG("should_sample_method returned index: %d for %s.%s%s\n", 
+        sample_index, class_signature, method_name, method_signature);
+
     if (sample_index > 0) {
         /* We're sampling this call */
         LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
@@ -820,8 +823,13 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
-    if (!context || !context->sample || context->sample->method_index < 0)
-        return;
+    /* Cannot do anything without the thread_context */
+    if (!context) return;
+
+    if (!context->sample || context->sample->method_index < 0)
+    {
+        LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p", context, context->sample);
+    }
     
 
     /* We need to look in our stack to find a corresponding method entry 
@@ -1165,16 +1173,18 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
 {
     /* Get thread-local context to prevent re-entrancy */
     thread_context_t *context = get_thread_local_context();
-    if (!context || !context->sample)
+    if (!context)
+    {
+        LOG_DEBUG("[object_alloc_callback] No context\n");
         return;
-    
-    // char* class_sig;
-    // (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-    // LOG(global_ctx, "DEBUG Allocated object of class: %s, size: %lld\n", class_sig, size);
-    // (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+    }
     
     method_sample_t *sample = context->sample;
-    if (!sample) return;
+    if (!sample) 
+    {
+        LOG_DEBUG("[object_alloc_callback] No sample\n");
+        return;
+    }
 
     /* Check if memory metrics are enabled for this method */
     if (sample->method_index < 0 || 
@@ -1182,7 +1192,6 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
         !(global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY))
         return;
 
-    
     /* Add allocation to the current method being sampled */
     sample->current_alloc_bytes += size;
 
@@ -1582,7 +1591,12 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
         (unsigned long)current_count);
 
     /* Check if we should sample this call based on the sample rate */
-    int should_sample = ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index];
+    int should_sample = (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index]) == 0;
+    LOG_DEBUG("Method %s: call_count=%lu, sample_rate=%d, should_sample=%d\n", 
+        ctx->metrics->signatures[method_index], 
+        (unsigned long)current_count, 
+        ctx->metrics->sample_rates[method_index], 
+        should_sample);
 
     pthread_mutex_unlock(&ctx->samples_lock);
 
