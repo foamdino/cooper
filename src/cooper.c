@@ -189,21 +189,15 @@ static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
 static uint64_t get_process_memory()
 {
 #ifdef __linux__
-    static int proc_fd = -1;
-    static char buf[4096];
+    int proc_fd = -1;
+    char buf[4096];
 
-    /* init file descriptor if required */
+    /* Open procfs file */
+    char proc_path[64];
+    snprintf(proc_path, sizeof(proc_path), "/proc/%d/statm", getpid());
+    proc_fd = open(proc_path, O_RDONLY);
+
     if (proc_fd < 0)
-    {
-        char proc_path[64];
-        snprintf(proc_path, sizeof(proc_path), "/proc/%d/statm", getpid());
-        proc_fd = open(proc_path, O_RDONLY);
-        if (proc_fd < 0)
-            return 0;
-    }
-
-    /* reset file position to beginning */
-    if (lseek(proc_fd, 0, SEEK_SET) < 0)
         return 0;
 
     ssize_t bytes_read = read(proc_fd, buf, sizeof(buf) -1);
@@ -215,6 +209,8 @@ static uint64_t get_process_memory()
 
     /* Parse resident set size */
     unsigned long vm_size, rss;
+    int res = sscanf(buf, "%lu %lu", &vm_size, &rss);
+
     if (sscanf(buf, "%lu %lu", &vm_size, &rss) != 2)
         return 0;
 
@@ -782,7 +778,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         LOG_ERROR("GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
-
+ 
     if (strstr(class_signature, "com/github"))
         LOG_DEBUG("Should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
 
@@ -1754,8 +1750,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Enable debug output */
-    if (options && strncmp(options, "debug", 5) == 0)
-        current_log_level = LOG_LEVEL_DEBUG;
+    // current_log_level = LOG_LEVEL_INFO; //TODO work out how to parse te option
+    // if (options && strncmp(options, "debug", 5) == 0)
+    //     current_log_level = LOG_LEVEL_DEBUG;
 
     log_q_t *log_queue = malloc(sizeof(log_q_t));
 
