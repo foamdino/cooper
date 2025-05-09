@@ -51,7 +51,7 @@ public class Test {
     public String b() {
         // Do some work
         try {
-            Thread.sleep(5);
+            Thread.sleep(10000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -74,7 +74,7 @@ public class Test {
     private void methodLevel1() {
         // Do some work
         try {
-            Thread.sleep(5);
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -86,7 +86,7 @@ public class Test {
     private void methodLevel2() {
         // Do some work
         try {
-            Thread.sleep(5);
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -98,7 +98,7 @@ public class Test {
     private void methodLevel3() {
         // Do some work
         try {
-            Thread.sleep(5);
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -125,7 +125,7 @@ public class Test {
     private void throwingMethod() {
         // Do some work before throwing
         try {
-            Thread.sleep(5);
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -137,7 +137,7 @@ public class Test {
     private void deepThrowingMethod() {
         // Do some work before throwing
         try {
-            Thread.sleep(5);
+            Thread.sleep(10000);
         } catch (InterruptedException e) {
             // Ignore
         }
@@ -157,7 +157,7 @@ public class Test {
         
         // Do some work at this level
         try {
-            Thread.sleep(5);
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             // Ignore
         }

@@ -325,7 +325,12 @@ void record_method_execution(agent_context_t *ctx, int method_index,
 
     method_metrics_soa_t *metrics = ctx->metrics;
 
-    LOG_DEBUG("Recording metrics for index: %d", method_index);
+    LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu", 
+        method_index, 
+        (unsigned long)exec_time_ns, 
+        (unsigned long)memory_bytes, 
+        (unsigned long)cycles);
+
     /* Check for valid index */
     if (method_index < 0 || (size_t)method_index >= metrics->count) 
     {
@@ -365,7 +370,12 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         metrics->cpu_cycles[method_index] += cycles;
     }
 
-    LOG_DEBUG("Method metrics recorded for index: %d", method_index);
+    LOG_DEBUG("Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu", 
+        method_index, 
+        (unsigned long)metrics->sample_counts[method_index],
+        (unsigned long)metrics->total_time_ns[method_index],
+        (unsigned long)metrics->alloc_bytes[method_index]);
+    
     pthread_mutex_unlock(&ctx->samples_lock);
 }
 
@@ -663,6 +673,12 @@ void export_to_file(agent_context_t *ctx)
 {
     assert(ctx != NULL);
     
+    if (!ctx->config.sample_file_path)
+    {
+        LOG_ERROR("ERROR: No sample file path configured\n");
+        return;
+    }
+
     FILE *fp = fopen(ctx->config.sample_file_path, "w");
     if (!fp) 
     {
@@ -670,6 +686,7 @@ void export_to_file(agent_context_t *ctx)
         return;
     }
 
+    /* Lock metrics for thread safe exporting */
     pthread_mutex_lock(&ctx->samples_lock);
     /* Write header with time stamp */
     time_t now;
@@ -678,7 +695,12 @@ void export_to_file(agent_context_t *ctx)
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
     fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
+    /* Debug output to verify data being exported */
+    LOG_DEBUG("Exporting %zu method metrics\n", ctx->metrics->count);
+
     /* Export the entire method_metrics_soa structure */
+    size_t total_calls = 0;
+    size_t total_samples = 0;
     for (size_t i = 0; i < ctx->metrics->count; i++)
     {
         if (ctx->metrics->signatures[i])
@@ -687,6 +709,17 @@ void export_to_file(agent_context_t *ctx)
             uint64_t avg_time = 0;
             if (ctx->metrics->sample_counts[i] > 0)
                 avg_time = ctx->metrics->total_time_ns[i] / ctx->metrics->sample_counts[i];
+
+            total_calls += ctx->metrics->call_counts[i];
+            total_samples += ctx->metrics->sample_counts[i];
+
+            /* Debug output to verify each method's metrics */
+            LOG_DEBUG("Method[%zu]: %s, calls=%lu, samples=%lu, time=%lu\n", 
+                i, 
+                ctx->metrics->signatures[i],
+                (unsigned long)ctx->metrics->call_counts[i],
+                (unsigned long)ctx->metrics->sample_counts[i],
+                (unsigned long)ctx->metrics->total_time_ns[i]);
 
             /* Print out the details */
             fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
@@ -705,19 +738,12 @@ void export_to_file(agent_context_t *ctx)
 
     /* Add summary statistics */
     fprintf(fp, "\n# Summary Statistics\n");
-    
-    /* Count total calls across all methods */
-    uint64_t total_calls = 0;
-    uint64_t total_samples = 0;
-    for (size_t i = 0; i < ctx->metrics->count; i++) 
-    {
-        total_calls += ctx->metrics->call_counts[i];
-        total_samples += ctx->metrics->sample_counts[i];
-    }
-    
     fprintf(fp, "Total methods tracked: %zu\n", ctx->metrics->count);
     fprintf(fp, "Total method calls: %lu\n", (unsigned long)total_calls);
     fprintf(fp, "Total samples collected: %lu\n", (unsigned long)total_samples);
+
+    LOG_DEBUG("Export complete: methods=%zu, calls=%lu, samples=%lu\n", 
+        ctx->metrics->count, (unsigned long)total_calls, (unsigned long)total_samples);
 
     pthread_mutex_unlock(&ctx->samples_lock);
 
@@ -729,16 +755,31 @@ void *export_thread_func(void *arg)
     assert(arg != NULL);
 
     agent_context_t *ctx = (agent_context_t *)arg;
+
+    LOG_INFO("Export thread started, interval=%d seconds\n", ctx->config.export_interval);
     
+    /* Initial export to create the file */
+    export_to_file(ctx);
+
     /* export to file while export_running flag is set */
     while (ctx->export_running) 
     {
-        export_to_file(ctx);
-        sleep(ctx->config.export_interval);
+        LOG_DEBUG("Export thread sleeping for %d seconds\n", ctx->config.export_interval);
+        /* Sleep in smaller increments to be more responsive to shutdown */
+        for (int i = 0; i < ctx->config.export_interval && ctx->export_running; i++) {
+            sleep(1);
+        }
+        if (ctx->export_running) {
+            LOG_DEBUG("Export thread woke up, exporting metrics\n");
+            export_to_file(ctx);
+        }
     }
 
     /* Final write on shutdown */
-    export_to_file(ctx); 
+    LOG_INFO("Export thread shutting down, performing final export\n");
+    export_to_file(ctx);
+    
+    LOG_INFO("Export thread terminated\n");
     return NULL;
 }
 /**
@@ -1340,14 +1381,6 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     
     method_sample_t *sample = context->sample;
 
-    // LOG(global_ctx, "DEBUG In object_alloc_callback: method_index: %d, size to add: %lu\n", sample->method_index, size);
-    /* Only track if we're actively sampling this method */
-    // if (sample && sample->method_index >= 0)
-    // {
-    //     LOG(global_ctx, "Sampling this, adding: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
-    //     sample->current_alloc_bytes += size; /* add to running total */
-    // }
-
     /* Add allocation to the current method being sampled */
     sample->current_alloc_bytes += size;
 
@@ -1364,13 +1397,6 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
             (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
         }
     }
-
-    // else
-    //     LOG(global_ctx, "Not sampling this so didn't add: %lu to current_alloc_bytes: %lu\n", size, sample->current_alloc_bytes);
-        
-
-    // /* Reset flag */
-    // context->inside_callback = 0;
 }
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
@@ -1739,11 +1765,24 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     if (method_index < 0)
         return 0;
     
+    /* Lock to safely update call count */
+    pthread_mutex_lock(&ctx->samples_lock);
+
     /* We found the method, increment its call count */
     ctx->metrics->call_counts[method_index]++;
-    
+    uint64_t current_count = ctx->metrics->call_counts[method_index];
+
+    /* Log call count updates for debugging */
+    LOG_DEBUG("Method %s call_count incremented to %lu\n", 
+        ctx->metrics->signatures[method_index], 
+        (unsigned long)current_count);
+
     /* Check if we should sample this call based on the sample rate */
-    if (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index] == 0)
+    int should_sample = ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index];
+
+    pthread_mutex_unlock(&ctx->samples_lock);
+
+    if (should_sample)
         return method_index + 1;  /* +1 because 0 means "don't sample" */
     
     return 0;  /* Don't sample this call */
@@ -1932,6 +1971,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
+    /* Set export_running to true before starting the thread */
+    global_ctx->export_running = 1;
+
     /* Init the event/sample handling */
     if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
     {
@@ -2051,8 +2093,12 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         global_ctx->export_running = 0;
         pthread_mutex_unlock(&global_ctx->samples_lock);
         
+        /* Give the export thread a moment to perform final export */
+        usleep(100000); /* 100ms should be enough for final export */
+
         pthread_t export_thread_copy = global_ctx->export_thread;
         pthread_detach(global_ctx->export_thread);
+        LOG_INFO("Waiting for export thread to terminate\n");
         safe_thread_join(export_thread_copy, 2);
 
         cleanup(global_ctx);
