@@ -47,10 +47,8 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     
     /* Allocate the memory pool */
     void* memory = malloc(sz);
-    if (!memory) {
-        free(arena);
-        return NULL;
-    }
+    if (!memory)
+        goto error_cleanup;
     
     arena->memory = memory;
     arena->total_sz = sz;
@@ -58,11 +56,8 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     
     /* Allocate tracking arrays from the pre-allocated memory */
     size_t tracking_sz = max_blocks * (sizeof(void*) + sizeof(size_t));
-    if (tracking_sz >= sz) {
-        free(memory);
-        free(arena);
-        return NULL;
-    }
+    if (tracking_sz >= sz)
+        goto error_cleanup;
         
     arena->free_blocks = (void**)memory;
     arena->block_sizes = (size_t*)((char*)memory + (max_blocks * sizeof(void*)));
@@ -77,6 +72,15 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     arena->total_sz -= tracking_sz;
     
     return arena;
+
+error_cleanup:
+    if (memory)
+        free(memory);
+
+    if (arena)
+        free(arena);
+
+    return NULL;
 }
 
 /**

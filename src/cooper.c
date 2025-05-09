@@ -303,17 +303,17 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     
     unsigned int flags = global_ctx->metrics->metric_flags[method_index];
 
-    if (flags && METRIC_FLAG_TIME)
+    if (flags & METRIC_FLAG_TIME)
         sample->start_time = get_current_time_ns();
     
-    if (flags && METRIC_FLAG_MEMORY)
+    if (flags & METRIC_FLAG_MEMORY)
     {
         sample->start_process_memory = get_process_memory();
         sample->start_thread_memory = 0; /* TODO try and fix thread memory tracking later */
         sample->current_alloc_bytes = 0;
     }
         
-    if (flags && METRIC_FLAG_CPU)
+    if (flags & METRIC_FLAG_CPU)
         sample->start_cpu = get_current_cpu_cycles();
     
     return sample;
@@ -345,7 +345,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     metrics->sample_counts[method_index]++;
 
     /* Update timing metrics if enabled */
-    if (metrics->metric_flags[method_index] & METRIC_FLAG_TIME) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0) {
         metrics->total_time_ns[method_index] += exec_time_ns;
 
         /* Update min/max */
@@ -358,7 +358,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     }
 
     /* Update memory metrics if enabled */
-    if (metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) {
         metrics->alloc_bytes[method_index] += memory_bytes;
         if (memory_bytes > metrics->peak_memory[method_index]) {
             metrics->peak_memory[method_index] = memory_bytes;
@@ -366,7 +366,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     }
 
     /* Update CPU metrics if enabled */
-    if (metrics->metric_flags[method_index] & METRIC_FLAG_CPU) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0) {
         metrics->cpu_cycles[method_index] += cycles;
     }
 
@@ -1033,7 +1033,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
-    if (!context || !context->sample)
+    if (!context || !context->sample || context->sample->method_index < 0)
         return;
     
 
@@ -1048,17 +1048,19 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     method_sample_t *target = NULL;
 
     /* Top of stack matches - quick case */
-    if (current->method_id == method)
+    if (current != NULL && current->method_id == method)
     {
         target = current;
         context->sample = current->parent; /* Pop from top of stack */
         context->stack_depth--;
     }
-    else
+    else if (current != NULL)
     {
         /* We need to search the stack for a matching method - this seems to be the common case */
         LOG_DEBUG("DEBUG: Method exit mismatch, searching for method [%p] in stack\n");
 
+        /* Debug output to help diagnose issues */
+        char *cmethod_name = NULL;
         /* Traverse stack to find target */
         while(current)
         {
@@ -1089,7 +1091,10 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
 
 
     LOG_DEBUG("DEBUG: Matching method found for methodID [%p]\n", method);
-    unsigned int flags = global_ctx->metrics->metric_flags[target->method_index];
+    unsigned int flags = 0; 
+    
+    if (target->method_index >= 0 && (size_t)target->method_index < global_ctx->metrics->count)
+        flags = global_ctx->metrics->metric_flags[target->method_index];
     
     /* Get metrics if they were enabled */
     uint64_t exec_time = 0;
@@ -1097,13 +1102,13 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     uint64_t cpu_delta = 0;
     
     /* Calculate execution time */
-    if (flags && METRIC_FLAG_TIME)
+    if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
     {
         uint64_t end_time = get_current_time_ns();
         exec_time = end_time - target->start_time;
     }
 
-    if (flags & METRIC_FLAG_MEMORY) {
+    if ((flags & METRIC_FLAG_MEMORY) != 0) {
         LOG_DEBUG("Debug: sampling memory for %d\n", target->method_index);
         /* Select the most specific memory metric available:
          * 1. Direct object allocations (most specific)
@@ -1131,9 +1136,13 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         }
     }
     
-    if (flags & METRIC_FLAG_CPU) {
+    if ((flags & METRIC_FLAG_CPU) != 0) {
         uint64_t end_cpu = get_current_cpu_cycles();
-        cpu_delta = end_cpu - target->start_cpu;
+
+        if (end_cpu > target->start_cpu)
+            cpu_delta = end_cpu - target->start_cpu;
+        else
+            LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu", (unsigned long long)end_cpu, (unsigned long long)target->start_cpu);
     }
     
     /* Record the metrics */
@@ -1380,21 +1389,31 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     // (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
     
     method_sample_t *sample = context->sample;
+    if (!sample) return;
 
+    /* Check if memory metrics are enabled for this method */
+    if (sample->method_index < 0 || 
+        (size_t)sample->method_index >= global_ctx->metrics->count || 
+        !(global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY))
+        return;
+
+    
     /* Add allocation to the current method being sampled */
     sample->current_alloc_bytes += size;
 
-    LOG_DEBUG("DEBUG Allocation: %lld bytes for method_index %d, total: %lld\n", 
-        (long long)size, sample->method_index, (long long)sample->current_alloc_bytes);
+    LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld", 
+         (long long)size, sample->method_index, (long long)sample->current_alloc_bytes);
     
     /* Optionally, get class name for detailed logging */
-    if (global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY) {
-        char* class_sig;
-        jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-        if (err == JVMTI_ERROR_NONE) {
-            LOG_DEBUG("DEBUG Allocated object of class: %s, size: %lld\n", 
-                class_sig, (long long)size);
-            (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+    if (current_log_level <= LOG_LEVEL_DEBUG) {
+        if ((global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY) != 0) {
+            char* class_sig;
+            jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+            if (err == JVMTI_ERROR_NONE) {
+                LOG_DEBUG("Allocated object of class: %s, size: %lld\n", 
+                    class_sig, (long long)size);
+                (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+            }
         }
     }
 }
