@@ -325,6 +325,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
 
     method_metrics_soa_t *metrics = ctx->metrics;
 
+    LOG_DEBUG("Recording metrics for index: %d", method_index);
     /* Check for valid index */
     if (method_index < 0 || (size_t)method_index >= metrics->count) 
     {
@@ -364,6 +365,7 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         metrics->cpu_cycles[method_index] += cycles;
     }
 
+    LOG_DEBUG("Method metrics recorded for index: %d", method_index);
     pthread_mutex_unlock(&ctx->samples_lock);
 }
 
@@ -970,26 +972,6 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         context->sample = sample;
         /* 3. Increase our stack depth */
         context->stack_depth++;
-
-        // context->sample.method_index = sample_index - 1;  /* Convert back to 0-based index */
-        // context->sample.method_id = method;
-        // context->sample.start_time = get_current_time_ns();
-        // LOG(global_ctx, "DEBUG method_entry_callback - Current sample_index: %d\n", context->sample.method_index);
-        
-        // /* Reset the allocation counter for this method execution */
-        // context->sample.current_alloc_bytes = 0;
-
-        // /* Only collect these metrics if enabled for this method */
-        // unsigned int flags = global_ctx->metrics->metric_flags[context->sample.method_index];
-        
-        // if (flags & METRIC_FLAG_MEMORY)
-        // {
-        //     context->sample.start_process_memory = get_process_memory(global_ctx);
-        //     // context->sample.start_thread_memory = get_thread_memory(jvmti, jni, thread);
-        // }
-        
-        // if (flags & METRIC_FLAG_CPU)
-        //     context->sample.start_cpu = get_current_cpu_cycles();
         
         LOG_INFO("[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
             class_signature, method_name, method_signature, method);
@@ -1066,17 +1048,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
 
 
     LOG_DEBUG("DEBUG: Matching method found for methodID [%p]\n", method);
-    // if (!sample)
-    //     goto cleanup;
-
-    // if (sample->method_index < 0)
-    //     goto cleanup;
-
-    // LOG(global_ctx, "[EXIT] Exiting method with jmethodID [%p]\n", method);
-
-    // if (sample->method_id != method)
-    //     goto cleanup;
-
     unsigned int flags = global_ctx->metrics->metric_flags[target->method_index];
     
     /* Get metrics if they were enabled */
@@ -1103,12 +1074,12 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         memory_delta = target->current_alloc_bytes;
 
         /* If no direct allocations check OS-level thread mem changes */
-        // if (memory_delta == 0 && sample->start_thread_memory > 0)
-        // {
-        //     uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
-        //     if (end_thread_memory > sample->start_thread_memory)
-        //         memory_delta = end_thread_memory - sample->start_thread_memory;
-        // }
+        if (memory_delta == 0 && target->start_thread_memory > 0)
+        {
+            uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
+            if (end_thread_memory > target->start_thread_memory)
+                memory_delta = end_thread_memory - target->start_thread_memory;
+        }
 
         /* If there's still no change, look for process wide memory changes */
         if (memory_delta == 0 && target->start_thread_memory > 0)
@@ -1124,6 +1095,9 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         cpu_delta = end_cpu - target->start_cpu;
     }
     
+    /* Record the metrics */
+    record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
+
     char *method_name = NULL;
     char *method_signature = NULL;
     char *class_signature = NULL;
@@ -1159,9 +1133,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         LOG_INFO("[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu bytes\n", 
             class_signature, method_name, method_signature, 
             (unsigned long long)exec_time, (unsigned long long)memory_delta);
-
-        /* Record the metrics */
-        record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
     }
 
 deallocate:
@@ -1869,6 +1840,10 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
             global_ctx->log_file = stdout;
         }
     }
+
+    /* Enable debug output */
+    if (options && strncmp(options, "debug", 5) == 0)
+        current_log_level = LOG_LEVEL_DEBUG;
 
     log_q_t *log_queue = malloc(sizeof(log_q_t));
 

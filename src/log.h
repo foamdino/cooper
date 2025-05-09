@@ -102,8 +102,4 @@ void *log_thread_func(void *arg);
 #define LOG_ERROR(fmt, ...) \
     log_message(LOG_LEVEL_ERROR, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
-/* Compatibility with the old LOG macro */
-#define LOG(fmt, ...) \
-    LOG_INFO(fmt, ##__VA_ARGS__)
-
 #endif /* LOG_H */

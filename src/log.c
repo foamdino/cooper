@@ -382,7 +382,7 @@ void log_message_internal(log_q_t *queue, arena_node_t *arena_head, log_level_e 
                     file ? file : "unknown", line);
                     
     /* Header too long, can't proceed */
-    if (header_len < 0 || header_len >= sizeof(buffer))
+    if (header_len < 0 || header_len >= (int)sizeof(buffer))
         return;
 
     /* Add the user message with variable arguments */
@@ -434,7 +434,7 @@ void log_message(log_level_e level, const char *file, int line, const char *fmt,
                               file ? file : "unknown", line);
       
     /* Header too long, can't proceed */
-    if (header_len < 0 || header_len >= sizeof(buffer))
+    if (header_len < 0 || header_len >= (int)sizeof(buffer))
         return;
     
     /* Add the user message with variable arguments */
