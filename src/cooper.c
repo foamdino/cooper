@@ -281,7 +281,7 @@ static uint64_t get_current_cpu_cycles() {
  * 
  * Return NULL if it fails to allocate space in the provided arena
  */
-static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
+static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id, jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 {
 
     assert(arena != NULL);
@@ -309,7 +309,7 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     if (flags & METRIC_FLAG_MEMORY)
     {
         sample->start_process_memory = get_process_memory();
-        sample->start_thread_memory = 0; /* TODO try and fix thread memory tracking later */
+        sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
         sample->current_alloc_bytes = 0;
     }
         
@@ -321,14 +321,17 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
 
 /* Record method execution metrics */
 void record_method_execution(agent_context_t *ctx, int method_index, 
-    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles) {
+    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t thread_memory_bytes, 
+    uint64_t process_memory_bytes, uint64_t cycles) {
 
     method_metrics_soa_t *metrics = ctx->metrics;
 
-    LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu", 
+    LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, bytes[thread]=%lu, bytes[process]=%lu, cycles=%lu\n", 
         method_index, 
         (unsigned long)exec_time_ns, 
         (unsigned long)memory_bytes, 
+        (unsigned long)thread_memory_bytes,
+        (unsigned long)process_memory_bytes,
         (unsigned long)cycles);
 
     /* Check for valid index */
@@ -362,6 +365,17 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         metrics->alloc_bytes[method_index] += memory_bytes;
         if (memory_bytes > metrics->peak_memory[method_index]) {
             metrics->peak_memory[method_index] = memory_bytes;
+        }
+
+        if (thread_memory_bytes > 0)
+        {
+            metrics->thread_memory[method_index] += thread_memory_bytes;
+        }
+            
+
+        if (process_memory_bytes > 0)
+        {
+            metrics->process_memory[method_index] += process_memory_bytes;
         }
     }
 
@@ -480,7 +494,7 @@ void export_to_file(agent_context_t *ctx)
     time(&now);
     
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
-    fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
+    fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, thread_memory, process_memory, cpu_cycles\n");
 
     /* Debug output to verify data being exported */
     LOG_DEBUG("Exporting %zu method metrics\n", ctx->metrics->count);
@@ -509,7 +523,7 @@ void export_to_file(agent_context_t *ctx)
                 (unsigned long)ctx->metrics->total_time_ns[i]);
 
             /* Print out the details */
-            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
                 ctx->metrics->signatures[i],
                 (unsigned long)ctx->metrics->call_counts[i],
                 (unsigned long)ctx->metrics->sample_counts[i],
@@ -519,6 +533,8 @@ void export_to_file(agent_context_t *ctx)
                 (unsigned long)ctx->metrics->max_time_ns[i],
                 (unsigned long)ctx->metrics->alloc_bytes[i],
                 (unsigned long)ctx->metrics->peak_memory[i],
+                (unsigned long)ctx->metrics->thread_memory[i],
+                (unsigned long)ctx->metrics->process_memory[i],
                 (unsigned long)ctx->metrics->cpu_cycles[i]);
         }
     }
@@ -789,7 +805,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         }
 
         /* Now create the actual sample with the correct data */
-        method_sample_t *sample = init_method_sample(arena, sample_index -1, method); /* Convert sample_index back to 0-based index */
+        method_sample_t *sample = init_method_sample(arena, sample_index -1, method, jvmti, jni, thread); /* Convert sample_index back to 0-based index */
         if (!sample)
         {
             LOG_ERROR("Failed to allocate method sample context!\n");
@@ -892,6 +908,8 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Get metrics if they were enabled */
     uint64_t exec_time = 0;
     uint64_t memory_delta = 0;
+    uint64_t thread_memory_delta = 0;
+    uint64_t process_memory_delta = 0;
     uint64_t cpu_delta = 0;
     
     /* Calculate execution time */
@@ -912,20 +930,20 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
          /* JVM heap allocations during method execution */
         memory_delta = target->current_alloc_bytes;
 
-        /* If no direct allocations check OS-level thread mem changes */
-        if (memory_delta == 0 && target->start_thread_memory > 0)
+        /* Thread memory delta based on OS */
+        if (target->start_thread_memory > 0)
         {
             uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
             if (end_thread_memory > target->start_thread_memory)
-                memory_delta = end_thread_memory - target->start_thread_memory;
+                thread_memory_delta = end_thread_memory - target->start_thread_memory;
         }
 
-        /* If there's still no change, look for process wide memory changes */
-        if (memory_delta == 0 && target->start_thread_memory > 0)
+        /* Process-wide memory delta based on OS */
+        if (target->start_process_memory > 0)
         {
             uint64_t end_process_memory = get_process_memory();
             if (end_process_memory > target->start_process_memory)
-                memory_delta = end_process_memory - target->start_process_memory;
+                process_memory_delta = end_process_memory - target->start_process_memory;
         }
     }
     
@@ -939,7 +957,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     }
     
     /* Record the metrics */
-    record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
+    record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, thread_memory_delta, process_memory_delta, cpu_delta);
 
     char *method_name = NULL;
     char *method_signature = NULL;
@@ -1272,7 +1290,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     if (ctx == NULL) 
         return 1;
     
-    LOG_INFO("INFO: loading config from: %s, default config_file: %s\n", cf, DEFAULT_CFG_FILE);
+    LOG_INFO("loading config from: %s, default config_file: %s\n", cf, DEFAULT_CFG_FILE);
     if (!cf) 
         cf = DEFAULT_CFG_FILE;
     
@@ -1443,6 +1461,8 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->thread_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->process_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
     
@@ -1450,6 +1470,7 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
         !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns ||
         !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory ||
+        !metrics->thread_memory || !metrics->process_memory ||
         !metrics->cpu_cycles || !metrics->metric_flags) {
         return NULL;
     }
@@ -1463,6 +1484,8 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     memset(metrics->max_time_ns, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->alloc_bytes, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->peak_memory, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->thread_memory, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->process_memory, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->cpu_cycles, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
     
