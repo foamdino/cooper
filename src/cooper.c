@@ -30,7 +30,7 @@ static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 {
     if (!ctx || !tc) return;
 
-    LOG_DEBUG("DEBUG: Method stack dump (depth=%d):\n", tc->stack_depth);
+    LOG_DEBUG("Method stack dump (depth=%d):\n", tc->stack_depth);
 
     method_sample_t *current = tc->sample;
     int level = 0;
@@ -437,237 +437,24 @@ static int safe_thread_join(pthread_t thread, int timeout)
     return ETIMEDOUT;
 }
 
-// int init_log_q(agent_context_t *ctx)
-// {
-//     assert(ctx != NULL);
-    
-//     ctx->log_queue.hd = 0;
-//     ctx->log_queue.tl = 0;
-//     ctx->log_queue.count = 0;
-//     ctx->log_queue.running = 1;
-
-//     int err;
-
-//     err = pthread_mutex_init(&ctx->log_queue.lock, NULL);
-//     if (err != 0)
-//     {
-//         printf("ERROR: Failed to init log q mutex: %d\n", err);
-//         return 1;
-//     }
-
-//     err = pthread_cond_init(&ctx->log_queue.cond, NULL);
-//     if (err != 0)
-//     {
-//         printf("ERROR: Failed to init log q condition: %d\n", err);
-//         return 1;
-//     }
-
-//     /* TODO: This is hardcoded to STDOUT for now*/
-//     ctx->log_file = stdout;
-//     return 0;
-// }
-
-// /**
-//  * Enqueue a msg to the log q
-//  * 
-//  * @param msg Pointer to msg to add
-//  * 
-//  */
-// void log_enq(agent_context_t *ctx, const char *msg)
-// {
-//     assert(ctx != NULL);
-//     assert(msg != NULL);
-    
-//     /* Obtain lock to q */
-//     pthread_mutex_lock(&ctx->log_queue.lock);
-
-//     arena_t *arena = find_arena(ctx->arena_head, "log_arena");
-
-//     if (ctx->log_queue.count < LOG_Q_SZ)
-//     {
-//         ctx->log_queue.messages[ctx->log_queue.hd] = arena_strdup(arena, msg);
-//         if (ctx->log_queue.messages[ctx->log_queue.hd])
-//         {
-//             ctx->log_queue.hd = (ctx->log_queue.hd + 1) % LOG_Q_SZ;
-//             ctx->log_queue.count++;
-//             pthread_cond_signal(&ctx->log_queue.cond);
-//         }
-//     }
-//     else /* Drop messages when q is full */
-//         fprintf(stderr, "WARNING: logging q full, dropping: %s\n", msg);
-
-//     pthread_mutex_unlock(&ctx->log_queue.lock);
-// }
-
-// /**
-//  * Deuque a message from the log q
-//  * 
-//  * @retval Pointer to a char message
-//  */
-// char *log_deq(agent_context_t *ctx)
-// {
-//     assert(ctx != NULL);
-
-//     char *msg = NULL;
-//     pthread_mutex_lock(&ctx->log_queue.lock);
-
-//     if (ctx->log_queue.count > 0)
-//     {
-//         msg = ctx->log_queue.messages[ctx->log_queue.tl];
-//         ctx->log_queue.messages[ctx->log_queue.tl] = NULL;
-//         ctx->log_queue.tl = (ctx->log_queue.tl + 1) % LOG_Q_SZ;
-//         ctx->log_queue.count--;
-//     }
-
-//     pthread_mutex_unlock(&ctx->log_queue.lock);
-//     return msg;
-// }
-
-// /**
-//  * Logger thread function that writes messages from the log queue
-//  * 
-//  * This function processes messages from the log queue and writes them
-//  * to the configured log file. With arena-based memory management,
-//  * we no longer need to free individual message strings.
-//  *
-//  * @param arg       Pointer to agent_context_t cast as void*
-//  * @return          NULL on thread completion
-//  */
-// void *log_thread_func(void *arg)
-// {
-//     assert(arg != NULL);
-
-//     agent_context_t *ctx = (agent_context_t *)arg;
-
-//     while (1)
-//     {
-//         pthread_mutex_lock(&ctx->log_queue.lock);
-
-//         /* Should we exit? */
-//         if (!ctx->log_queue.running && ctx->log_queue.count == 0)
-//         {
-//             pthread_mutex_unlock(&ctx->log_queue.lock);
-//             break;
-//         }
-
-//         /* Wait for messages when q is empty */
-//         while (ctx->log_queue.running && ctx->log_queue.count == 0)
-//             pthread_cond_wait(&ctx->log_queue.cond, &ctx->log_queue.lock);
-
-//         if (ctx->log_queue.count > 0)
-//         {
-//             char *msg = ctx->log_queue.messages[ctx->log_queue.tl];
-//             ctx->log_queue.messages[ctx->log_queue.tl] = NULL;
-//             ctx->log_queue.tl = (ctx->log_queue.tl + 1) % LOG_Q_SZ;
-//             ctx->log_queue.count--;
-//             pthread_mutex_unlock(&ctx->log_queue.lock);
-
-//             /* We assume that messages have a trailing new line here - we could check and add if missing */
-//             fprintf(ctx->log_file, "%s", msg);
-//             fflush(ctx->log_file);
-//         }
-//         else /* Nothing to do so release lock */
-//             pthread_mutex_unlock(&ctx->log_queue.lock);    
-//     }
-
-//     return NULL;
-// }
-
 int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t *ctx)
 {
     int err = 0;
     err = pthread_create(thread, NULL, fun, ctx);
     if (err != 0)
     {
-        printf("ERROR: Failed to start %s thread: %d\n", name, err);
+        printf("Failed to start %s thread: %d\n", name, err);
         return 1;
     }
 
     err = pthread_detach(*thread);
     if (err != 0)
     {
-        printf("ERROR: Failed to detach %s thread: %d\n", name, err);
+        printf("Failed to detach %s thread: %d\n", name, err);
         return 1;
     }
     return 0;
 }
-
-// void cleanup_log_system(agent_context_t *ctx)
-// {
-//     assert(ctx != NULL);
-    
-//     pthread_mutex_lock(&ctx->log_queue.lock);
-//     ctx->log_queue.running = 0;
-//     pthread_cond_broadcast(&ctx->log_queue.cond);
-//     pthread_mutex_unlock(&ctx->log_queue.lock);
-
-//     /* Create a joinable copy of the thread */
-//     pthread_t log_thread_copy = ctx->log_thread;
-    
-//     /* Make thread joinable */
-//     pthread_detach(ctx->log_thread);
-    
-//     /* Wait for thread to terminate */
-//     int join_result = safe_thread_join(log_thread_copy, 2);
-//     if (join_result != 0) 
-//     {
-//         /* If thread didn't terminate in time, proceed anyway */
-//         fprintf(stderr, "WARNING: Log thread did not terminate within timeout\n");
-//     }
-
-//     /* Purge remaining messages */
-//     char *msg;
-//     while ((msg = log_deq(ctx)) != NULL)
-//     {
-//         fprintf(ctx->log_file, "%s\n", msg);
-//     }
-
-//     if (ctx->log_file != stdout && ctx->log_file != stderr)
-//         fclose(ctx->log_file);
-
-//     pthread_cond_destroy(&ctx->log_queue.cond);
-//     pthread_mutex_destroy(&ctx->log_queue.lock);
-// }
-
-// void init_samples(agent_context_t *ctx)
-// {
-//     assert(ctx != NULL);
-    
-//     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
-//     {
-//         ctx->full_samples[i].signature = NULL;
-//         ctx->full_samples[i].entry_count = 0;
-//         ctx->full_samples[i].exit_count = 0;
-//     }
-//     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
-//     {
-//         ctx->nth_samples[i].signature = NULL;
-//         ctx->nth_samples[i].entry_count = 0;
-//         ctx->nth_samples[i].exit_count = 0;
-//     }
-// }
-
-// void cleanup_samples(agent_context_t *ctx)
-// {
-//     assert(ctx != NULL);
-    
-//     for (int i = 0; i < FULL_SAMPLE_SZ; i++)
-//     {
-//         ctx->full_samples[i].signature = NULL;
-//         ctx->full_samples[i].entry_count = 0;
-//         ctx->full_samples[i].exit_count = 0;
-//     }
-//     for (int i = 0; i < NTH_SAMPLE_SZ; i++)
-//     {
-        
-//         ctx->nth_samples[i].signature = NULL;
-//         ctx->nth_samples[i].entry_count = 0;
-//         ctx->nth_samples[i].exit_count = 0;
-        
-//     }
-//     ctx->full_hd = ctx->full_count = ctx->nth_hd = ctx->nth_count = 0;
-// }
-
 
 void export_to_file(agent_context_t *ctx)
 {
@@ -675,14 +462,14 @@ void export_to_file(agent_context_t *ctx)
     
     if (!ctx->config.sample_file_path)
     {
-        LOG_ERROR("ERROR: No sample file path configured\n");
+        LOG_ERROR("No sample file path configured\n");
         return;
     }
 
     FILE *fp = fopen(ctx->config.sample_file_path, "w");
     if (!fp) 
     {
-        LOG_ERROR("ERROR: Failed to open sample file: %s\n", ctx->config.sample_file_path);
+        LOG_ERROR("Failed to open sample file: %s\n", ctx->config.sample_file_path);
         return;
     }
 
@@ -962,39 +749,39 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG_ERROR("ERROR: GetMethodName failed with error %d\n", err);
+        LOG_ERROR("GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
     err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG_ERROR("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+        LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
 
     err = (*jvmti)->GetClassSignature(jvmti, declaring_class, &class_signature, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG_ERROR("ERROR: GetClassSignature failed with error %d\n", err);
+        LOG_ERROR("GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
 
     if (strstr(class_signature, "com/github"))
-        LOG_DEBUG("DEBUG should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
+        LOG_DEBUG("Should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
 
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
 
     if (sample_index > 0) {
         /* We're sampling this call */
-        LOG_DEBUG("DEBUG sampling : %s (%d)\n", method_name, sample_index);
+        LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
 
         /* Create a new sample on our method stack */
         arena_t *arena = find_arena(global_ctx->arena_head, "sample_arena");
         if (!arena)
         {
-            LOG_ERROR("ERROR: Could not find sample_arena!\n");
+            LOG_ERROR("Could not find sample_arena!\n");
             goto deallocate;
         }
 
@@ -1002,7 +789,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         method_sample_t *sample = init_method_sample(arena, sample_index -1, method); /* Convert sample_index back to 0-based index */
         if (!sample)
         {
-            LOG_ERROR("ERROR: Failed to allocate method sample context!\n");
+            LOG_ERROR("Failed to allocate method sample context!\n");
             goto deallocate;
         }
 
@@ -1057,10 +844,8 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     else if (current != NULL)
     {
         /* We need to search the stack for a matching method - this seems to be the common case */
-        LOG_DEBUG("DEBUG: Method exit mismatch, searching for method [%p] in stack\n");
+        LOG_DEBUG("Method exit mismatch, searching for method [%p] in stack\n");
 
-        /* Debug output to help diagnose issues */
-        char *cmethod_name = NULL;
         /* Traverse stack to find target */
         while(current)
         {
@@ -1085,12 +870,12 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Only process the exit if it matches the current method at the top of our stack of samples */
     if (!target)
     {
-        LOG_DEBUG("DEBUG: No matching method found for methodID [%p]\n", method);
+        LOG_DEBUG("No matching method found for methodID [%p]\n", method);
         return;
     }
 
 
-    LOG_DEBUG("DEBUG: Matching method found for methodID [%p]\n", method);
+    LOG_DEBUG("Matching method found for methodID [%p]\n", method);
     unsigned int flags = 0; 
     
     if (target->method_index >= 0 && (size_t)target->method_index < global_ctx->metrics->count)
@@ -1109,7 +894,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     }
 
     if ((flags & METRIC_FLAG_MEMORY) != 0) {
-        LOG_DEBUG("Debug: sampling memory for %d\n", target->method_index);
+        LOG_DEBUG("sampling memory for %d\n", target->method_index);
         /* Select the most specific memory metric available:
          * 1. Direct object allocations (most specific)
          * 2. Thread memory change
@@ -1160,7 +945,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
         if (err != JVMTI_ERROR_NONE) 
         {
-            LOG_ERROR("ERROR: GetMethodName failed with error %d\n", err);
+            LOG_ERROR("GetMethodName failed with error %d\n", err);
             return; /* Cannot do anything in this case */
         }
 
@@ -1168,7 +953,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
         if (err != JVMTI_ERROR_NONE) 
         {
-            LOG_ERROR("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+            LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
             goto deallocate;
         }
 
@@ -1176,7 +961,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         err = (*jvmti)->GetClassSignature(jvmti, declaringClass, &class_signature, NULL);
         if (err != JVMTI_ERROR_NONE)
         {
-            LOG_ERROR("ERROR: GetClassSignature failed with error %d\n", err);
+            LOG_ERROR(" GetClassSignature failed with error %d\n", err);
             goto deallocate;
         }
         
@@ -1215,7 +1000,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     
     if (err != JVMTI_ERROR_NONE)
     {
-        LOG_ERROR("ERROR: GetMethodName failed with error %d\n", err);
+        LOG_ERROR("GetMethodName failed with error %d\n", err);
         goto deallocate;
     }
 
@@ -1223,7 +1008,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     err = (*jvmti_env)->GetMethodDeclaringClass(jvmti_env, method, &method_class);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG_ERROR("ERROR: GetMethodDeclaringClass failed with error %d\n", err);
+        LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
         goto deallocate;
     }
     
@@ -1231,7 +1016,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     err = (*jvmti_env)->GetClassSignature(jvmti_env, method_class, &class_name, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
-        LOG_ERROR("ERROR: GetClassSignature failed with error %d\n", err);
+        LOG_ERROR("GetClassSignature failed with error %d\n", err);
         goto deallocate;
     }
         
@@ -1241,7 +1026,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     jstring exception_str = (*jni_env)->CallObjectMethod(jni_env, exception, toString_id);
     if ((*jni_env)->ExceptionCheck(jni_env)) 
     {
-        LOG_ERROR("ERROR: JNI exception occurred while getting exception string\n");
+        LOG_ERROR("JNI exception occurred while getting exception string\n");
         (*jni_env)->ExceptionClear(jni_env);
         goto deallocate;
     }
@@ -1259,7 +1044,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
     /* all other errors just bail */
     if (err != JVMTI_ERROR_NONE && err != JVMTI_ERROR_ABSENT_INFORMATION)
     {
-        LOG_ERROR("ERROR: Could not get local variable table %d\n", err);
+        LOG_WARN("Could not get local variable table %d\n", err);
         goto deallocate;
     }
 
@@ -1357,7 +1142,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
         if (err != JVMTI_ERROR_NONE)
         {
-            LOG_ERROR("ERROR: GetMethodName for catch_method failed with error %d\n", err);
+            LOG_ERROR("GetMethodName for catch_method failed with error %d\n", err);
             goto deallocate;
         }
         
@@ -1485,7 +1270,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     FILE *fp = fopen(cf, "r");
     if (!fp) 
     {
-        LOG_ERROR("ERROR: Could not open config file: %s\n", cf);
+        LOG_ERROR("Could not open config file: %s\n", cf);
         return 1;
     }
     
@@ -1515,7 +1300,7 @@ int load_config(agent_context_t *ctx, const char *cf)
         /* Based on the section we're in, interpret the value differently */
         if (strcmp(current_section, "[method_signatures]") == 0)
         {
-            LOG_DEBUG("DEBUG: Processing line in [method_signatures]: '%s'\n", processed);
+            LOG_DEBUG("Processing line in [method_signatures]: '%s'\n", processed);
             /* Skip over the filters line, end of filters is a line containing a single ']' */
             if (strncmp(processed, "filters =", 9) == 0 || processed[0] == ']')
                 continue;
@@ -1538,7 +1323,7 @@ int load_config(agent_context_t *ctx, const char *cf)
             /* Handle partially specified entries */
             if (parsed < 1) 
             {
-                LOG_ERROR("ERROR: Invalid method filter format: %s\n", processed);
+                LOG_ERROR("Invalid method filter format: %s\n", processed);
                 continue;
             }
             
@@ -1563,11 +1348,11 @@ int load_config(agent_context_t *ctx, const char *cf)
             /* Add to metrics SoA structure */
             int method_index = add_method_to_metrics(ctx, full_sig, sample_rate, metric_flags);
             if (method_index < 0) {
-                LOG_ERROR("ERROR: Failed to add method filter: %s\n", full_sig);
+                LOG_ERROR("Failed to add method filter: %s\n", full_sig);
                 continue;
             }
             
-            LOG_DEBUG("DEBUG: Added method filter #%d: '%s' with rate=%d\n", 
+            LOG_DEBUG("Added method filter #%d: '%s' with rate=%d\n", 
                 method_index, full_sig, sample_rate);
             
             /* Keep track of the number of filters */
@@ -1615,7 +1400,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     {
         ctx->config.export_method = arena_strdup(arena, "file");
         if (!ctx->config.export_method)
-            LOG_ERROR("ERROR: Failed to set default export_method\n");
+            LOG_ERROR("Failed to set default export_method\n");
     }
     
     LOG_INFO("Config loaded: default_rate=%d, filters=%d, path=%s, method=%s\n",
@@ -1691,7 +1476,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     method_metrics_soa_t *metrics = ctx->metrics;
 
     /* Add debug output to see what's being added */
-    LOG_DEBUG("DEBUG: Adding method to metrics: %s (rate=%d, flags=%u)\n", 
+    LOG_DEBUG("Adding method to metrics: %s (rate=%d, flags=%u)\n", 
         signature, sample_rate, flags);
 
     /* Check if method already exists */
@@ -1701,7 +1486,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
         /* Update existing entry */
         metrics->sample_rates[index] = sample_rate;
         metrics->metric_flags[index] = flags;
-        LOG_DEBUG("DEBUG: Updated existing method at index %d\n", index);
+        LOG_DEBUG("Updated existing method at index %d\n", index);
         return index;
     }
     
@@ -1709,7 +1494,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     if (metrics->count >= metrics->capacity) 
     {
         /* Cannot grow in the current implementation with arenas */
-        LOG_DEBUG("ERROR: Method metrics capacity reached (%zu)\n", metrics->capacity);
+        LOG_DEBUG("Method metrics capacity reached (%zu)\n", metrics->capacity);
         return -1;
     }
     
@@ -1717,7 +1502,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     arena_t *arena = find_arena(ctx->arena_head, "metrics_arena");
     if (!arena) 
     {
-        LOG_DEBUG("ERROR: Could not find metrics arena\n");
+        LOG_DEBUG("Could not find metrics arena\n");
         return -1;
     }
     index = metrics->count;
@@ -1734,7 +1519,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     metrics->metric_flags[index] = flags;
     
     metrics->count++;
-    LOG_DEBUG("DEBUG: Added new method at index %d, total methods: %zu\n", 
+    LOG_DEBUG("Added new method at index %d, total methods: %zu\n", 
         index, metrics->count);
     return index;
 }
@@ -1807,68 +1592,100 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     return 0;  /* Don't sample this call */
 }
 
-// static void init_mem_tracking(agent_context_t *ctx)
-// {
-//     //TODO - I don't like having the jvmti spread across multiple places, perhaps put all jvmti code in init_jvmti function?
+static int init_jvm_capabilities(agent_context_t *ctx)
+{
+    assert(ctx != NULL);
 
-//     /* Enable JVMTI capabilities */
-//     jvmtiCapabilities capabilities;
-//     memset(&capabilities, 0, sizeof(capabilities));
-//     capabilities.can_generate_vm_object_alloc_events = 1;
-//     capabilities.can_tag_objects = 1;
+    if (!ctx) return 1;
 
-//     jvmtiError err = (*ctx->jvmti_env)->AddCapabilities(ctx->jvmti_env, &capabilities);
-//     if (err != JVMTI_ERROR_NONE)
-//     {
-//         LOG(ctx, "WARNING: Could not enable memory tracking capabilities: %d\n", err);
-//         return;
-//     }
+    jvmtiCapabilities capabilities;
+    jvmtiEventCallbacks callbacks;
+    jvmtiError err;
 
-//     /* set up jvm callbacks */
-//     jvmtiEventCallbacks callbacks;
-//     memset(&callbacks, 0, sizeof(callbacks));
-//     callbacks.VMObjectAlloc = &object_alloc_callback;
-//     callbacks.ThreadEnd = &thread_end_callback;
+    /* Enable capabilities */
+    memset(&capabilities, 0, sizeof(capabilities));
+    capabilities.can_generate_method_entry_events = 1;
+    capabilities.can_generate_method_exit_events = 1;
+    capabilities.can_generate_exception_events = 1;
+    capabilities.can_access_local_variables = 1;
+    capabilities.can_get_source_file_name = 1;
+    capabilities.can_get_line_numbers = 1;
+    capabilities.can_generate_vm_object_alloc_events = 1;
+    capabilities.can_tag_objects = 1;
 
-//     err = (*ctx->jvmti_env)->SetEventCallbacks(ctx->jvmti_env, &callbacks, sizeof(callbacks));
-//     if (err != JVMTI_ERROR_NONE)
-//     {
-//         LOG(ctx, "WARNING: Could not set memory tracking callbacks: %d\n", err);
-//         return;
-//     }
+    err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("AddCapabilities failed with error %d\n", err);
+        return 1;
+    }
 
-//     /* enable events */
-//     err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
-//     if (err != JVMTI_ERROR_NONE)
-//     {
-//         LOG(ctx, "WARNING: Could not enable allocation events: %d\n", err);
-//         return;
-//     }
+    /* Set callbacks */
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.MethodEntry = &method_entry_callback;
+    callbacks.MethodExit = &method_exit_callback;
+    callbacks.Exception = &exception_callback;
+    callbacks.VMObjectAlloc = &object_alloc_callback;
+    callbacks.ThreadEnd = &thread_end_callback;
 
-//     err = (*ctx->jvmti_env)->SetEventNotificationMode(ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
-//     if (err != JVMTI_ERROR_NONE) 
-//     {
-//         LOG(ctx, "WARNING: Could not enable thread end events: %d\n", err);
-//         return;
-//     }
+    err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("SetEventCallbacks failed with error %d\n", err);
+        return 1;
+    }
 
-//     LOG(ctx, "Memory tracking initialized successfully\n");
-// }
+    /* Enable event notifications */
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
+        return 1;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
+        return 1;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
+        return 1;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION_CATCH, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
+        return 1;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG_ERROR("Could not enable allocation events: %d\n", err);
+        return 1;
+    }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("Could not enable thread end events: %d\n", err);
+        return 1;
+    }
+
+    return 0; /* Success */
+}
 
 /*
  * Entry point
  */
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 {
-    jvmtiCapabilities capabilities;
-    jvmtiEventCallbacks callbacks;
-    jvmtiError err;
-
     /* Allocate and initialize the agent context */
     global_ctx = malloc(sizeof(agent_context_t));
     if (!global_ctx) 
     {
-        printf("ERROR: Failed to allocate agent context\n");
+        printf("Failed to allocate agent context\n");
         return JNI_ERR;
     }
     memset(global_ctx, 0, sizeof(agent_context_t));
@@ -1894,7 +1711,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         global_ctx->log_file = fopen(options + 8, "w");
         if (!global_ctx->log_file)
         {
-            printf("ERROR: Failed to open log file: %s, reverting to stdout\n", options + 8);
+            printf("Failed to open log file: %s, reverting to stdout\n", options + 8);
             global_ctx->log_file = stdout;
         }
     }
@@ -1924,7 +1741,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         
         if (!arena) 
         {
-            printf("ERROR: Failed to create %s\n", arena_configs[i].name);
+            printf("Failed to create %s\n", arena_configs[i].name);
             return JNI_ERR;
         }
     }
@@ -1933,7 +1750,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     arena_t *log_arena = find_arena(global_ctx->arena_head, "log_arena");
     if (!log_arena) 
     {
-        printf("ERROR: Log arena not found\n");
+        printf("Log arena not found\n");
         return JNI_ERR;
     }
 
@@ -1944,25 +1761,18 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    // if (start_thread(&global_ctx->log_thread, &log_thread_func, "log", global_ctx) != 0)
-    // {
-    //     cleanup(global_ctx);
-    //     cleanup_log_system();
-    //     return JNI_ERR;
-    // }
-
     /* Initialize metrics after all arenas are created */
     arena_t *metrics_arena = find_arena(global_ctx->arena_head, "metrics_arena");
     if (!metrics_arena) 
     {
-        LOG_ERROR("ERROR: Metrics arena not found\n");
+        LOG_ERROR("Metrics arena not found\n");
         return JNI_ERR;
     }
 
     size_t initial_capacity = 256;
     global_ctx->metrics = init_method_metrics(metrics_arena, initial_capacity);
     if (!global_ctx->metrics) {
-        LOG_ERROR("ERROR: Failed to initialize metrics structure\n");
+        LOG_ERROR("Failed to initialize metrics structure\n");
         return JNI_ERR;
     }
 
@@ -1970,14 +1780,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
     if (result != JNI_OK || global_ctx->jvmti_env == NULL) 
     {
-        LOG_ERROR("ERROR: Unable to access JVMTI!\n");
+        LOG_ERROR("Unable to access JVMTI!\n");
         return JNI_ERR;
     }
 
     /* Now we have logging configured, load config */
     if (load_config(global_ctx, "./trace.ini") != 0)
     {
-        LOG_ERROR("ERROR: Unable to load config_file!\n");
+        LOG_ERROR("Unable to load config_file!\n");
         return JNI_ERR;
     }
 
@@ -1986,7 +1796,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     if (strcmp(global_ctx->config.export_method, "file") != 0)
     {
-        LOG_ERROR("ERROR: Unknown export method: [%s]", global_ctx->config.export_method);
+        LOG_ERROR("Unknown export method: [%s]", global_ctx->config.export_method);
         return JNI_ERR;
     }
 
@@ -2001,78 +1811,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    // init_samples(global_ctx);
-
-    /* Enable capabilities */
-    memset(&capabilities, 0, sizeof(capabilities));
-    capabilities.can_generate_method_entry_events = 1;
-    capabilities.can_generate_method_exit_events = 1;
-    capabilities.can_generate_exception_events = 1;
-    capabilities.can_access_local_variables = 1;
-    capabilities.can_get_source_file_name = 1;
-    capabilities.can_get_line_numbers = 1;
-    capabilities.can_generate_vm_object_alloc_events = 1;
-    capabilities.can_tag_objects = 1;
-
-    err = (*global_ctx->jvmti_env)->AddCapabilities(global_ctx->jvmti_env, &capabilities);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("ERROR: AddCapabilities failed with error %d\n", err);
+    if (init_jvm_capabilities(global_ctx) != 0)
         return JNI_ERR;
-    }
-
-    /* Set callbacks */
-    memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.MethodEntry = &method_entry_callback;
-    callbacks.MethodExit = &method_exit_callback;
-    callbacks.Exception = &exception_callback;
-    callbacks.VMObjectAlloc = &object_alloc_callback;
-    callbacks.ThreadEnd = &thread_end_callback;
-
-    err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("ERROR: SetEventCallbacks failed with error %d\n", err);
-        return JNI_ERR;
-    }
-
-    /* Enable event notifications */
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
-        return JNI_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("ERROR: SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
-        return JNI_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("ERROR: SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return JNI_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION_CATCH, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("ERROR: SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return JNI_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("WARNING: Could not enable allocation events: %d\n", err);
-        return JNI_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("WARNING: Could not enable thread end events: %d\n", err);
-        return JNI_ERR;
-    }
 
     LOG_INFO("JVMTI Agent Loaded.\n");
     return JNI_OK;
@@ -2121,10 +1861,6 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         safe_thread_join(export_thread_copy, 2);
 
         cleanup(global_ctx);
-        // cleanup_samples(global_ctx);
-        
-        // cleanup_event_system(global_ctx);
-
         /* Clean up thread-local storage */
         if (tls_initialized) 
         {
@@ -2148,7 +1884,7 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
             /* Note: Any other thread that was using TLS will have its destructor called
                when that thread exits. If the JVM creates a lot of threads that don't exit,
                there could still be leaks. This is a limitation of the pthreads API. */
-            LOG_WARN("WARNING: Thread-local storage cleanup may be incomplete for threads that don't exit\n");
+            LOG_WARN("Thread-local storage cleanup may be incomplete for threads that don't exit\n");
         }
 
         /* Finally shutdown logging */
