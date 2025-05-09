@@ -408,9 +408,6 @@ static void test_log_queue()
     /* Verify that the test worked */
     assert(message_count <= 2); /* Messages might have been processed already */
     
-    /* Close the temp file */
-    fclose(log_file);
-    
     /* Clean up the arenas */
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
