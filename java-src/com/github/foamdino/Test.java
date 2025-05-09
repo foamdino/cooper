@@ -28,6 +28,13 @@ public class Test {
         // Test recursive method calls
         test.recursiveTest(3);
         
+        // Wait for 20 seconds at the end
+        try {
+            Thread.sleep(20000);
+        } catch (InterruptedException e) {
+            // Ignore
+        }
+
         System.out.println("Test completed");
     }
 
