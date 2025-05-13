@@ -7,6 +7,7 @@
 #include "log.h"
 #include "arena.h"
 #include "arena_str.h"
+#include "cpu_cycles.h"
 
 log_q_t *log_queue = NULL;
 
@@ -729,6 +730,69 @@ static void test_record_method_execution()
     printf("[TEST] record_method_execution: All tests passed\n");
 }
 
+/* Test CPU cycle counting functionality */
+static void test_cpu_cycles()
+{
+    /* These functions are architecture specific */
+#if defined(__x86_64__) || defined(__aarch64__)
+    /* Test that cycles_start() returns a non-zero value */
+    uint64_t start = cycles_start();
+    assert(start > 0);
+    
+    /* Test that cycles_end() returns a non-zero value */
+    uint64_t end = cycles_end();
+    assert(end > 0);
+    
+    /* Test that cycles increase over time */
+    start = cycles_start();
+    
+    /* Do some work to consume CPU cycles */
+    volatile int sum = 0;
+    for (int i = 0; i < 10000; i++) {
+        sum += i;
+    }
+    
+    end = cycles_end();
+    
+    /* End should be greater than start */
+    assert(end > start);
+    
+    /* The difference should be reasonable (not too small, not too large) */
+    uint64_t diff = end - start;
+    assert(diff > 0);
+    
+    /* Do a longer computation and verify it takes more cycles */
+    start = cycles_start();
+    
+    sum = 0;
+    for (int i = 0; i < 100000; i++) {
+        sum += i;
+    }
+    
+    end = cycles_end();
+    uint64_t longer_diff = end - start;
+    
+    /* The longer computation should take more cycles than the shorter one */
+    assert(longer_diff > diff);
+    
+    /* Test that consecutive calls show monotonic increase */
+    uint64_t prev = cycles_start();
+    for (int i = 0; i < 5; i++) {
+        uint64_t curr = cycles_start();
+        assert(curr >= prev); /* Should be monotonically increasing */
+        prev = curr;
+    }
+    
+    printf("[TEST] test_cpu_cycles: All tests passed\n");
+#else
+    /* On unsupported architectures, these functions return 0 */
+    assert(cycles_start() == 0);
+    assert(cycles_end() == 0);
+    
+    printf("[TEST] test_cpu_cycles: CPU cycle counting not supported on this architecture\n");
+#endif
+}
+
 int main() 
 {
     printf("Running unit tests for cooper.c...\n");
@@ -742,6 +806,7 @@ int main()
     test_record_method_execution();
     test_arena();
     test_log_queue();
+    test_cpu_cycles();
     printf("All tests completed successfully!\n");
     return 0;
 }

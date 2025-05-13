@@ -11,7 +11,7 @@
 
 #ifdef __x86_64__
 /**
- * 
+ * Read the Time Stamp Counter at the start of a measurement period
  */
 static __inline__ uint64_t rdtsc_start(void)
 {
@@ -27,7 +27,7 @@ static __inline__ uint64_t rdtsc_start(void)
         "RDTSC\n\t" /*Read Time Stamp Counter instruction */
         "mov %%edx, %0\n\t" /* move the content of edx into the first output variable - cycle_high_bits */
         "mov %%eax, %1\n\t" /* move the content of eax into the second output variable - cycle_low_bits */
-        : "=r" (cycles_hig_bits), "=r" (cycles_low_bits) /* Output operands */
+        : "=r" (cycles_high_bits), "=r" (cycles_low_bits) /* Output operands */
         : /* no input operands */
         : "%rax", "%rbx", "%rcx", "%rdx"); /* List of 'clobbered' registers  (CPUID  modifies the 64bit version rax etc)*/
 
@@ -35,16 +35,30 @@ static __inline__ uint64_t rdtsc_start(void)
 }
 
 /**
- * 
+ * Read the Time Stamp Counter at the end of a measurement period
  */
 static __inline__ uint64_t rdtsc_end(void)
 {
-
+    unsigned cycles_high_bits;
+    unsigned cycles_low_bits;
+    /* Keep the code as is, do not optimise away etc */
+    __asm__ __volatile__ (
+        "RDTSCP\n\t" /* Read timestamp counter and processor ID */
+        "mov %%edx, %0\n\t"
+        "mov %%eax, %1\n\t"
+        "CPUID\n\t" /* Serialize to prevent reordering */
+        : "=r" (cycles_high_bits), "=r" (cycles_low_bits)
+        : /* no input operands */
+        : "%rax", "%rbx", "%rcx", "%rdx");
+        
+    return ((uint64_t)cycles_high_bits << 32) | cycles_low_bits;   
 }
 #endif
 
 #ifdef __aarch64__
-
+/**
+ * 
+ */
 static inline uint64_t read_cntvct(void)
 {
     uint64_t cnt;
@@ -52,10 +66,13 @@ static inline uint64_t read_cntvct(void)
     return cnt;
 }
 
+/**
+ * 
+ */
 static inline uint32_t read_cntfrq(void)
 {
     uint32_t frq;
-    asm volatile("mrs %0, cntfrq_el0" : "=r(frq)");
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(frq));
     return frq;
 }
 #endif
@@ -67,9 +84,10 @@ static __inline__ uint64_t cycles_start(void)
 {
 #ifdef __x86_64__
     return rdtsc_start();
-#endif
-#ifdef __aarch64__
+#elif defined(__aarch64__)
     return read_cntvct();
+#else
+    return 0;
 #endif
 }
 
@@ -80,9 +98,10 @@ static __inline__ uint64_t cycles_end(void)
 {
 #ifdef __x86_64__
     return rdtsc_end();
-#endif
-#ifdef __aarch64__
+#elif defined(__aarch64__)
     return read_cntvct();
+#else
+    return 0;
 #endif
 }
 
