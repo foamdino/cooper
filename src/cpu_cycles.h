@@ -57,7 +57,10 @@ static __inline__ uint64_t rdtsc_end(void)
 
 #ifdef __aarch64__
 /**
+ * Reads the current virtual count value from the system register CNTVCT_EL0.
+ * This value represents the number of ticks since an arbitrary point in time.
  * 
+ * @return uint64_t number of ticks
  */
 static inline uint64_t read_cntvct(void)
 {
@@ -67,7 +70,11 @@ static inline uint64_t read_cntvct(void)
 }
 
 /**
+ * Reads the frequency of the system counter from the CNTFRQ_EL0 register.
+ * This value indicates how many ticks occur per second, allowing conversion
+ * from ticks to time units (e.g., microseconds, milliseconds).
  * 
+ * @return uint32_t frequency of system counter
  */
 static inline uint32_t read_cntfrq(void)
 {
