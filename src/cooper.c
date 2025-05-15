@@ -8,7 +8,7 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
-#include "cpu_cycles.h"
+#include "cpu.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -301,8 +301,8 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     
     if (flags & METRIC_FLAG_MEMORY)
     {
-        sample->start_process_memory = get_process_memory();
-        sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
+        // sample->start_process_memory = get_process_memory();
+        // sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
         sample->current_alloc_bytes = 0;
     }
         
@@ -360,16 +360,16 @@ void record_method_execution(agent_context_t *ctx, int method_index,
             metrics->peak_memory[method_index] = memory_bytes;
         }
 
-        if (thread_memory_bytes > 0)
-        {
-            metrics->thread_memory[method_index] += thread_memory_bytes;
-        }
+        // if (thread_memory_bytes > 0)
+        // {
+        //     metrics->thread_memory[method_index] += thread_memory_bytes;
+        // }
             
 
-        if (process_memory_bytes > 0)
-        {
-            metrics->process_memory[method_index] += process_memory_bytes;
-        }
+        // if (process_memory_bytes > 0)
+        // {
+        //     metrics->process_memory[method_index] += process_memory_bytes;
+        // }
     }
 
     /* Update CPU metrics if enabled */
@@ -487,7 +487,7 @@ void export_to_file(agent_context_t *ctx)
     time(&now);
     
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
-    fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, thread_memory, process_memory, cpu_cycles\n");
+    fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
     /* Debug output to verify data being exported */
     LOG_DEBUG("Exporting %zu method metrics\n", ctx->metrics->count);
@@ -516,7 +516,7 @@ void export_to_file(agent_context_t *ctx)
                 (unsigned long)ctx->metrics->total_time_ns[i]);
 
             /* Print out the details */
-            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
                 ctx->metrics->signatures[i],
                 (unsigned long)ctx->metrics->call_counts[i],
                 (unsigned long)ctx->metrics->sample_counts[i],
@@ -526,8 +526,8 @@ void export_to_file(agent_context_t *ctx)
                 (unsigned long)ctx->metrics->max_time_ns[i],
                 (unsigned long)ctx->metrics->alloc_bytes[i],
                 (unsigned long)ctx->metrics->peak_memory[i],
-                (unsigned long)ctx->metrics->thread_memory[i],
-                (unsigned long)ctx->metrics->process_memory[i],
+                // (unsigned long)ctx->metrics->thread_memory[i],
+                // (unsigned long)ctx->metrics->process_memory[i],
                 (unsigned long)ctx->metrics->cpu_cycles[i]);
         }
     }
@@ -578,6 +578,31 @@ void *export_thread_func(void *arg)
     LOG_INFO("Export thread terminated\n");
     return NULL;
 }
+
+void *memory_sampling_thread_func(void *arg)
+{
+    agent_context_t *ctx = (agent_context_t *)arg;
+
+    while (ctx->memory_sampling_running)
+    {
+        pthread_mutex_lock(&ctx->app_memory_metrics->lock);
+        if (ctx->app_memory_metrics->sample_count < MAX_MEMORY_SAMPLES)
+        {
+            /* Sample process and thread memory periodically */
+            uint64_t process_mem = get_process_memory();
+            uint64_t timestamp = get_current_time_ns();
+            ctx->app_memory_metrics->process_memory_sample[ctx->app_memory_metrics->sample_count] = process_mem;
+            ctx->app_memory_metrics->timestamps[ctx->app_memory_metrics->sample_count] = timestamp;
+            ctx->app_memory_metrics->sample_count++;
+        }
+        pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
+
+        /* TODO handle live threads - use ctx->thread_mappings to determine threads */
+
+        sleep(ctx->config.mem_sample_interval);
+    }
+}
+
 /**
  * get a param value for a method
  * 
@@ -923,21 +948,21 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
          /* JVM heap allocations during method execution */
         memory_delta = target->current_alloc_bytes;
 
-        /* Thread memory delta based on OS */
-        if (target->start_thread_memory > 0)
-        {
-            uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
-            if (end_thread_memory > target->start_thread_memory)
-                thread_memory_delta = end_thread_memory - target->start_thread_memory;
-        }
+        // /* Thread memory delta based on OS */
+        // if (target->start_thread_memory > 0)
+        // {
+        //     uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
+        //     if (end_thread_memory > target->start_thread_memory)
+        //         thread_memory_delta = end_thread_memory - target->start_thread_memory;
+        // }
 
-        /* Process-wide memory delta based on OS */
-        if (target->start_process_memory > 0)
-        {
-            uint64_t end_process_memory = get_process_memory();
-            if (end_process_memory > target->start_process_memory)
-                process_memory_delta = end_process_memory - target->start_process_memory;
-        }
+        // /* Process-wide memory delta based on OS */
+        // if (target->start_process_memory > 0)
+        // {
+        //     uint64_t end_process_memory = get_process_memory();
+        //     if (end_process_memory > target->start_process_memory)
+        //         process_memory_delta = end_process_memory - target->start_process_memory;
+        // }
     }
     
     if ((flags & METRIC_FLAG_CPU) != 0) {
@@ -1454,8 +1479,8 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->thread_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->process_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    // metrics->thread_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    // metrics->process_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
     
@@ -1463,7 +1488,7 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
         !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns ||
         !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory ||
-        !metrics->thread_memory || !metrics->process_memory ||
+        // !metrics->thread_memory || !metrics->process_memory ||
         !metrics->cpu_cycles || !metrics->metric_flags) {
         return NULL;
     }
@@ -1477,8 +1502,8 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     memset(metrics->max_time_ns, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->alloc_bytes, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->peak_memory, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->thread_memory, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->process_memory, 0, initial_capacity * sizeof(uint64_t));
+    // memset(metrics->thread_memory, 0, initial_capacity * sizeof(uint64_t));
+    // memset(metrics->process_memory, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->cpu_cycles, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
     
@@ -1729,6 +1754,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.sample_file_path = NULL;
     global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
+    global_ctx->config.mem_sample_interval = 1;
     global_ctx->metrics = NULL;
     global_ctx->arena_head = NULL;
     global_ctx->arena_tail = NULL;

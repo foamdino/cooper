@@ -29,6 +29,7 @@
 #define MAX_STR_LEN 4096 /**< Max length of string we want to care about */
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
 #define MAX_THREAD_MAPPINGS 1024
+#define MAX_MEMORY_SAMPLES 100 /**< The max number of memory samples to keep */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define EXCEPTION_ARENA_SZ 1024 * 1024
@@ -56,6 +57,8 @@ typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
+typedef struct app_memory_metrics app_memory_metrics_t;
+typedef struct thread_memory_metrics thread_memory_metrics_t;
 typedef struct agent_context agent_context_t;
 typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
@@ -88,14 +91,31 @@ struct method_metrics_soa {
     /* Memory metrics */
     uint64_t *alloc_bytes;    /**< Total bytes allocated */
     uint64_t *peak_memory;    /**< Peak memory usage */
-    uint64_t *thread_memory;  /**< Thread memory usage in bytes */
-    uint64_t *process_memory; /**< Process memory usage in bytes */
+    // uint64_t *thread_memory;  /**< Thread memory usage in bytes */
+    // uint64_t *process_memory; /**< Process memory usage in bytes */
     
     /* CPU metrics */
     uint64_t *cpu_cycles;     /**< CPU cycles used */
     
     /* Flags for which metrics are collected for each method */
     unsigned int *metric_flags;
+};
+
+struct app_memory_metrics
+{
+    uint64_t process_memory_sample[MAX_MEMORY_SAMPLES];
+    uint64_t timestamps[MAX_MEMORY_SAMPLES];
+    size_t sample_count;
+    pthread_mutex_t lock;
+};
+
+struct thread_memory_metrics
+{
+    jlong thread_id;
+    uint64_t memory_samples[MAX_MEMORY_SAMPLES];
+    uint64_t timestamps[MAX_MEMORY_SAMPLES];
+    size_t sample_count;
+    thread_memory_metrics_t *next;
 };
 
 /**
@@ -133,8 +153,8 @@ struct method_sample
     int method_index;       /**< Index in the metrics arrays, -1 if not sampling */
     jmethodID method_id; /**< ID of method assigned by jvm */
     uint64_t start_time;    /**< Starting timestamp in nanoseconds */
-    uint64_t start_process_memory;  /**< Starting memory usage in bytes */
-    uint64_t start_thread_memory; /**< Starting thread specific memory */
+    // uint64_t start_process_memory;  /**< Starting memory usage in bytes */
+    // uint64_t start_thread_memory; /**< Starting thread specific memory */
     uint64_t start_stack_depth; /**< Starting stack depth */
     uint64_t current_alloc_bytes; /**< Running total of allocations during method */
     uint64_t start_cpu;     /**< Starting CPU cycle count */
@@ -168,42 +188,27 @@ struct config
     int num_filters;
     char *sample_file_path;
     char *export_method; /**< only support file for now */
+    int mem_sample_interval; /**< Interval between taking mem samples */
     int export_interval; /**< export to file every 60 seconds */
 };
-
-// struct log_q
-// {
-//     char *messages[LOG_Q_SZ];
-//     int hd;
-//     int tl;
-//     int count;
-//     pthread_mutex_t lock;
-//     pthread_cond_t cond;
-//     int running;
-// };
 
 struct agent_context
 {
     int event_counter;              /**< Counter for nth samples */
-    // method_stats_t full_samples[FULL_SAMPLE_SZ]; /**< Full event samples */
-    // int full_hd;                    /**< Head index for full samples */
-    // int full_count;                 /**< Number of full samples */
-    // method_stats_t nth_samples[NTH_SAMPLE_SZ];   /**< Nth event samples */
-    // int nth_hd;                     /**< Head index for nth samples */
-    // int nth_count;                  /**< Number of nth samples */
     jvmtiEnv *jvmti_env;            /**< JVMTI environment */
     char **method_filters;          /**< Method filter list */
     int num_filters;                /**< Number of filters */
-    // log_q_t log_queue;              /**< Logging queue */
     FILE *log_file;                 /**< Log output file */
     pthread_t log_thread;           /**< Logging thread */
     pthread_t export_thread;        /**< Export thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     int export_running;             /**< Flag to signal if export thread should continue */
+    int memory_sampling_running;    /**< Flag to signal if memory sampling thread should continue */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
+    app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
 };
 
@@ -224,10 +229,6 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
 int find_method_index(method_metrics_soa_t *metrics, const char *signature);
 void record_method_execution(agent_context_t *ctx, int method_index, uint64_t exec_time_ns, uint64_t memory_bytes, 
     uint64_t thread_memory_bytes, uint64_t process_memory_bytes, uint64_t cycles);
-
-/* Sample management functions */
-void init_samples(agent_context_t *ctx);
-void cleanup_samples(agent_context_t *ctx);
 
 /* Export functions */
 void export_to_file(agent_context_t *ctx);
