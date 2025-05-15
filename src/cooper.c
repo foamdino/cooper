@@ -483,6 +483,24 @@ void export_to_file(agent_context_t *ctx)
     time_t now;
     time(&now);
     
+    /* Export application memory samples */
+    fprintf(fp, "# Application Memory Metrics\n");
+    fprintf(fp, "# Format: timestamp, process_memory_bytes\n");
+
+    /* Lock app memory metrics for thread-safe access */
+    pthread_mutex_lock(&ctx->app_memory_metrics->lock);
+
+    /* Export memory samples in chronological order */
+    for (size_t i = 0; i < ctx->app_memory_metrics->sample_count; i++) 
+    {
+        fprintf(fp, "%llu,%llu\n", 
+            (unsigned long long)ctx->app_memory_metrics->timestamps[i],
+            (unsigned long long)ctx->app_memory_metrics->process_memory_sample[i]);
+    }
+
+    pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
+    fprintf(fp, "# ------ \n\n");
+
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
     fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
@@ -576,28 +594,58 @@ void *export_thread_func(void *arg)
     return NULL;
 }
 
-void *memory_sampling_thread_func(void *arg)
+void *mem_sampling_thread_func(void *arg)
 {
+    assert(arg != NULL);
+
     agent_context_t *ctx = (agent_context_t *)arg;
 
-    while (ctx->memory_sampling_running)
+    LOG_INFO("Memory sampling thread started, interval=%d seconds\n", ctx->config.mem_sample_interval);
+
+    while (ctx->mem_sampling_running)
     {
-        pthread_mutex_lock(&ctx->app_memory_metrics->lock);
-        if (ctx->app_memory_metrics->sample_count < MAX_MEMORY_SAMPLES)
-        {
-            /* Sample process and thread memory periodically */
-            uint64_t process_mem = get_process_memory();
-            uint64_t timestamp = get_current_time_ns();
-            ctx->app_memory_metrics->process_memory_sample[ctx->app_memory_metrics->sample_count] = process_mem;
-            ctx->app_memory_metrics->timestamps[ctx->app_memory_metrics->sample_count] = timestamp;
-            ctx->app_memory_metrics->sample_count++;
+        /* Get current timestamp for this sample */
+        uint64_t timestamp = get_current_time_ns();
+        
+        /* Sample process memory */
+        uint64_t process_mem = get_process_memory();
+        if (process_mem > 0) {
+            pthread_mutex_lock(&ctx->app_memory_metrics->lock);
+            
+            /* Use circular buffer pattern if we reach maximum samples */
+            size_t idx = ctx->app_memory_metrics->sample_count % MAX_MEMORY_SAMPLES;
+            ctx->app_memory_metrics->process_memory_sample[idx] = process_mem;
+            ctx->app_memory_metrics->timestamps[idx] = timestamp;
+            
+            if (ctx->app_memory_metrics->sample_count < MAX_MEMORY_SAMPLES)
+                ctx->app_memory_metrics->sample_count++;
+                
+            pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
+            
+            LOG_DEBUG("Memory sample #%zu: %llu bytes at %llu ns", 
+                ctx->app_memory_metrics->sample_count,
+                (unsigned long long)process_mem,
+                (unsigned long long)timestamp);
         }
-        pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
-
-        /* TODO handle live threads - use ctx->thread_mappings to determine threads */
-
+        
+        /* Sample thread memory for active Java threads */
+        pthread_mutex_lock(&ctx->samples_lock);
+        for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) {
+            if (ctx->thread_mappings[i].java_thread_id != 0) {
+                /* We have a valid thread mapping - get its memory usage */
+                /* This would need JNI and JVMTI environments to call get_thread_memory */
+                /* For simplicity, we're not implementing per-thread sampling here as it 
+                   would require obtaining JNI and JVMTI handles which is complex from
+                   a background thread */
+            }
+        }
+        pthread_mutex_unlock(&ctx->samples_lock);
+        
+        /* Sleep for the configured interval */
         sleep(ctx->config.mem_sample_interval);
     }
+
+    return NULL;
 }
 
 /**
@@ -1828,6 +1876,15 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
+    global_ctx->app_memory_metrics = arena_alloc(metrics_arena, sizeof(app_memory_metrics_t));
+    if (!global_ctx->app_memory_metrics)
+    {
+        LOG_ERROR("Failed to allocate memory for app_memory_metrics\n");
+        return JNI_ERR;
+    }
+    memset(global_ctx->app_memory_metrics, 0, sizeof(app_memory_metrics_t));
+    pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
+    
     /* Get JVMTI environment */
     jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
     if (result != JNI_OK || global_ctx->jvmti_env == NULL) 
@@ -1860,6 +1917,15 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     {
         cleanup(global_ctx);
         cleanup_log_system();
+        return JNI_ERR;
+    }
+
+    /* Init the memory sampling */
+    global_ctx->mem_sampling_running = 1;
+    if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
+    {
+        LOG_ERROR("Failed to start memory sampling thread\n");
+        cleanup(global_ctx);
         return JNI_ERR;
     }
 
@@ -1937,6 +2003,13 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
                when that thread exits. If the JVM creates a lot of threads that don't exit,
                there could still be leaks. This is a limitation of the pthreads API. */
             LOG_WARN("Thread-local storage cleanup may be incomplete for threads that don't exit\n");
+        }
+
+        if (global_ctx->app_memory_metrics)
+        {
+            pthread_mutex_destroy(&global_ctx->app_memory_metrics->lock);
+            global_ctx->app_memory_metrics = NULL;
+            /* when the arena is destroyed, this memory will be reclaimed */
         }
 
         /* Finally shutdown logging */

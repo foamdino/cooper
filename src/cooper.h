@@ -91,8 +91,6 @@ struct method_metrics_soa {
     /* Memory metrics */
     uint64_t *alloc_bytes;    /**< Total bytes allocated */
     uint64_t *peak_memory;    /**< Peak memory usage */
-    // uint64_t *thread_memory;  /**< Thread memory usage in bytes */
-    // uint64_t *process_memory; /**< Process memory usage in bytes */
     
     /* CPU metrics */
     uint64_t *cpu_cycles;     /**< CPU cycles used */
@@ -153,8 +151,6 @@ struct method_sample
     int method_index;       /**< Index in the metrics arrays, -1 if not sampling */
     jmethodID method_id; /**< ID of method assigned by jvm */
     uint64_t start_time;    /**< Starting timestamp in nanoseconds */
-    // uint64_t start_process_memory;  /**< Starting memory usage in bytes */
-    // uint64_t start_thread_memory; /**< Starting thread specific memory */
     uint64_t start_stack_depth; /**< Starting stack depth */
     uint64_t current_alloc_bytes; /**< Running total of allocations during method */
     uint64_t start_cpu;     /**< Starting CPU cycle count */
@@ -201,9 +197,10 @@ struct agent_context
     FILE *log_file;                 /**< Log output file */
     pthread_t log_thread;           /**< Logging thread */
     pthread_t export_thread;        /**< Export thread */
+    pthread_t mem_sampling_thread;  /**< Mem sampling background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     int export_running;             /**< Flag to signal if export thread should continue */
-    int memory_sampling_running;    /**< Flag to signal if memory sampling thread should continue */
+    int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
