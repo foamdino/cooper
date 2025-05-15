@@ -227,8 +227,7 @@ int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
 int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags);
 int find_method_index(method_metrics_soa_t *metrics, const char *signature);
-void record_method_execution(agent_context_t *ctx, int method_index, uint64_t exec_time_ns, uint64_t memory_bytes, 
-    uint64_t thread_memory_bytes, uint64_t process_memory_bytes, uint64_t cycles);
+void record_method_execution(agent_context_t *ctx, int method_index, uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles);
 
 /* Export functions */
 void export_to_file(agent_context_t *ctx);

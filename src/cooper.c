@@ -314,17 +314,14 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
 
 /* Record method execution metrics */
 void record_method_execution(agent_context_t *ctx, int method_index, 
-    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t thread_memory_bytes, 
-    uint64_t process_memory_bytes, uint64_t cycles) {
+    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles) {
 
     method_metrics_soa_t *metrics = ctx->metrics;
 
-    LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, bytes[thread]=%lu, bytes[process]=%lu, cycles=%lu\n", 
+    LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu\n", 
         method_index, 
         (unsigned long)exec_time_ns, 
-        (unsigned long)memory_bytes, 
-        (unsigned long)thread_memory_bytes,
-        (unsigned long)process_memory_bytes,
+        (unsigned long)memory_bytes,
         (unsigned long)cycles);
 
     /* Check for valid index */
@@ -926,8 +923,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Get metrics if they were enabled */
     uint64_t exec_time = 0;
     uint64_t memory_delta = 0;
-    uint64_t thread_memory_delta = 0;
-    uint64_t process_memory_delta = 0;
     uint64_t cpu_delta = 0;
     
     /* Calculate execution time */
@@ -975,7 +970,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     }
     
     /* Record the metrics */
-    record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, thread_memory_delta, process_memory_delta, cpu_delta);
+    record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
 
     char *method_name = NULL;
     char *method_signature = NULL;

@@ -649,7 +649,7 @@ static void test_record_method_execution()
     int idx4 = add_method_to_metrics(ctx, "Method4", 1, METRIC_FLAG_CPU);
     
     /* Record execution for method with all metrics */
-    record_method_execution(ctx, idx1, 1000, 512, 1024, 2048, 2000);
+    record_method_execution(ctx, idx1, 1000, 512, 2000);
     assert(ctx->metrics->sample_counts[idx1] == 1);
     assert(ctx->metrics->total_time_ns[idx1] == 1000);
     assert(ctx->metrics->min_time_ns[idx1] == 1000);
@@ -659,7 +659,7 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx1] == 2000);
     
     /* Record another execution with different values */
-    record_method_execution(ctx, idx1, 2000, 256, 1000, 2000, 1500);
+    record_method_execution(ctx, idx1, 2000, 256, 1500);
     assert(ctx->metrics->sample_counts[idx1] == 2);
     assert(ctx->metrics->total_time_ns[idx1] == 3000); /* 1000 + 2000 */
     assert(ctx->metrics->min_time_ns[idx1] == 1000);   /* Min remains 1000 */
@@ -669,7 +669,7 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx1] == 3500);    /* 2000 + 1500 */
     
     /* Record with a lower execution time to test min update */
-    record_method_execution(ctx, idx1, 500, 1024, 1000, 2000, 3000);
+    record_method_execution(ctx, idx1, 500, 1024, 3000);
     assert(ctx->metrics->sample_counts[idx1] == 3);
     assert(ctx->metrics->total_time_ns[idx1] == 3500); /* 3000 + 500 */
     assert(ctx->metrics->min_time_ns[idx1] == 500);    /* Min updated to 500 */
@@ -679,7 +679,7 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx1] == 6500);    /* 3500 + 3000 */
     
     /* Test method with only time metrics */
-    record_method_execution(ctx, idx2, 1500, 256, 1024, 2048, 2000);
+    record_method_execution(ctx, idx2, 1500, 256, 2000);
     assert(ctx->metrics->sample_counts[idx2] == 1);
     assert(ctx->metrics->total_time_ns[idx2] == 1500);
     assert(ctx->metrics->min_time_ns[idx2] == 1500);
@@ -689,7 +689,7 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx2] == 0);       /* CPU not tracked */
     
     /* Test method with only memory metrics */
-    record_method_execution(ctx, idx3, 1500, 256, 1024, 2048, 2000);
+    record_method_execution(ctx, idx3, 1500, 256, 2000);
     assert(ctx->metrics->sample_counts[idx3] == 1);
     assert(ctx->metrics->total_time_ns[idx3] == 0);    /* Time not tracked */
     assert(ctx->metrics->min_time_ns[idx3] == UINT64_MAX); /* Default value for min */
@@ -699,7 +699,7 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx3] == 0);       /* CPU not tracked */
     
     /* Test method with only CPU metrics */
-    record_method_execution(ctx, idx4, 1500, 256,1024, 2048, 2000);
+    record_method_execution(ctx, idx4, 1500, 256, 2000);
     assert(ctx->metrics->sample_counts[idx4] == 1);
     assert(ctx->metrics->total_time_ns[idx4] == 0);    /* Time not tracked */
     assert(ctx->metrics->min_time_ns[idx4] == UINT64_MAX); /* Default value for min */
@@ -709,8 +709,8 @@ static void test_record_method_execution()
     assert(ctx->metrics->cpu_cycles[idx4] == 2000);
     
     /* Test invalid method index - should not crash */
-    record_method_execution(ctx, 999, 1000, 512, 1024, 2048, 2000);
-    record_method_execution(ctx, -1, 1000, 512, 1024, 2048, 2000);
+    record_method_execution(ctx, 999, 1000, 512, 2000);
+    record_method_execution(ctx, -1, 1000, 512, 2000);
     
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
