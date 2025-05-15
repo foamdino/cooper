@@ -8,6 +8,7 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
+#include "cpu_cycles.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -261,15 +262,11 @@ static uint64_t get_thread_memory(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
 }
 
 /* Get current time in nanoseconds */
-static uint64_t get_current_time_ns() {
+static uint64_t get_current_time_ns() 
+{
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-static uint64_t get_current_cpu_cycles() {
-    /* In a real implementation, this would use CPU performance counters */
-    return 0;
 }
 
 /**
@@ -310,7 +307,7 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     }
         
     if (flags & METRIC_FLAG_CPU)
-        sample->start_cpu = get_current_cpu_cycles();
+        sample->start_cpu = cycles_start();
     
     return sample;
 }
@@ -944,7 +941,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     }
     
     if ((flags & METRIC_FLAG_CPU) != 0) {
-        uint64_t end_cpu = get_current_cpu_cycles();
+        uint64_t end_cpu = cycles_end();
 
         if (end_cpu > target->start_cpu)
             cpu_delta = end_cpu - target->start_cpu;
