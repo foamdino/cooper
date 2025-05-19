@@ -193,6 +193,8 @@ struct agent_context
     int event_counter;              /**< Counter for nth samples */
     jvmtiEnv *jvmti_env;            /**< JVMTI environment */
     JavaVM *jvm;                    /**< JVM itself */
+    jclass java_thread_class;       /**< Global reference for java.lang.Thread class */
+    jmethodID getId_method;         /**< Cached Thread.getId() method ID */
     char **method_filters;          /**< Method filter list */
     int num_filters;                /**< Number of filters */
     FILE *log_file;                 /**< Log output file */
