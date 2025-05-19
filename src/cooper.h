@@ -160,7 +160,7 @@ struct method_sample
 struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
-    method_sample_t *sample; /**< Current top of metod sample stack - most recent call */
+    method_sample_t *sample; /**< Current top of method sample stack - most recent call */
 };
 
 struct thread_alloc
@@ -192,6 +192,7 @@ struct agent_context
 {
     int event_counter;              /**< Counter for nth samples */
     jvmtiEnv *jvmti_env;            /**< JVMTI environment */
+    JavaVM *jvm;                    /**< JVM itself */
     char **method_filters;          /**< Method filter list */
     int num_filters;                /**< Number of filters */
     FILE *log_file;                 /**< Log output file */
@@ -206,6 +207,7 @@ struct agent_context
     arena_node_t *arena_tail;       /**< Last arena in the list */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
     app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
+    thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
 };
 

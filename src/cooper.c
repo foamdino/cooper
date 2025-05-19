@@ -501,6 +501,37 @@ void export_to_file(agent_context_t *ctx)
     pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
     fprintf(fp, "# ------ \n\n");
 
+    /* Export thread memory metrics next */
+    fprintf(fp, "# Thread Memory Metrics\n");
+    fprintf(fp, "# Format: thread_id, timestamp, thread_memory_bytes\n");
+
+    /* Find the head of the thread metrics linked list (should be stored in global context) */
+    thread_memory_metrics_t *thread_metrics = ctx->thread_mem_head;
+
+    /* Iterate through the thread metrics linked list */
+    while (thread_metrics) 
+    {
+        fprintf(fp, "# Thread ID: %lld\n", (long long)thread_metrics->thread_id);
+        
+        for (size_t i = 0; i < thread_metrics->sample_count; i++) 
+        {
+            size_t idx = i;
+            if (thread_metrics->sample_count >= MAX_MEMORY_SAMPLES) {
+                /* Oldest samples first when using circular buffer */
+                idx = (i + thread_metrics->sample_count) % MAX_MEMORY_SAMPLES;
+            }
+            
+            fprintf(fp, "%lld,%llu,%llu\n", 
+                (long long)thread_metrics->thread_id,
+                (unsigned long long)thread_metrics->timestamps[idx],
+                (unsigned long long)thread_metrics->memory_samples[idx]);
+        }
+        
+        thread_metrics = thread_metrics->next;
+    }
+
+    fprintf(fp, "# ------ \n\n");
+
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
     fprintf(fp, "# Format: signature, call_count, sample_count, total_time_ns, avg_time_ns, min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
@@ -594,13 +625,230 @@ void *export_thread_func(void *arg)
     return NULL;
 }
 
+/**
+ *
+ */
+static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, thread_memory_metrics_t *thread_metrics_head, uint64_t timestamp)
+{
+    if (!jni || !ctx) return;
+    
+    jclass threadClass = NULL;
+    jobject threadsMap = NULL;
+    jobject entrySet = NULL;
+    jobjectArray entries = NULL;
+    jclass mapClass = NULL;
+    jclass setClass = NULL;
+
+    /* Find the Thread class */
+    threadClass = (*jni)->FindClass(jni, "java/lang/Thread");
+    if (!threadClass) 
+    {
+        LOG_ERROR("Failed to find Thread class\n");
+        goto cleanup;
+    }
+
+    /* Get the getAllStackTraces method */
+    jmethodID getAllThreadsMethod = (*jni)->GetStaticMethodID(jni, threadClass, 
+        "getAllStackTraces", "()Ljava/util/Map;");
+    if (!getAllThreadsMethod) 
+    {
+        LOG_ERROR("Failed to find getAllStackTraces method\n");
+        goto cleanup;
+    }
+    
+    /* Call getAllStackTraces to get all threads */
+    threadsMap = (*jni)->CallStaticObjectMethod(jni, threadClass, getAllThreadsMethod);
+    if (!threadsMap) 
+    {
+        LOG_ERROR("Failed to get threads map\n");
+        goto cleanup;
+    }
+
+    /* Get the entry set from the map */
+    mapClass = (*jni)->GetObjectClass(jni, threadsMap);
+    if (!mapClass) 
+    {
+        LOG_ERROR("Failed to get Map class\n");
+        goto cleanup;
+    }
+    
+    jmethodID entrySetMethod = (*jni)->GetMethodID(jni, mapClass, "entrySet", "()Ljava/util/Set;");
+    if (!entrySetMethod) 
+    {
+        LOG_ERROR("Failed to find entrySet method\n");
+        goto cleanup;
+    }
+    
+    entrySet = (*jni)->CallObjectMethod(jni, threadsMap, entrySetMethod);
+    if (!entrySet) 
+    {
+        LOG_ERROR("Failed to get entry set\n");
+        goto cleanup;
+    }
+    
+    /* Get the toArray method from Set */
+    setClass = (*jni)->GetObjectClass(jni, entrySet);
+    if (!setClass) 
+    {
+        LOG_ERROR("Failed to get Set class\n");
+        goto cleanup;
+    }
+
+    jmethodID toArrayMethod = (*jni)->GetMethodID(jni, setClass, "toArray", "()[Ljava/lang/Object;");
+    if (!toArrayMethod) 
+    {
+        LOG_ERROR("Failed to find toArray method\n");
+        goto cleanup;
+    }
+    
+    entries = (jobjectArray)(*jni)->CallObjectMethod(jni, entrySet, toArrayMethod);
+    if (!entries) 
+    {
+        LOG_ERROR("Failed to get entries array\n");
+        goto cleanup;
+    }
+
+    /* Lock the thread mappings while we work with them */
+    pthread_mutex_lock(&ctx->samples_lock);
+
+    /* Iterate through thread mappings */
+    for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) 
+    {
+        if (ctx->thread_mappings[i].java_thread_id == 0)
+            continue; /* Skip empty mappings */
+        
+        /* Find or create thread metrics structure */
+        thread_memory_metrics_t *thread_metrics = thread_metrics_head;
+        jlong thread_id = ctx->thread_mappings[i].java_thread_id;
+
+        /* Look for existing metrics for this thread */
+        while (thread_metrics && thread_metrics->thread_id != thread_id) 
+        {
+            thread_metrics = thread_metrics->next;
+        }
+
+        /* If not found, create a new one */
+        if (!thread_metrics) 
+        {
+            arena_t *metrics_arena = find_arena(ctx->arena_head, "metrics_arena");
+            if (!metrics_arena) 
+            {
+                LOG_ERROR("Failed to find metrics arena\n");
+                continue;
+            }
+            
+            thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
+            if (!thread_metrics) 
+            {
+                LOG_ERROR("Failed to allocate thread metrics\n");
+                continue;
+            }
+            
+            memset(thread_metrics, 0, sizeof(thread_memory_metrics_t));
+            thread_metrics->thread_id = thread_id;
+            thread_metrics->next = ctx->thread_mem_head;
+            ctx->thread_mem_head = thread_metrics;
+            
+            LOG_DEBUG("Created memory metrics tracker for thread %lld", (long long)thread_id);
+        }
+
+        /* Now find the actual Thread object by ID */
+        jsize length = (*jni)->GetArrayLength(jni, entries);
+        jmethodID getIdMethod = (*jni)->GetMethodID(jni, threadClass, "getId", "()J");
+        if (!getIdMethod) 
+        {
+            LOG_ERROR("Failed to find Thread.getId method\n");
+            continue;
+        }
+
+        for (jsize j = 0; j < length; j++) 
+        {
+            jobject entry = NULL;
+            jobject threadObj = NULL;
+            jclass entryClass = NULL;
+            
+            entry = (*jni)->GetObjectArrayElement(jni, entries, j);
+            if (!entry) continue;
+            
+            /* Get the key (Thread object) from the entry */
+            entryClass = (*jni)->GetObjectClass(jni, entry);
+            if (!entryClass)
+                goto local_clean;
+            
+            jmethodID getKeyMethod = (*jni)->GetMethodID(jni, entryClass, "getKey", 
+                "()Ljava/lang/Object;");
+            if (!getKeyMethod)
+                goto local_clean;
+            
+            threadObj = (*jni)->CallObjectMethod(jni, entry, getKeyMethod);
+            if (!threadObj)
+                goto local_clean;
+            
+            /* Check if this is the thread we're looking for */
+            jlong id = (*jni)->CallLongMethod(jni, threadObj, getIdMethod);
+            
+            if (id == thread_id) 
+            {
+                /* Found our thread, sample its memory */
+                uint64_t thread_mem = get_thread_memory(ctx->jvmti_env, jni, threadObj);
+                
+                if (thread_mem > 0) {
+                    /* TODO - possibly use reservior sampling? not sure if a good fit */
+                    /* Store the memory sample in a circular buffer */
+                    size_t idx = thread_metrics->sample_count % MAX_MEMORY_SAMPLES;
+                    thread_metrics->memory_samples[idx] = thread_mem;
+                    thread_metrics->timestamps[idx] = timestamp;
+                    
+                    if (thread_metrics->sample_count < MAX_MEMORY_SAMPLES)
+                        thread_metrics->sample_count++;
+                    
+                    LOG_DEBUG("Thread %lld memory: %llu bytes", 
+                        (long long)thread_id, (unsigned long long)thread_mem);
+                }
+            }
+local_clean:
+            /* Clean up local references */
+            if (threadObj) (*jni)->DeleteLocalRef(jni, threadObj);
+            if (entryClass) (*jni)->DeleteLocalRef(jni, entryClass);
+            if (entry) (*jni)->DeleteLocalRef(jni, entry);
+        }
+    }
+    /* Unlock after work */
+    pthread_mutex_unlock(&ctx->samples_lock);
+
+cleanup:
+    /* Clean up all JNI local references */
+    if (entries) (*jni)->DeleteLocalRef(jni, entries);
+    if (setClass) (*jni)->DeleteLocalRef(jni, setClass);
+    if (entrySet) (*jni)->DeleteLocalRef(jni, entrySet);
+    if (mapClass) (*jni)->DeleteLocalRef(jni, mapClass);
+    if (threadsMap) (*jni)->DeleteLocalRef(jni, threadsMap);
+    if (threadClass) (*jni)->DeleteLocalRef(jni, threadClass);
+}
+
+/**
+ * 
+ */
 void *mem_sampling_thread_func(void *arg)
 {
     assert(arg != NULL);
 
     agent_context_t *ctx = (agent_context_t *)arg;
-
     LOG_INFO("Memory sampling thread started, interval=%d seconds\n", ctx->config.mem_sample_interval);
+
+    JNIEnv *jni = NULL;
+    thread_memory_metrics_t *thread_metrics_head = ctx->thread_mem_head;
+    int mem_thread_attached = 0;
+
+    /* Attach this thread to the JVM to get a JNIEnv */
+    jint res = (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void**)&jni, NULL);
+    if (res != JNI_OK || jni == NULL)
+    {
+        LOG_ERROR("Failed to attach memory sampling thread to JVM, error: %d\n", res);
+        return NULL;
+    }
+    
+    mem_thread_attached = 1;
 
     while (ctx->mem_sampling_running)
     {
@@ -629,22 +877,16 @@ void *mem_sampling_thread_func(void *arg)
         }
         
         /* Sample thread memory for active Java threads */
-        pthread_mutex_lock(&ctx->samples_lock);
-        for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) {
-            if (ctx->thread_mappings[i].java_thread_id != 0) {
-                /* We have a valid thread mapping - get its memory usage */
-                /* This would need JNI and JVMTI environments to call get_thread_memory */
-                /* For simplicity, we're not implementing per-thread sampling here as it 
-                   would require obtaining JNI and JVMTI handles which is complex from
-                   a background thread */
-            }
-        }
-        pthread_mutex_unlock(&ctx->samples_lock);
+        sample_thread_mem(ctx, jni, thread_metrics_head, timestamp);
         
         /* Sleep for the configured interval */
         sleep(ctx->config.mem_sample_interval);
     }
 
+    if (mem_thread_attached)
+        (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+    
+    LOG_INFO("Memory sampling thread terminated\n");
     return NULL;
 }
 
@@ -1690,6 +1932,20 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     return 0;  /* Don't sample this call */
 }
 
+/**
+ * Callback to execute any code after the JVM has completed initialisation (after Agent_OnLoad)
+ */
+static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *env, jthread thread)
+{
+    /* Init the memory sampling */
+    global_ctx->mem_sampling_running = 1;
+    if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
+    {
+        LOG_ERROR("Failed to start memory sampling thread - unable to continue\n");
+        exit(1);
+    }
+}
+
 static int init_jvm_capabilities(agent_context_t *ctx)
 {
     assert(ctx != NULL);
@@ -1725,6 +1981,7 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     callbacks.Exception = &exception_callback;
     callbacks.VMObjectAlloc = &object_alloc_callback;
     callbacks.ThreadEnd = &thread_end_callback;
+    callbacks.VMInit = &vm_init_callback;
 
     err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) 
@@ -1770,6 +2027,12 @@ static int init_jvm_capabilities(agent_context_t *ctx)
         LOG_ERROR("Could not enable thread end events: %d\n", err);
         return 1;
     }
+    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_INIT, NULL);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("Could not enable vm init events: %d\n", err);
+        return 1;
+    }
 
     return 0; /* Success */
 }
@@ -1788,6 +2051,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
     memset(global_ctx, 0, sizeof(agent_context_t));
     global_ctx->jvmti_env = NULL;
+    global_ctx->jvm = NULL;
     global_ctx->method_filters = NULL;
     global_ctx->num_filters = 0;
     global_ctx->log_file = NULL;
@@ -1801,6 +2065,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->metrics = NULL;
     global_ctx->arena_head = NULL;
     global_ctx->arena_tail = NULL;
+    global_ctx->thread_mem_head = NULL;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
     memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 
@@ -1885,6 +2150,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     memset(global_ctx->app_memory_metrics, 0, sizeof(app_memory_metrics_t));
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
+    /* Grab a copy of the JVM pointer */
+    global_ctx->jvm = vm;
+
     /* Get JVMTI environment */
     jint result = (*vm)->GetEnv(vm, (void **)&global_ctx->jvmti_env, JVMTI_VERSION_1_2);
     if (result != JNI_OK || global_ctx->jvmti_env == NULL) 
@@ -1917,15 +2185,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     {
         cleanup(global_ctx);
         cleanup_log_system();
-        return JNI_ERR;
-    }
-
-    /* Init the memory sampling */
-    global_ctx->mem_sampling_running = 1;
-    if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
-    {
-        LOG_ERROR("Failed to start memory sampling thread\n");
-        cleanup(global_ctx);
         return JNI_ERR;
     }
 

@@ -36,10 +36,13 @@ strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com
 
 ## Features TODO
 
+* Summary
+  * Top N objects allocated
+  * Top N methods by time/cpu cycles/memory allocations/syscalls
 * Methods
   * Entry/exit tracking (v1 done)
   * Capturing method params
-  * Recording method execution times
+  * Recording method execution times (v1 done)
   * call stack sampling
 * Exceptions
   * Capturing exception details (v1 done)
@@ -50,6 +53,9 @@ strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com
   * Object allocation tracking
   * Object lifetime monitoring
   * Mem usage stats
+    * Process memory (v1 done)
+    * Thread memory
+    * Per method allocted bytes (v1 done)
   * Heap walk and object graph analysis
 * Threads
   * Thread creation/destruction tracking
@@ -64,4 +70,4 @@ strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com
 * Systems integration
   * OS-level system call tracing (eBPF/ftrace etc)
   * Native lib load/unload events
-  * CPU clock cycles integration
+  * CPU clock cycles integration (v1 done)
