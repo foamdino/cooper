@@ -74,7 +74,7 @@ int main(int argc, char **argv)
         printf("Building in DEBUG mode with logs enabled\n");
     }
     else
-        nob_cmd_append(&cc_cmd, "-O2");
+        nob_cmd_append(&cc_cmd, "-DENABLE_INFO_LOGS", "-O2");
 
     nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so", 
         SRC_FOLDER"arena.c", SRC_FOLDER"log.c", SRC_FOLDER"cooper.c", "-pthread");

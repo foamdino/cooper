@@ -915,14 +915,9 @@ void *mem_sampling_thread_func(void *arg)
     LOG_INFO("Memory sampling thread started, interval=%d seconds\n", ctx->config.mem_sample_interval);
 
     JNIEnv *jni = NULL;
-    jvmtiPhase jvm_phase = JVMTI_PHASE_DEAD; /* set to dead and then we we check this should be set to a valid value */
+    jvmtiError err;
+    jvmtiPhase jvm_phase;
     int mem_thread_attached = 0;
-
-    if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE || jvm_phase != JVMTI_PHASE_LIVE)
-    {
-        LOG_DEBUG("Cannot get the thread id as jvm is not in correct phase: %d", jvm_phase);
-        return NULL;
-    }
 
     /* Attach this thread to the JVM to get a JNIEnv */
     jint res = (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void**)&jni, NULL);
@@ -937,6 +932,19 @@ void *mem_sampling_thread_func(void *arg)
 
     while (ctx->mem_sampling_running)
     {
+        err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+        if (err != JVMTI_ERROR_NONE)
+        {
+            LOG_ERROR("Error getting the current jvm phase - maybe during shutdown? error %d", err);
+            return NULL;
+        }
+
+        if (jvm_phase != JVMTI_PHASE_LIVE)
+        {
+            LOG_INFO("JVM is not in live phase, cannot sample thread memory, current jvm phase: %d", jvm_phase);
+            return NULL;
+        }
+
         /* Get current timestamp for this sample */
         uint64_t timestamp = get_current_time_ns();
         
@@ -2003,43 +2011,46 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
  */
 static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 {
-    if (jni_env != NULL) 
+    if (jni_env == NULL)
     {
-        /* Find and cache Thread class */
-        jclass local_thread_class = (*jni_env)->FindClass(jni_env, "java/lang/Thread");
-
-        if (local_thread_class == NULL)
-        {
-            LOG_ERROR("Failed to find Thread class\n");
-            exit(1);
-        }
-
-        /* Create a global reference to keep the class from being unloaded */
-        global_ctx->java_thread_class = (*jni_env)->NewGlobalRef(jni_env, local_thread_class);
-
-        if (global_ctx->java_thread_class == NULL)
-        {
-            LOG_ERROR("Failed to create global reference for Thread class\n");
-            (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-            exit(1);
-        }
-
-        /* Cache the method ID */
-        global_ctx->getId_method = (*jni_env)->GetMethodID(jni_env, global_ctx->java_thread_class, "getId", "()J");
-
-        if (global_ctx->getId_method == NULL) 
-        {
-            LOG_ERROR("Failed to get Thread.getId method ID\n");
-            (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
-            (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-            exit(1);
-        }
-        
-        /* Release local reference */
-        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-
-        LOG_INFO("Successfully initialized Thread class and getId method\n");
+        LOG_ERROR("No jni environment\n");
+        exit(1);
     }
+
+    /* Find and cache Thread class */
+    jclass local_thread_class = (*jni_env)->FindClass(jni_env, "java/lang/Thread");
+
+    if (local_thread_class == NULL)
+    {
+        LOG_ERROR("Failed to find Thread class\n");
+        exit(1);
+    }
+
+    /* Create a global reference to keep the class from being unloaded */
+    global_ctx->java_thread_class = (*jni_env)->NewGlobalRef(jni_env, local_thread_class);
+
+    if (global_ctx->java_thread_class == NULL)
+    {
+        LOG_ERROR("Failed to create global reference for Thread class\n");
+        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+        exit(1);
+    }
+
+    /* Cache the method ID */
+    global_ctx->getId_method = (*jni_env)->GetMethodID(jni_env, global_ctx->java_thread_class, "getId", "()J");
+
+    if (global_ctx->getId_method == NULL) 
+    {
+        LOG_ERROR("Failed to get Thread.getId method ID\n");
+        (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
+        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+        exit(1);
+    }
+    
+    /* Release local reference */
+    (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+
+    LOG_INFO("Successfully initialized Thread class and getId method\n");
 
     /* Init the memory sampling */
     global_ctx->mem_sampling_running = 1;
@@ -2187,11 +2198,11 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Enable debug output */
-#ifdef ENABLE_DEBUG_LOGS
-    current_log_level = LOG_LEVEL_DEBUG;
-#else
-    current_log_level = LOG_LEVEL_INFO;
-#endif
+// #ifdef ENABLE_DEBUG_LOGS
+//     current_log_level = LOG_LEVEL_DEBUG;
+// #else
+//     current_log_level = LOG_LEVEL_INFO;
+// #endif
     if (options && strstr(options, "loglevel=debug"))
         current_log_level = LOG_LEVEL_DEBUG;
 
