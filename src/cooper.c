@@ -96,7 +96,6 @@ static thread_context_t *get_thread_local_context() {
     thread_context_t *context = pthread_getspecific(context_key);
     if (!context) {
         /* First time this thread is accessing the key */
-        // TODO fix this calloc as it is not correctly free'd later
         context = calloc(1, sizeof(thread_context_t));
         if (context) {
             context->sample = NULL;
