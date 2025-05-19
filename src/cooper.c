@@ -26,7 +26,7 @@ static const arena_config_t arena_configs[] = {
     {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
 };
 
-/* Debug function for dumping method satck */
+/* Debug function for dumping method stack */
 static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 {
     if (!ctx || !tc) return;
@@ -121,8 +121,6 @@ static thread_context_t *get_thread_local_context() {
 static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread)
 {
 #ifdef __linux__
-    static jclass thread_class = NULL;
-    static jmethodID getId_method = NULL;
     pid_t result = 0;
 
     jvmtiPhase jvm_phase;
@@ -132,25 +130,14 @@ static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
         return 0;
     }
 
-    /* Cache frequently used JNI refs */
-    if (thread_class == NULL)
-    {
-        thread_class = (*jni)->FindClass(jni, "java/lang/Thread");
-        if (thread_class != NULL)
-        {
-            thread_class = (*jni)->NewGlobalRef(jni, thread_class);
-            getId_method = (*jni)->GetMethodID(jni, thread_class, "getId", "()J");
-        }
-    }
-
-    if (thread_class == NULL || getId_method == NULL)
+    if (global_ctx->java_thread_class == NULL || global_ctx->getId_method == NULL)
     {
         LOG_ERROR("Failed to get Thread class or getId method");
         return 0;
     }
 
     /* Get the jvm thread id */
-    jlong thread_id = (*jni)->CallLongMethod(jni, thread, getId_method);
+    jlong thread_id = (*jni)->CallLongMethod(jni, thread, global_ctx->getId_method);
     if ((*jni)->ExceptionCheck(jni)) 
     {
         (*jni)->ExceptionClear(jni);
@@ -366,11 +353,7 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
         sample->start_time = get_current_time_ns();
     
     if (flags & METRIC_FLAG_MEMORY)
-    {
-        // sample->start_process_memory = get_process_memory();
-        // sample->start_thread_memory = get_thread_memory(jvmti, jni, thread);
         sample->current_alloc_bytes = 0;
-    }
         
     if (flags & METRIC_FLAG_CPU)
         sample->start_cpu = cycles_start();
@@ -417,36 +400,24 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     }
 
     /* Update memory metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) 
+    {
         metrics->alloc_bytes[method_index] += memory_bytes;
-        if (memory_bytes > metrics->peak_memory[method_index]) {
+        if (memory_bytes > metrics->peak_memory[method_index])
             metrics->peak_memory[method_index] = memory_bytes;
-        }
-
-        // if (thread_memory_bytes > 0)
-        // {
-        //     metrics->thread_memory[method_index] += thread_memory_bytes;
-        // }
-            
-
-        // if (process_memory_bytes > 0)
-        // {
-        //     metrics->process_memory[method_index] += process_memory_bytes;
-        // }
     }
 
     /* Update CPU metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
         metrics->cpu_cycles[method_index] += cycles;
-    }
+
+    pthread_mutex_unlock(&ctx->samples_lock);
 
     LOG_DEBUG("Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu", 
         method_index, 
         (unsigned long)metrics->sample_counts[method_index],
         (unsigned long)metrics->total_time_ns[method_index],
         (unsigned long)metrics->alloc_bytes[method_index]);
-    
-    pthread_mutex_unlock(&ctx->samples_lock);
 }
 
 /**
@@ -650,8 +621,6 @@ void export_to_file(agent_context_t *ctx)
                 (unsigned long)ctx->metrics->max_time_ns[i],
                 (unsigned long)ctx->metrics->alloc_bytes[i],
                 (unsigned long)ctx->metrics->peak_memory[i],
-                // (unsigned long)ctx->metrics->thread_memory[i],
-                // (unsigned long)ctx->metrics->process_memory[i],
                 (unsigned long)ctx->metrics->cpu_cycles[i]);
         }
     }
@@ -948,6 +917,12 @@ void *mem_sampling_thread_func(void *arg)
     jvmtiPhase jvm_phase;
     thread_memory_metrics_t *thread_metrics_head = ctx->thread_mem_head;
     int mem_thread_attached = 0;
+
+    if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE || jvm_phase != JVMTI_PHASE_LIVE)
+    {
+        LOG_DEBUG("Cannot get the thread id as jvm is not in correct phase: %d", jvm_phase);
+        return NULL;
+    }
 
     /* Attach this thread to the JVM to get a JNIEnv */
     jint res = (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void**)&jni, NULL);
@@ -1336,32 +1311,11 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         exec_time = end_time - target->start_time;
     }
 
-    if ((flags & METRIC_FLAG_MEMORY) != 0) {
+    if ((flags & METRIC_FLAG_MEMORY) != 0) 
+    {
         LOG_DEBUG("sampling memory for %d\n", target->method_index);
-        /* Select the most specific memory metric available:
-         * 1. Direct object allocations (most specific)
-         * 2. Thread memory change
-         * 3. Process memory change
-         */
-
          /* JVM heap allocations during method execution */
         memory_delta = target->current_alloc_bytes;
-
-        // /* Thread memory delta based on OS */
-        // if (target->start_thread_memory > 0)
-        // {
-        //     uint64_t end_thread_memory = get_thread_memory(jvmti, jni, thread);
-        //     if (end_thread_memory > target->start_thread_memory)
-        //         thread_memory_delta = end_thread_memory - target->start_thread_memory;
-        // }
-
-        // /* Process-wide memory delta based on OS */
-        // if (target->start_process_memory > 0)
-        // {
-        //     uint64_t end_process_memory = get_process_memory();
-        //     if (end_process_memory > target->start_process_memory)
-        //         process_memory_delta = end_process_memory - target->start_process_memory;
-        // }
     }
     
     if ((flags & METRIC_FLAG_CPU) != 0) {
@@ -1878,8 +1832,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    // metrics->thread_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    // metrics->process_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
     
@@ -1887,7 +1839,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
         !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns ||
         !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory ||
-        // !metrics->thread_memory || !metrics->process_memory ||
         !metrics->cpu_cycles || !metrics->metric_flags) {
         return NULL;
     }
@@ -1901,8 +1852,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     memset(metrics->max_time_ns, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->alloc_bytes, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->peak_memory, 0, initial_capacity * sizeof(uint64_t));
-    // memset(metrics->thread_memory, 0, initial_capacity * sizeof(uint64_t));
-    // memset(metrics->process_memory, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->cpu_cycles, 0, initial_capacity * sizeof(uint64_t));
     memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
     
@@ -2049,8 +1998,46 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
 /**
  * Callback to execute any code after the JVM has completed initialisation (after Agent_OnLoad)
  */
-static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *env, jthread thread)
+static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 {
+    if (jni_env != NULL) 
+    {
+        /* Find and cache Thread class */
+        jclass local_thread_class = (*jni_env)->FindClass(jni_env, "java/lang/Thread");
+
+        if (local_thread_class == NULL)
+        {
+            LOG_ERROR("Failed to find Thread class\n");
+            exit(1);
+        }
+
+        /* Create a global reference to keep the class from being unloaded */
+        global_ctx->java_thread_class = (*jni_env)->NewGlobalRef(jni_env, local_thread_class);
+
+        if (global_ctx->java_thread_class == NULL)
+        {
+            LOG_ERROR("Failed to create global reference for Thread class\n");
+            (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+            exit(1);
+        }
+
+        /* Cache the method ID */
+        global_ctx->getId_method = (*jni_env)->GetMethodID(jni_env, global_ctx->java_thread_class, "getId", "()J");
+
+        if (global_ctx->getId_method == NULL) 
+        {
+            LOG_ERROR("Failed to get Thread.getId method ID\n");
+            (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
+            (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+            exit(1);
+        }
+        
+        /* Release local reference */
+        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+
+        LOG_INFO("Successfully initialized Thread class and getId method\n");
+    }
+
     /* Init the memory sampling */
     global_ctx->mem_sampling_running = 1;
     if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
@@ -2166,6 +2153,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     memset(global_ctx, 0, sizeof(agent_context_t));
     global_ctx->jvmti_env = NULL;
     global_ctx->jvm = NULL;
+    global_ctx->java_thread_class = NULL;
+    global_ctx->getId_method = NULL;
     global_ctx->method_filters = NULL;
     global_ctx->num_filters = 0;
     global_ctx->log_file = NULL;
@@ -2350,6 +2339,22 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         pthread_detach(global_ctx->export_thread);
         LOG_INFO("Waiting for export thread to terminate\n");
         safe_thread_join(export_thread_copy, 2);
+
+        if (global_ctx)
+        {
+            /* Only if we have a valid JNI environment */
+            JNIEnv *jni_env = NULL;
+            if ((*vm)->GetEnv(vm, (void **)&jni_env, JNI_VERSION_1_6) == JNI_OK && jni_env != NULL) 
+            {
+                /* Release global reference to Thread class if it exists */
+                if (global_ctx->java_thread_class != NULL) 
+                {
+                    (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
+                    global_ctx->java_thread_class = NULL;
+                }
+                /* No need to explicitly free method IDs as they're invalidated when the class is unloaded */
+            }
+        }
 
         cleanup(global_ctx);
         /* Clean up thread-local storage */
