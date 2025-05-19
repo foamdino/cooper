@@ -353,9 +353,7 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
         sample->start_time = get_current_time_ns();
     
     if (flags & METRIC_FLAG_MEMORY)
-    {
         sample->current_alloc_bytes = 0;
-    }
         
     if (flags & METRIC_FLAG_CPU)
         sample->start_cpu = cycles_start();
@@ -402,17 +400,16 @@ void record_method_execution(agent_context_t *ctx, int method_index,
     }
 
     /* Update memory metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) 
+    {
         metrics->alloc_bytes[method_index] += memory_bytes;
-        if (memory_bytes > metrics->peak_memory[method_index]) {
+        if (memory_bytes > metrics->peak_memory[method_index])
             metrics->peak_memory[method_index] = memory_bytes;
-        }
     }
 
     /* Update CPU metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0) {
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
         metrics->cpu_cycles[method_index] += cycles;
-    }
 
     pthread_mutex_unlock(&ctx->samples_lock);
 
@@ -421,8 +418,6 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         (unsigned long)metrics->sample_counts[method_index],
         (unsigned long)metrics->total_time_ns[method_index],
         (unsigned long)metrics->alloc_bytes[method_index]);
-    
-    
 }
 
 /**
@@ -2007,7 +2002,6 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
  */
 static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 {
-
     if (jni_env != NULL) 
     {
         /* Find and cache Thread class */
