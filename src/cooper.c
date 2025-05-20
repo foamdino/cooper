@@ -535,7 +535,6 @@ void export_to_file(agent_context_t *ctx)
             (unsigned long long)ctx->app_memory_metrics->process_memory_sample[i]);
     }
 
-    pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
     fprintf(fp, "# ------ \n\n");
 
     /* Export thread memory metrics next */
@@ -578,6 +577,8 @@ void export_to_file(agent_context_t *ctx)
 
     if (thread_count == 0)
         fprintf(fp, "# No thread memory metrics available\n");
+
+    pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
     fprintf(fp, "# ------ \n\n");
 
@@ -675,7 +676,7 @@ void *export_thread_func(void *arg)
 /**
  *
  */
-static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, thread_memory_metrics_t *thread_metrics_head, uint64_t timestamp)
+static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 {
     if (!jni || !ctx)
     {
@@ -914,8 +915,7 @@ void *mem_sampling_thread_func(void *arg)
     LOG_INFO("Memory sampling thread started, interval=%d seconds\n", ctx->config.mem_sample_interval);
 
     JNIEnv *jni = NULL;
-    jvmtiPhase jvm_phase;
-    thread_memory_metrics_t *thread_metrics_head = ctx->thread_mem_head;
+    jvmtiPhase jvm_phase = JVMTI_PHASE_DEAD; /* set to dead and then we we check this should be set to a valid value */
     int mem_thread_attached = 0;
 
     if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE || jvm_phase != JVMTI_PHASE_LIVE)
@@ -942,7 +942,8 @@ void *mem_sampling_thread_func(void *arg)
         
         /* Sample process memory */
         uint64_t process_mem = get_process_memory();
-        if (process_mem > 0) {
+        if (process_mem > 0) 
+        {
             pthread_mutex_lock(&ctx->app_memory_metrics->lock);
             
             /* Use circular buffer pattern if we reach maximum samples */
@@ -962,7 +963,7 @@ void *mem_sampling_thread_func(void *arg)
         }
         
         /* Sample thread memory for active Java threads */
-        sample_thread_mem(ctx, jni, thread_metrics_head, timestamp);
+        sample_thread_mem(ctx, jni, timestamp);
         
         /* Sleep for the configured interval */
         sleep(ctx->config.mem_sample_interval);
@@ -1318,7 +1319,8 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         memory_delta = target->current_alloc_bytes;
     }
     
-    if ((flags & METRIC_FLAG_CPU) != 0) {
+    if ((flags & METRIC_FLAG_CPU) != 0) 
+    {
         uint64_t end_cpu = cycles_end();
 
         if (end_cpu > target->start_cpu)
@@ -1337,7 +1339,8 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jvmtiError err;
 
     /* Get method details for logging */
-    if (tls_initialized && flags != 0) {
+    if (tls_initialized && flags != 0) 
+    {
         /* Get method name */
         err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
         if (err != JVMTI_ERROR_NONE) 
@@ -2184,9 +2187,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Enable debug output */
-    // current_log_level = LOG_LEVEL_INFO; //TODO work out how to parse te option
-    // if (options && strncmp(options, "debug", 5) == 0)
-    //     current_log_level = LOG_LEVEL_DEBUG;
+#ifdef ENABLE_DEBUG_LOGS
+    current_log_level = LOG_LEVEL_DEBUG;
+#else
+    current_log_level = LOG_LEVEL_INFO;
+#endif
+    if (options && strstr(options, "loglevel=debug"))
+        current_log_level = LOG_LEVEL_DEBUG;
 
     log_q_t *log_queue = malloc(sizeof(log_q_t));
 
@@ -2332,6 +2339,11 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         global_ctx->export_running = 0;
         pthread_mutex_unlock(&global_ctx->samples_lock);
         
+        /* Signal memory sampling to stop */
+        pthread_mutex_lock(&global_ctx->app_memory_metrics->lock);
+        global_ctx->mem_sampling_running = 0;
+        pthread_mutex_unlock(&global_ctx->app_memory_metrics->lock);
+
         /* Give the export thread a moment to perform final export */
         usleep(100000); /* 100ms should be enough for final export */
 
