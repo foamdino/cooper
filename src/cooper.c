@@ -26,6 +26,7 @@ static const arena_config_t arena_configs[] = {
     {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
 };
 
+#ifdef ENABLE_DEBUG_LOGS
 /* Debug function for dumping method stack */
 static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 {
@@ -59,6 +60,7 @@ static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
         level++;
     }
 }
+#endif
 
 static void destroy_thread_context(void *data)
 {
