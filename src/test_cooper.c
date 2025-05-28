@@ -286,7 +286,7 @@ static void test_load_config()
     arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
 
     /* Initialize log system */
-    init_log_system(log_queue, ctx->arena_head, stdout);
+    init_log_system(log_queue, log_arena, stdout);
     
     /* Initialize metrics */
     size_t initial_capacity = 256;
@@ -389,7 +389,7 @@ static void test_log_queue()
     
     /* Initialize a log queue using the actual log system */
     log_q_t log_queue = {0};
-    int res = init_log_system(&log_queue, ctx->arena_head, log_file);
+    int res = init_log_system(&log_queue, log_arena, log_file);
     assert(res == 0);
     
     /* Use LOG macros to add messages to the queue */

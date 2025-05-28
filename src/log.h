@@ -17,8 +17,8 @@
 
 
 /* Forward declarations to avoid circular dependencies */
-struct arena_node;
-typedef struct arena_node arena_node_t;
+struct arena;
+typedef struct arena arena_t;
 
 typedef enum log_level log_level_e;
 typedef struct log_q log_q_t;
@@ -48,7 +48,7 @@ struct log_q
 struct log_system
 {
     log_q_t *queue;
-    arena_node_t *arena_head;
+    arena_t *arena;
     FILE *log_file;
     pthread_t log_thread;
     int initialized;
@@ -63,7 +63,7 @@ struct log_thread_params
 extern log_level_e current_log_level;
 
 /* Initialize the logging system */
-int init_log_system(log_q_t *queue, arena_node_t *arena_head, FILE *log_file);
+int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file);
 
 /* Clean up the logging system 
 Assumes that the log system has been correct initialised via init_log_system
@@ -74,7 +74,7 @@ void cleanup_log_system();
 void log_message(log_level_e level, const char *file, int line, const char *fmt, ...);
 
 /* For internal use or when you need to specify queue and arena */
-void log_message_internal(log_q_t *queue, arena_node_t *arena_head, log_level_e level, 
+void log_message_internal(log_q_t *queue, arena_t *arena, log_level_e level,
                           const char *file, int line, const char *fmt, ...);
 
 /* Log thread function - exported so can control when the thread starts/stops */

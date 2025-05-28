@@ -32,7 +32,7 @@ log_level_e current_log_level = LOG_LEVEL_INFO;
 /* Global logging system state */
 static log_system_t log_system = {
     .queue = NULL,
-    .arena_head = NULL,
+    .arena = NULL,
     .log_file = NULL,
     .log_thread = 0,
     .initialized = 0
@@ -45,16 +45,24 @@ static log_system_t log_system = {
  * @param arena_head Head of the arena list
  * @param msg        Message to enqueue (will be copied to arena memory)
  */
-static void log_enq(log_q_t *queue, arena_node_t *arena_head, const char *msg)
+static void log_enq(log_q_t *queue, arena_t *arena, const char *msg)
 {
     assert(queue != NULL);
+    assert(arena != NULL);
     assert(msg != NULL);
-    
+
+
+    /* We cannot do anything without a queue */
+    if (!queue)
+    {
+        fprintf(stderr, "ERROR: No queue to log to!!");
+        return;
+    }
+
     /* Obtain lock to queue */
     pthread_mutex_lock(&queue->lock);
 
-    arena_t *arena = find_arena(arena_head, "log_arena");
-    if (!arena) 
+    if (!arena)
     {
         pthread_mutex_unlock(&queue->lock);
         return;
@@ -221,7 +229,7 @@ static int safe_thread_join(pthread_t thread, int timeout)
  * @param log_file      log file, or NULL for stdout
  * @return              0 on success, non-zero on failure
  */
-int init_log_system(log_q_t *queue, arena_node_t *arena_head, FILE *log_file)
+int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file)
 {
     assert(queue != NULL);
     
@@ -281,7 +289,7 @@ int init_log_system(log_q_t *queue, arena_node_t *arena_head, FILE *log_file)
 
     /* Save state for global access */
     log_system.queue = queue;
-    log_system.arena_head = arena_head;
+    log_system.arena = arena;
     log_system.log_file = log_file;
     log_system.log_thread = log_thread;
     log_system.initialized = 1;
@@ -342,7 +350,7 @@ void cleanup_log_system()
     
     /* Reset global state */
     log_system.queue = NULL;
-    log_system.arena_head = NULL;
+    log_system.arena = NULL;
     log_system.log_file = NULL;
     log_system.initialized = 0;
 }
@@ -351,14 +359,14 @@ void cleanup_log_system()
  * Format and enqueue a log message
  * 
  * @param queue      Pointer to log queue
- * @param arena_head Head of arena list for allocations
+ * @param arena      Log arena
  * @param level      Log level
  * @param file       Source file name
  * @param line       Source line number
  * @param fmt        Format string
  * @param ...        Format arguments
  */
-void log_message_internal(log_q_t *queue, arena_node_t *arena_head, log_level_e level, 
+void log_message_internal(log_q_t *queue, arena_t *arena, log_level_e level,
     const char *file, int line, const char *fmt, ...)
 {
     /* Skip if level is below current_log_level */
@@ -404,7 +412,7 @@ void log_message_internal(log_q_t *queue, arena_node_t *arena_head, log_level_e 
     }
 
     /* Enqueue the formatted message */
-    log_enq(queue, arena_head, buffer);
+    log_enq(queue, arena, buffer);
 }
 
 /**
@@ -455,5 +463,5 @@ void log_message(log_level_e level, const char *file, int line, const char *fmt,
     }
     
     /* Enqueue the formatted message using global system state */
-    log_enq(log_system.queue, log_system.arena_head, buffer);
+    log_enq(log_system.queue, log_system.arena, buffer);
 }

@@ -2243,7 +2243,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* We start the logging thread as we initialise the system now */
-    if (init_log_system(log_queue, global_ctx->arena_head, global_ctx->log_file) != 0)
+    if (init_log_system(log_queue, log_arena, global_ctx->log_file) != 0)
     {
         cleanup(global_ctx);
         return JNI_ERR;
