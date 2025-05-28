@@ -217,7 +217,8 @@ void arena_destroy(arena_t *arena)
         return;
     
     /* Free the original memory we allocated directly in arena_init */
-    if (arena->original_memory) {
+    if (arena->original_memory) 
+    {
         free(arena->original_memory);
         arena->original_memory = NULL;
         arena->memory = NULL;
@@ -242,13 +243,13 @@ arena_t *create_arena(arena_node_t **head, arena_node_t **tail,
     const char *name, size_t size, size_t max_blocks)
 {
     arena_node_t *node = malloc(sizeof(arena_node_t));
-    if (!node) {
+    if (!node)
         return NULL;
-    }
 
     /* Initialize the arena */
     arena_t *arena = arena_init(name, size, max_blocks);
-    if (!arena) {
+    if (!arena) 
+    {
         free(node);
         return NULL;
     }
@@ -261,12 +262,15 @@ arena_t *create_arena(arena_node_t **head, arena_node_t **tail,
     node->next = NULL;
 
     /* Add to the list */
-    if (*tail) {
+    if (*tail) 
+    {
         /* List is not empty, append to tail */
         node->prev = *tail;
         (*tail)->next = node;
         *tail = node;
-    } else {
+    } 
+    else 
+    {
         /* List is empty, update both head and tail */
         node->prev = NULL;
         *head = node;
@@ -286,10 +290,11 @@ arena_t *create_arena(arena_node_t **head, arena_node_t **tail,
 */
 arena_t *find_arena(arena_node_t *head, const char *name) {
     arena_node_t *node = head;
-    while (node) {
-        if (strcmp(node->name, name) == 0) {
+    while (node) 
+    {
+        if (strcmp(node->name, name) == 0)
             return node->arena;
-        }
+
         node = node->next;
     }
     return NULL;
@@ -304,11 +309,12 @@ arena_t *find_arena(arena_node_t *head, const char *name) {
 void destroy_all_arenas(arena_node_t **head, arena_node_t **tail) {
     arena_node_t *node = *head;
 
-    while (node) {
+    while (node)
+    {
         arena_node_t *next = node->next;
-        if (node->arena) {
+        if (node->arena)
             arena_destroy(node->arena);
-        }
+        
         free(node);
         node = next;
     }

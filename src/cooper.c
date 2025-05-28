@@ -252,7 +252,7 @@ static uint64_t get_process_memory()
     unsigned long vm_size, rss;
     int res = sscanf(buf, "%lu %lu", &vm_size, &rss);
 
-    if (sscanf(buf, "%lu %lu", &vm_size, &rss) != 2)
+    if (res != 2)
         return 0;
 
     /* Convert from pages to bytes */
@@ -434,45 +434,41 @@ static int safe_thread_join(pthread_t thread, int timeout)
 {
     /* First try to join without any tricks (this is the normal, clean path) */
     int result = pthread_join(thread, NULL);
-    if (result == 0) {
+    if (result == 0)
         return 0; /* Joined successfully */
-    }
     
     /* If we can't join (thread might be detached or already joined) */
-    if (result == EINVAL || result == ESRCH) {
+    if (result == EINVAL || result == ESRCH)
         return result; /* Return the error code */
-    }
     
     /* For threads that can't be joined immediately but timeout > 0,
        we need to wait and retry */
-       if (timeout > 0) {
+    if (timeout > 0) 
+    {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         ts.tv_sec += timeout;
         
         /* Sleep in small increments and retry joining */
-        while (timeout > 0) {
+        while (timeout > 0) 
+        {
             /* Sleep for 100ms at a time */
             usleep(100000);
             
             /* Try joining again */
             result = pthread_join(thread, NULL);
-            if (result == 0) {
+            if (result == 0)
                 return 0; /* Successfully joined */
-            }
             
             /* If thread is invalid or already joined/detached, return */
-            if (result == EINVAL || result == ESRCH) {
+            if (result == EINVAL || result == ESRCH)
                 return result;
-            }
             
             /* Check if we've exceeded the timeout */
             struct timespec current;
             clock_gettime(CLOCK_REALTIME, &current);
-            if (current.tv_sec >= ts.tv_sec && 
-                current.tv_nsec >= ts.tv_nsec) {
+            if (current.tv_sec >= ts.tv_sec && current.tv_nsec >= ts.tv_nsec)
                 break;
-            }
         }
     }
     
@@ -499,6 +495,10 @@ int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t 
     return 0;
 }
 
+/**
+ *
+ *@param ctx Pointer to agent_context_t
+ */
 void export_to_file(agent_context_t *ctx)
 {
     assert(ctx != NULL);
@@ -1193,41 +1193,40 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
+    
+    /* We're sampling this call */
+    LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
 
-    LOG_DEBUG("should_sample_method returned index: %d for %s.%s%s\n", 
-        sample_index, class_signature, method_name, method_signature);
+    /* If we get a sample_index of 0 we don't sample this method, so jump to deallocate */
+    if (sample_index == 0)
+        goto deallocate;
 
-    if (sample_index > 0) {
-        /* We're sampling this call */
-        LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
-
-        /* Create a new sample on our method stack */
-        arena_t *arena = find_arena(global_ctx->arena_head, "sample_arena");
-        if (!arena)
-        {
-            LOG_ERROR("Could not find sample_arena!\n");
-            goto deallocate;
-        }
-
-        /* Now create the actual sample with the correct data */
-        method_sample_t *sample = init_method_sample(arena, sample_index -1, method, jvmti, jni, thread); /* Convert sample_index back to 0-based index */
-        if (!sample)
-        {
-            LOG_ERROR("Failed to allocate method sample context!\n");
-            goto deallocate;
-        }
-
-        /* Now we update our sample stack */
-        /* 1. This sample's parent is whatever is in the current context... */
-        sample->parent = context->sample;
-        /* 2. Overwrite the context's sample with this sample */
-        context->sample = sample;
-        /* 3. Increase our stack depth */
-        context->stack_depth++;
-        
-        LOG_INFO("[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
-            class_signature, method_name, method_signature, method);
+    /* Create a new sample on our method stack */
+    arena_t *arena = find_arena(global_ctx->arena_head, "sample_arena");
+    if (!arena)
+    {
+        LOG_ERROR("Could not find sample_arena!\n");
+        goto deallocate;
     }
+
+    /* Now create the actual sample with the correct data */
+    method_sample_t *sample = init_method_sample(arena, sample_index -1, method, jvmti, jni, thread); /* Convert sample_index back to 0-based index */
+    if (!sample)
+    {
+        LOG_ERROR("Failed to allocate method sample context!\n");
+        goto deallocate;
+    }
+
+    /* Now we update our sample stack */
+    /* 1. This sample's parent is whatever is in the current context... */
+    sample->parent = context->sample;
+    /* 2. Overwrite the context's sample with this sample */
+    context->sample = sample;
+    /* 3. Increase our stack depth */
+    context->stack_depth++;
+    
+    LOG_INFO("[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
+        class_signature, method_name, method_signature, method);
 
 deallocate:
     /* Deallocate memory allocated by JVMTI */
@@ -1616,6 +1615,13 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
 {
+    /* Check we can do anything here before looking up thread context */
+    if (!thread)
+        return;
+
+    if (!global_ctx->getId_method)
+        return;
+
     thread_context_t *context = pthread_getspecific(context_key);
     if (context) 
     {
@@ -1628,30 +1634,20 @@ static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread th
         pthread_setspecific(context_key, NULL);
     }
 
-    if (!thread)
-        return;
+    jlong thread_id = (*jni)->CallLongMethod(jni, thread, global_ctx->getId_method);
 
-    /* Get the thread Id */
-    jclass thread_class = (*jni)->GetObjectClass(jni, thread);
-    jmethodID get_id_method = (*jni)->GetMethodID(jni, thread_class, "getId", "()J");
-
-    if (get_id_method)
+    /* Remove from our mapping table */
+    pthread_mutex_lock(&global_ctx->samples_lock);
+    for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) 
     {
-        jlong thread_id = (*jni)->CallLongMethod(jni, thread, get_id_method);
-
-        /* remove from our mapping table */
-        pthread_mutex_lock(&global_ctx->samples_lock);
-        for (int i = 0; i < MAX_THREAD_MAPPINGS; i++) 
+        if (global_ctx->thread_mappings[i].java_thread_id == thread_id) 
         {
-            if (global_ctx->thread_mappings[i].java_thread_id == thread_id) 
-            {
-                global_ctx->thread_mappings[i].java_thread_id = 0;
-                global_ctx->thread_mappings[i].native_thread_id = 0;
-                break;
-            }
+            global_ctx->thread_mappings[i].java_thread_id = 0;
+            global_ctx->thread_mappings[i].native_thread_id = 0;
+            break;
         }
-        pthread_mutex_unlock(&global_ctx->samples_lock);
     }
+    pthread_mutex_unlock(&global_ctx->samples_lock);
 }
 
 /**
@@ -1969,11 +1965,11 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     int method_index = find_method_index(ctx->metrics, full_sig);
     
     /* If exact match not found, try class wildcard */
-    if (method_index < 0) {
+    if (method_index < 0) 
+    {
         written = snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
-        if (written >= 0 && written < MAX_SIG_SZ) {
+        if (written >= 0 && written < MAX_SIG_SZ)
             method_index = find_method_index(ctx->metrics, full_sig);
-        }
     }
     
     /* If still not found, not a method we want to sample */
@@ -2067,7 +2063,7 @@ static int init_jvm_capabilities(agent_context_t *ctx)
 {
     assert(ctx != NULL);
 
-    if (!ctx) return 1;
+    if (!ctx) return COOPER_ERR;
 
     jvmtiCapabilities capabilities;
     jvmtiEventCallbacks callbacks;
@@ -2088,7 +2084,7 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("AddCapabilities failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
 
     /* Set callbacks */
@@ -2104,7 +2100,7 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("SetEventCallbacks failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
 
     /* Enable event notifications */
@@ -2112,46 +2108,46 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
         LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
         LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION_CATCH, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
         LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
     if (err != JVMTI_ERROR_NONE)
     {
         LOG_ERROR("Could not enable allocation events: %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("Could not enable thread end events: %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_INIT, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("Could not enable vm init events: %d\n", err);
-        return 1;
+        return COOPER_ERR;
     }
 
-    return 0; /* Success */
+    return COOPER_OK; /* Success */
 }
 
 /*
@@ -2311,7 +2307,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    if (init_jvm_capabilities(global_ctx) != 0)
+    if (init_jvm_capabilities(global_ctx) != COOPER_OK)
         return JNI_ERR;
 
     LOG_INFO("JVMTI Agent Loaded.\n");
@@ -2321,7 +2317,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 /**
  * Cleanup state
  * 
- * @param nf num filters to clear
+ * @param ctx Pointer to an agent_context_t
  */
 void cleanup(agent_context_t *ctx)
 {

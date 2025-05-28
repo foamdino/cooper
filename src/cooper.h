@@ -50,6 +50,10 @@
 #define METRIC_FLAG_MEMORY  0x0002
 #define METRIC_FLAG_CPU     0x0004
 
+/* Falsey/Truthy */
+#define COOPER_OK 0
+#define COOPER_ERR 1
+
 typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;

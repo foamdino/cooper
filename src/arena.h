@@ -17,7 +17,7 @@
  * was actually allocated from the arena. This helps detect invalid frees and
  * memory corruption.
  */
-#define ARENA_BLOCK_MAGIC 0xC00BEEF5
+#define ARENA_BLOCK_MAGIC 0xF0A3D900
 
 typedef struct arena arena_t;
 typedef struct block_header block_header_t;
