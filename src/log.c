@@ -263,7 +263,8 @@ int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file)
     
     /* Create thread parameters */
     log_thread_params_t *params = malloc(sizeof(log_thread_params_t));
-    if (!params) {
+    if (!params) 
+    {
         fprintf(stderr, "ERROR: Failed to allocate memory for log thread parameters\n");
         goto error;
     }
@@ -278,13 +279,6 @@ int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file)
     {
         fprintf(stderr, "ERROR: Failed to start logging thread: %d\n", err);
         goto error;
-    }
-
-    err = pthread_detach(log_thread);
-    if (err != 0)
-    {
-        printf("ERROR: Failed to detach %p thread: %d\n", &log_thread, err);
-        return 1;
     }
 
     /* Save state for global access */
@@ -320,15 +314,9 @@ void cleanup_log_system()
     log_system.queue->running = 0;
     pthread_cond_broadcast(&log_system.queue->cond);
     pthread_mutex_unlock(&log_system.queue->lock);
-
-    /* Create a joinable copy of the thread */
-    pthread_t log_thread_copy = log_system.log_thread;
-    
-    /* Make thread joinable */
-    pthread_detach(log_system.log_thread);
     
     /* Wait for thread to terminate */
-    int join_result = safe_thread_join(log_thread_copy, 2);
+    int join_result = safe_thread_join(log_system.log_thread, 2);
     if (join_result != 0) 
     {
         /* If thread didn't terminate in time, proceed anyway */
@@ -421,9 +409,8 @@ void log_message_internal(log_q_t *queue, arena_t *arena, log_level_e level,
 void log_message(log_level_e level, const char *file, int line, const char *fmt, ...)
 {
     /* Skip if system not initialized or level is below current_log_level */
-    if (!log_system.initialized || level < current_log_level) {
+    if (!log_system.initialized || level < current_log_level)
         return;
-    }
     
     /* Get current timestamp */
     time_t now;
@@ -457,7 +444,8 @@ void log_message(log_level_e level, const char *file, int line, const char *fmt,
     
     /* Ensure newline at the end */
     size_t total_len = header_len + msg_len;
-    if (total_len > 0 && total_len < sizeof(buffer) - 2 && buffer[total_len - 1] != '\n') {
+    if (total_len > 0 && total_len < sizeof(buffer) - 2 && buffer[total_len - 1] != '\n') 
+    {
         buffer[total_len] = '\n';
         buffer[total_len + 1] = '\0';
     }

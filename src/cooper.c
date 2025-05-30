@@ -486,12 +486,6 @@ int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t 
         return 1;
     }
 
-    err = pthread_detach(*thread);
-    if (err != 0)
-    {
-        printf("Failed to detach %s thread: %d\n", name, err);
-        return 1;
-    }
     return 0;
 }
 
@@ -2347,14 +2341,16 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         global_ctx->mem_sampling_running = 0;
         pthread_mutex_unlock(&global_ctx->app_memory_metrics->lock);
 
-        /* Give the export thread a moment to perform final export */
-        usleep(100000); /* 100ms should be enough for final export */
+        LOG_INFO("Waiting for sample thread to terminate\n");
+        int res = safe_thread_join(global_ctx->mem_sampling_thread, 3);
+        if (res != 0)
+            LOG_WARN("Sample thread did not terminate cleanly: %d\n", res);
 
-        pthread_t export_thread_copy = global_ctx->export_thread;
-        pthread_detach(global_ctx->export_thread);
         LOG_INFO("Waiting for export thread to terminate\n");
-        safe_thread_join(export_thread_copy, 2);
-
+        res = safe_thread_join(global_ctx->export_thread, 3);
+        if (res != 0)
+            LOG_WARN("Export thread did not terminate cleanly: %d\n", res);
+    
         if (global_ctx)
         {
             /* Only if we have a valid JNI environment */
