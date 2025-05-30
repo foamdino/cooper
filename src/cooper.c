@@ -19,11 +19,11 @@ static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Arena configurations */
 static const arena_config_t arena_configs[] = {
-    {"exception_arena", EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
-    {"log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
-    {"sample_arena", SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
-    {"config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
-    {"metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
+    {EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
+    {LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
+    {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
+    {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
+    {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
 };
 
 #ifdef ENABLE_DEBUG_LOGS
@@ -860,7 +860,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
             /* If not found, create new metrics structure */
             if (!found) 
             {
-                arena_t *metrics_arena = find_arena(ctx->arena_head, "metrics_arena");
+                arena_t *metrics_arena = find_arena(ctx->arena_head, METRICS_ARENA_NAME);
                 if (metrics_arena) 
                 {
                     thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
@@ -1473,7 +1473,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
         LOG_DEBUG("Method params: \n");
 
-        arena_t *arena = find_arena(global_ctx->arena_head, "exception_arena");
+        arena_t *arena = find_arena(global_ctx->arena_head, EXCEPTION_ARENA_NAME);
         if (arena == NULL)
         {
             LOG_ERROR(">> Unable to find exception arena on list! <<\n");
@@ -1684,7 +1684,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     char line[256];
     char *current_section = NULL;
     
-    arena_t *arena = find_arena(ctx->arena_head, "config_arena");
+    arena_t *arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
 
     while (fgets(line, sizeof(line), fp))
     {
@@ -1906,7 +1906,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Add new entry */
-    arena_t *arena = find_arena(ctx->arena_head, "metrics_arena");
+    arena_t *arena = find_arena(ctx->arena_head, METRICS_ARENA_NAME);
     if (!arena) 
     {
         LOG_DEBUG("Could not find metrics arena\n");
@@ -2195,12 +2195,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         }
     }
 
-    /* Enable debug output */
-// #ifdef ENABLE_DEBUG_LOGS
-//     current_log_level = LOG_LEVEL_DEBUG;
-// #else
-//     current_log_level = LOG_LEVEL_INFO;
-// #endif
     if (options && strstr(options, "loglevel=debug"))
         current_log_level = LOG_LEVEL_DEBUG;
 
@@ -2231,7 +2225,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Init logging after all arenas are created */
-    arena_t *log_arena = find_arena(global_ctx->arena_head, "log_arena");
+    arena_t *log_arena = find_arena(global_ctx->arena_head, LOG_ARENA_NAME);
     if (!log_arena) 
     {
         printf("Log arena not found\n");
@@ -2246,7 +2240,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Initialize metrics after all arenas are created */
-    arena_t *metrics_arena = find_arena(global_ctx->arena_head, "metrics_arena");
+    arena_t *metrics_arena = find_arena(global_ctx->arena_head, METRICS_ARENA_NAME);
     if (!metrics_arena) 
     {
         LOG_ERROR("Metrics arena not found\n");

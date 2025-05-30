@@ -45,6 +45,13 @@
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
 
+/* Arena Names */
+#define EXCEPTION_ARENA_NAME "exception_arena"
+#define LOG_ARENA_NAME "log_arena"
+#define SAMPLE_ARENA_NAME "sample_arena"
+#define CONFIG_ARENA_NAME "config_arena"
+#define METRICS_ARENA_NAME "metrics_arena"
+
 /* Metric flags for method sampling */
 #define METRIC_FLAG_TIME    0x0001
 #define METRIC_FLAG_MEMORY  0x0002
@@ -53,6 +60,8 @@
 /* Falsey/Truthy */
 #define COOPER_OK 0
 #define COOPER_ERR 1
+
+
 
 typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
