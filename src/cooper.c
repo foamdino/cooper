@@ -422,6 +422,168 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         (unsigned long)metrics->alloc_bytes[method_index]);
 }
 
+static object_allocation_metrics_t *init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
+{
+
+    assert(arena != NULL);
+
+    object_allocation_metrics_t *metrics = arena_alloc(arena, sizeof(object_allocation_metrics_t));
+    if (!metrics)
+        return NULL;
+
+    metrics->capacity = initial_capacity;
+    metrics->count = 0;
+
+    /* Allocate arrays in SoA structure */
+    metrics->class_signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
+    if (!metrics->class_signatures)
+        return NULL;
+
+    metrics->allocation_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->allocation_counts)
+        return NULL;
+
+    metrics->total_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->total_bytes)
+        return NULL;
+
+    metrics->peak_instances = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->peak_instances)
+        return NULL;
+
+    metrics->current_instances = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->current_instances)
+        return NULL;
+
+    metrics->min_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->min_size)
+        return NULL;
+
+    metrics->max_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->max_size)
+        return NULL;
+
+    metrics->avg_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    if (!metrics->avg_size)
+        return NULL;
+    
+    /* Initialize arrays with zeros */
+    memset(metrics->allocation_counts, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->total_bytes, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->peak_instances, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->current_instances, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->max_size, 0, initial_capacity * sizeof(uint64_t));
+    memset(metrics->avg_size, 0, initial_capacity * sizeof(uint64_t));
+    
+    /* Set min_size to maximum value initially */
+    for (size_t i = 0; i < initial_capacity; i++)
+        metrics->min_size[i] = UINT64_MAX;
+    
+    return metrics;
+}
+
+/**
+ * 
+ * @return position in array of object allocation stats or -1 if no space left
+ */
+static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *class_sig)
+{
+    assert(obj_metrics != NULL);
+    assert(class_sig != NULL);
+
+    if (!obj_metrics)
+    {
+        LOG_ERROR("ob_metrics is NULL!\n");
+        return -1;
+    }
+
+    if (!class_sig)
+    {
+        LOG_ERROR("class_sig is NULL!\n");
+        return -1;
+    }
+    
+    for (int i = 0; i < obj_metrics->count; i++)
+    {
+        if (obj_metrics->class_signatures[i] != NULL)
+        {
+            if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
+                return i;
+        }
+        else
+        {
+            LOG_ERROR("class_signatures[%d] is NULL when count=%zu\n", i, obj_metrics->count);
+            return -1;
+        }
+    }
+
+    /* Do we have space to add new allocation stats? */
+    if (obj_metrics->count >= obj_metrics->capacity)
+    {
+        LOG_WARN("Object metrics capacity reached (%zu)\n", obj_metrics->capacity);
+        return -1;
+    }
+
+    arena_t *arena = find_arena(global_ctx->arena_head, METRICS_ARENA_NAME);
+    if (!arena)
+    {
+        LOG_ERROR("unable to find metrics arena!\n");
+        return -1;
+    }
+
+    int index = obj_metrics->count;
+
+    obj_metrics->class_signatures[index] = arena_strdup(arena, class_sig);
+    if (!obj_metrics->class_signatures[index]) 
+    {
+        LOG_ERROR("Failed to allocate memory for class signature: %s\n", class_sig);
+        return -1;
+    }
+    obj_metrics->allocation_counts[index] = 0;
+    obj_metrics->total_bytes[index] = 0;
+    obj_metrics->min_size[index] = UINT64_MAX;
+    obj_metrics->max_size[index] = 0;
+    obj_metrics->current_instances[index] = 0;
+    
+    obj_metrics->count++;
+    LOG_DEBUG("Added object type at index %d: %s (total types: %zu)\n", 
+        index, class_sig, obj_metrics->count);
+    return index;
+}
+
+static void update_object_allocation_stats(agent_context_t *ctx, const char *class_sig, jlong size)
+{
+    assert(ctx != NULL);
+    assert(class_sig != NULL);
+    assert(size != NULL);
+
+    if (!ctx || !class_sig || !size)
+        return;
+
+    pthread_mutex_lock(&ctx->samples_lock);
+    
+    int index = find_or_add_object_type(ctx->object_metrics, class_sig);
+    if (index >= 0) 
+    {
+        ctx->object_metrics->allocation_counts[index]++;
+        ctx->object_metrics->total_bytes[index] += size;
+        ctx->object_metrics->current_instances[index]++;
+        
+        /* Update size statistics */
+        if (size < ctx->object_metrics->min_size[index])
+            ctx->object_metrics->min_size[index] = size;
+
+        if (size > ctx->object_metrics->max_size[index])
+            ctx->object_metrics->max_size[index] = size;
+        
+        /* Update average size */
+        ctx->object_metrics->avg_size[index] = 
+            ctx->object_metrics->total_bytes[index] / ctx->object_metrics->allocation_counts[index];
+    }
+    
+    pthread_mutex_unlock(&ctx->samples_lock);
+}
+
 /**
  * Helper function to safely join a thread with timeout
  * Works across different platforms without relying on non-portable extensions
@@ -576,6 +738,29 @@ void export_to_file(agent_context_t *ctx)
 
     pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
+    object_allocation_metrics_t *obj_metrics = ctx->object_metrics;
+
+    if (obj_metrics)
+    {
+        /* Add object allocation statistics section */
+        fprintf(fp, "# Object Allocation Statistics\n");
+        fprintf(fp, "# Format: class_signature, allocation_count, total_bytes, current_instances, avg_size, min_size, max_size\n");
+
+        for (size_t i = 0; i < obj_metrics->count; i++) 
+        {
+            fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu\n",
+                obj_metrics->class_signatures[i],
+                (unsigned long)obj_metrics->allocation_counts[i],
+                (unsigned long)obj_metrics->total_bytes[i],
+                (unsigned long)obj_metrics->current_instances[i],
+                (unsigned long)obj_metrics->avg_size[i],
+                (unsigned long)obj_metrics->min_size[i],
+                (unsigned long)obj_metrics->max_size[i]);
+        }
+    }
+    else
+        fprintf(fp, "# No object allocation metrics available\n");
+    
     fprintf(fp, "# ------ \n\n");
 
     fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
@@ -1566,6 +1751,18 @@ deallocate:
 
 static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread, jobject object, jclass klass, jlong size)
 {
+    /* Get the class signature for tracking all allocations */
+    char *class_sig = NULL;
+    jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+    if (err != JVMTI_ERROR_NONE)
+    {
+        LOG_DEBUG("[object_alloc_callback] Unable to get class signature for object tracking\n");
+        return;
+    }
+
+    /* Update the global allocation stats */
+    update_object_allocation_stats(global_ctx, class_sig, size);
+
     /* Get thread-local context to prevent re-entrancy */
     thread_context_t *context = get_thread_local_context();
     if (!context)
@@ -1593,18 +1790,9 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld", 
          (long long)size, sample->method_index, (long long)sample->current_alloc_bytes);
     
-    /* Optionally, get class name for detailed logging */
-    if (current_log_level <= LOG_LEVEL_DEBUG) {
-        if ((global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY) != 0) {
-            char* class_sig;
-            jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-            if (err == JVMTI_ERROR_NONE) {
-                LOG_DEBUG("Allocated object of class: %s, size: %lld\n", 
-                    class_sig, (long long)size);
-                (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
-            }
-        }
-    }
+    LOG_DEBUG("Allocated object of class: %s, size: %lld\n", 
+        class_sig, (long long)size);
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
 }
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
@@ -2172,6 +2360,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->config.export_interval = 60;
     global_ctx->config.mem_sample_interval = 1;
     global_ctx->metrics = NULL;
+    global_ctx->object_metrics = NULL;
     global_ctx->arena_head = NULL;
     global_ctx->arena_tail = NULL;
     global_ctx->thread_mem_head = NULL;
@@ -2243,10 +2432,25 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     size_t initial_capacity = 256;
     global_ctx->metrics = init_method_metrics(metrics_arena, initial_capacity);
-    if (!global_ctx->metrics) {
+    if (!global_ctx->metrics) 
+    {
         LOG_ERROR("Failed to initialize metrics structure\n");
         return JNI_ERR;
     }
+
+    LOG_INFO("Metrics arena usage before object init: %zu / %zu bytes\n", 
+    metrics_arena->used, metrics_arena->total_sz);
+
+    /* Add object allocation metrics initialization */
+    global_ctx->object_metrics = init_object_allocation_metrics(metrics_arena, MAX_OBJECT_TYPES);
+    if (!global_ctx->object_metrics) 
+    {
+        LOG_ERROR("Failed to initialize object allocation metrics structure\n");
+        return JNI_ERR;
+    }
+
+    LOG_INFO("Metrics arena usage after object init: %zu / %zu bytes\n", 
+    metrics_arena->used, metrics_arena->total_sz);
 
     global_ctx->app_memory_metrics = arena_alloc(metrics_arena, sizeof(app_memory_metrics_t));
     if (!global_ctx->app_memory_metrics)
@@ -2408,6 +2612,7 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         destroy_all_arenas(&global_ctx->arena_head, &global_ctx->arena_tail);
         /* Null out metrics */
         global_ctx->metrics = NULL;
+        global_ctx->object_metrics = NULL;
 
         /* Destroy mutex */
         pthread_mutex_destroy(&global_ctx->samples_lock);

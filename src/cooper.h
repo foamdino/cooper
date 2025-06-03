@@ -29,6 +29,7 @@
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
 #define MAX_THREAD_MAPPINGS 1024
 #define MAX_MEMORY_SAMPLES 100 /**< The max number of memory samples to keep */
+#define MAX_OBJECT_TYPES 256 /**< The max types of objects to track */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define EXCEPTION_ARENA_SZ 1024 * 1024
@@ -75,6 +76,7 @@ typedef struct agent_context agent_context_t;
 typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
 typedef struct memory_metrics_mgr memory_metrics_mgr_t;
+typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef void *thread_fn(void *args);
 
 /**
@@ -126,6 +128,23 @@ struct thread_memory_metrics
     uint64_t timestamps[MAX_MEMORY_SAMPLES];
     size_t sample_count;
     thread_memory_metrics_t *next;
+};
+
+struct object_allocation_metrics
+{
+    size_t capacity;
+    size_t count;
+
+    char **class_signatures; /**< Array of class signatures */
+
+    uint64_t *allocation_counts; /**< Number of instances allocated */
+    uint64_t *total_bytes; /**< Total bytes allocated for this type */
+    uint64_t *peak_instances; /**< Peak number of live instances */
+    uint64_t *current_instances; /**< Current live instances */
+
+    uint64_t *min_size; /**< Min object size seen */
+    uint64_t *max_size; /**< Max object size seen */
+    uint64_t *avg_size; /**< Avg object size seen */
 };
 
 /**
@@ -222,6 +241,7 @@ struct agent_context
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
     app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
     thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
+    object_allocation_metrics_t *object_metrics; /**< Object allocation metrics in SoA format */
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
 };
 
