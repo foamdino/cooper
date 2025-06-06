@@ -365,7 +365,7 @@ static uint64_t get_current_time_ns()
  * 
  * Return NULL if it fails to allocate space in the provided arena
  */
-static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id, jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
+static method_sample_t *init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
 {
 
     assert(arena != NULL);
@@ -1367,6 +1367,9 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
  */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method)
 {
+    UNUSED(jni);
+    UNUSED(thread);
+    
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
@@ -1400,7 +1403,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         if (!arena) 
             return;
 
-        method_sample_t *sample = init_method_sample(arena, sample_index - 1, method, jvmti, jni, thread);
+        method_sample_t *sample = init_method_sample(arena, sample_index - 1, method);
         if (!sample) 
             return;
 
@@ -1475,7 +1478,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     }
 
     /* Now create the actual sample with the correct data */
-    method_sample_t *sample = init_method_sample(arena, sample_index -1, method, jvmti, jni, thread); /* Convert sample_index back to 0-based index */
+    method_sample_t *sample = init_method_sample(arena, sample_index -1, method); /* Convert sample_index back to 0-based index */
     if (!sample)
     {
         LOG_ERROR("Failed to allocate method sample context!\n");
@@ -1505,6 +1508,11 @@ deallocate:
  */
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value)
 {
+    UNUSED(jni);
+    UNUSED(thread);
+    UNUSED(was_popped_by_exception);
+    UNUSED(return_value);
+    
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
@@ -1657,6 +1665,9 @@ deallocate:
  */
 void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location)
 {
+    UNUSED(location);
+    UNUSED(catch_location);
+    
     char *method_name = NULL;
     char *method_signature = NULL;
 
@@ -1837,6 +1848,10 @@ deallocate:
 
 static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread, jobject object, jclass klass, jlong size)
 {
+    UNUSED(jni);
+    UNUSED(thread);
+    UNUSED(object);
+    
     /* Get the class signature for tracking all allocations */
     char *class_sig = NULL;
     jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
@@ -1881,8 +1896,10 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
 }
 
-static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread thread)
+static void JNICALL thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 {
+    UNUSED(jvmti);
+
     /* Check we can do anything here before looking up thread context */
     if (!thread)
         return;
@@ -2178,6 +2195,9 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
  */
 static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 {
+    UNUSED(jvmti_env);
+    UNUSED(thread);
+    
     if (jni_env == NULL)
     {
         LOG_ERROR("No jni environment\n");
@@ -2324,6 +2344,8 @@ static int init_jvm_capabilities(agent_context_t *ctx)
  */
 JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 {
+    UNUSED(reserved);
+    
     /* Allocate and initialize the agent context */
     global_ctx = malloc(sizeof(agent_context_t));
     if (!global_ctx) 

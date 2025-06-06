@@ -24,6 +24,9 @@
 
 #include "arena.h"
 
+/* Macro to tag callback function params that we don't use */
+#define UNUSED(x) (void)(x)
+
 #define DEFAULT_CFG_FILE "trace.ini"
 #define MAX_STR_LEN 4096 /**< Max length of string we want to care about */
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
