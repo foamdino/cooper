@@ -2438,8 +2438,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    LOG_INFO("Metrics arena usage before object init: %zu / %zu bytes\n", 
-    metrics_arena->used, metrics_arena->total_sz);
+    LOG_DEBUG("Metrics arena usage before object init: %zu / %zu bytes\n", metrics_arena->used, metrics_arena->total_sz);
 
     /* Add object allocation metrics initialization */
     global_ctx->object_metrics = init_object_allocation_metrics(metrics_arena, MAX_OBJECT_TYPES);
@@ -2449,8 +2448,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    LOG_INFO("Metrics arena usage after object init: %zu / %zu bytes\n", 
-    metrics_arena->used, metrics_arena->total_sz);
+    LOG_DEBUG("Metrics arena usage after object init: %zu / %zu bytes\n", metrics_arena->used, metrics_arena->total_sz);
 
     global_ctx->app_memory_metrics = arena_alloc(metrics_arena, sizeof(app_memory_metrics_t));
     if (!global_ctx->app_memory_metrics)

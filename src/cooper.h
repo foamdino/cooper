@@ -29,7 +29,7 @@
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
 #define MAX_THREAD_MAPPINGS 1024
 #define MAX_MEMORY_SAMPLES 100 /**< The max number of memory samples to keep */
-#define MAX_OBJECT_TYPES 256 /**< The max types of objects to track */
+#define MAX_OBJECT_TYPES 2048 /**< The max types of objects to track */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define EXCEPTION_ARENA_SZ 1024 * 1024
