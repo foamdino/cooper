@@ -58,7 +58,7 @@
 #define METRIC_FLAG_MEMORY  0x0002
 #define METRIC_FLAG_CPU     0x0004
 
-/* Falsey/Truthy */
+/* Ok/Err */
 #define COOPER_OK 0
 #define COOPER_ERR 1
 

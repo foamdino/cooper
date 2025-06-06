@@ -10,6 +10,7 @@
 #include "log.h"
 #include "cpu.h"
 #include "cache.h"
+#include "config.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -1926,163 +1927,64 @@ static void JNICALL thread_end_callback(jvmtiEnv *jvmit, JNIEnv *jni, jthread th
  * 
  * @param ctx       Pointer to agent context
  * @param cf        Path to config file, or NULL to use default
- * @return          0 on success, 1 on failure
+ * @return          COOPER_OK on success, COOPER_ERR on failure
  */
 int load_config(agent_context_t *ctx, const char *cf)
 {
     assert(ctx != NULL);
     
-    int res = 0;
+    if (!ctx) 
+        return COOPER_ERR;
     
-    if (ctx == NULL) 
-        return 1;
-    
-    LOG_INFO("loading config from: %s, default config_file: %s\n", cf, DEFAULT_CFG_FILE);
-    if (!cf) 
-        cf = DEFAULT_CFG_FILE;
-    
-    FILE *fp = fopen(cf, "r");
-    if (!fp) 
-    {
-        LOG_ERROR("Could not open config file: %s\n", cf);
-        return 1;
+    arena_t *config_arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
+    if (!config_arena) {
+        LOG_ERROR("Config arena not found\n");
+        return COOPER_ERR;
     }
     
-    char line[256];
-    char *current_section = NULL;
-    
-    arena_t *arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
-
-    while (fgets(line, sizeof(line), fp))
+    cooper_config_t config;
+    if (config_parse(config_arena, cf, &config) != 0) 
     {
-        /* Process the line (strip comments, trim whitespace) */
-        char *processed = arena_process_config_line(arena, line);
-        if (!processed || processed[0] == '\0')
-            continue;  /* Skip empty lines */
+        LOG_ERROR("Failed to parse configuration\n");
+        return COOPER_ERR;
+    }
+    
+    /* Apply configuration to agent context */
+    ctx->config.rate = config.default_sample_rate;
+    ctx->config.sample_file_path = config.sample_file_path;
+    ctx->config.export_method = config.export_method;
+    ctx->config.export_interval = config.export_interval;
+    ctx->config.mem_sample_interval = config.mem_sample_interval;
+    ctx->config.num_filters = 0; /* We'll track this as we add methods */
+    
+    /* Convert filters to metrics entries */
+    for (size_t i = 0; i < config.num_filters; i++) {
+        method_filter_entry_t *filter = &config.filters[i];
         
-        /* Handle section headers */
-        if (processed[0] == '[')
+        /* Build full signature for matching */
+        char full_sig[1024];
+        int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", 
+                             filter->class_signature, filter->method_name, filter->method_signature);
+        
+        if (written < 0 || written >= (int)sizeof(full_sig)) 
         {
-            current_section = processed;  /* Just point to the arena-allocated string */
+            LOG_ERROR("Method signature too long: %s:%s:%s\n", 
+                filter->class_signature, filter->method_name, filter->method_signature);
             continue;
         }
         
-        /* Skip any data before the first section */
-        if (!current_section)
+        /* Add to metrics structure */
+        int method_index = add_method_to_metrics(ctx, full_sig, filter->sample_rate, filter->metric_flags);
+        if (method_index < 0) 
+        {
+            LOG_ERROR("Failed to add method filter: %s\n", full_sig);
             continue;
+        }
         
-        /* Based on the section we're in, interpret the value differently */
-        if (strcmp(current_section, "[method_signatures]") == 0)
-        {
-            LOG_DEBUG("Processing line in [method_signatures]: '%s'\n", processed);
-            /* Skip over the filters line, end of filters is a line containing a single ']' */
-            if (strncmp(processed, "filters =", 9) == 0 || processed[0] == ']')
-                continue;
-            
-            /* Process a filter entry in the new format: 
-               class_signature:method_name:method_signature:sample_rate:metrics */
-            char class_sig[MAX_SIG_SZ], method_name[MAX_SIG_SZ], method_sig[MAX_SIG_SZ];
-            int sample_rate;
-            char metrics[MAX_SIG_SZ] = {0};
-            
-            /* Initialize with default values */
-            strcpy(method_name, "*");        /* Default to wildcard method */
-            strcpy(method_sig, "*");         /* Default to wildcard signature */
-            sample_rate = ctx->config.rate;  /* Default to global rate */
-            
-            /* Try to parse with the new format first */
-            int parsed = sscanf(processed, "%[^:]:%[^:]:%[^:]:%d:%s", 
-                              class_sig, method_name, method_sig, &sample_rate, metrics);
-            
-            /* Handle partially specified entries */
-            if (parsed < 1) 
-            {
-                LOG_ERROR("Invalid method filter format: %s\n", processed);
-                continue;
-            }
-            
-            /* Build the full signature for matching */
-            char full_sig[MAX_SIG_SZ * 3];
-            snprintf(full_sig, sizeof(full_sig), "%s %s %s", class_sig, method_name, method_sig);
-            
-            /* Determine which metrics to collect */
-            unsigned int metric_flags = 0;
-            if (parsed >= 5) 
-            {
-                if (strstr(metrics, "time"))   metric_flags |= METRIC_FLAG_TIME;
-                if (strstr(metrics, "memory")) metric_flags |= METRIC_FLAG_MEMORY;
-                if (strstr(metrics, "cpu"))    metric_flags |= METRIC_FLAG_CPU;
-            } 
-            else 
-            {
-                /* Default to collecting time if not specified */
-                metric_flags = METRIC_FLAG_TIME;
-            }
-            
-            /* Add to metrics SoA structure */
-            int method_index = add_method_to_metrics(ctx, full_sig, sample_rate, metric_flags);
-            if (method_index < 0) {
-                LOG_ERROR("Failed to add method filter: %s\n", full_sig);
-                continue;
-            }
-            
-            LOG_DEBUG("Added method filter #%d: '%s' with rate=%d\n", 
-                method_index, full_sig, sample_rate);
-            
-            /* Keep track of the number of filters */
-            ctx->config.num_filters++;
-        }
-        else
-        {
-            /* Extract and trim the value part */
-            char *value = arena_extract_and_trim_value(arena, processed);
-            if (!value)
-                continue;
-            
-            if (strcmp(current_section, "[sample_rate]") == 0)
-            {
-                /* This is now the default/global sample rate */
-                int rate;
-                if (sscanf(value, "%d", &rate) == 1)
-                    ctx->config.rate = rate > 0 ? rate : 1;
-            }
-            else if (strcmp(current_section, "[sample_file_location]") == 0)
-            {
-                /* Store the arena-allocated string directly */
-                ctx->config.sample_file_path = value;
-            }
-            else if (strcmp(current_section, "[export]") == 0)
-            {
-                if (strstr(processed, "method"))
-                {
-                    /* Store the arena-allocated string directly */
-                    ctx->config.export_method = value;
-                }
-                else if (strstr(processed, "interval"))
-                {
-                    if (sscanf(value, "%d", &ctx->config.export_interval) != 1)
-                        LOG_WARN("WARNING: Invalid interval value: %s\n", value);
-                }
-            }
-        }
+        ctx->config.num_filters++;
     }
     
-    fclose(fp);
-    
-    /* Set defaults if needed */
-    if (!ctx->config.export_method) 
-    {
-        ctx->config.export_method = arena_strdup(arena, "file");
-        if (!ctx->config.export_method)
-            LOG_ERROR("Failed to set default export_method\n");
-    }
-    
-    LOG_INFO("Config loaded: default_rate=%d, filters=%d, path=%s, method=%s\n",
-        ctx->config.rate, ctx->config.num_filters,
-        ctx->config.sample_file_path ? ctx->config.sample_file_path : "NULL",
-        ctx->config.export_method ? ctx->config.export_method : "NULL");
-    
-    return res;
+    return COOPER_OK;
 }
 
 /**
@@ -2501,7 +2403,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* We start the logging thread as we initialise the system now */
-    if (init_log_system(log_queue, log_arena, global_ctx->log_file) != 0)
+    if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
     {
         cleanup(global_ctx);
         return JNI_ERR;
@@ -2556,7 +2458,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Now we have logging configured, load config */
-    if (load_config(global_ctx, "./trace.ini") != 0)
+    if (load_config(global_ctx, "./trace.ini") != COOPER_OK)
     {
         LOG_ERROR("Unable to load config_file!\n");
         return JNI_ERR;
