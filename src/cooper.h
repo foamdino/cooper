@@ -68,6 +68,8 @@ typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct method_cache_key method_cache_key_t;
+typedef struct method_cache_value method_cache_value_t;
 typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct app_memory_metrics app_memory_metrics_t;
@@ -186,6 +188,17 @@ struct method_sample
     uint64_t current_alloc_bytes; /**< Running total of allocations during method */
     uint64_t start_cpu;     /**< Starting CPU cycle count */
     method_sample_t *parent; /**< Parent (or calling) method */
+};
+
+struct method_cache_key {
+    jmethodID method_id;
+};
+
+struct method_cache_value {
+    char class_signature[MAX_SIG_SZ];
+    char method_name[64];
+    char method_signature[256];
+    int should_sample;
 };
 
 struct thread_context

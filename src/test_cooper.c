@@ -8,8 +8,32 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "cpu.h"
+#include "cache.h"
 
 log_q_t *log_queue = NULL;
+
+/* Comparison functions for cache tests */
+static int int_compare(const void *key1, const void *key2) {
+    int k1 = *(const int*)key1;
+    int k2 = *(const int*)key2;
+    return (k1 == k2) ? 0 : ((k1 < k2) ? -1 : 1);
+}
+
+static int string_compare(const void *key1, const void *key2) {
+    return strcmp((const char*)key1, (const char*)key2);
+}
+
+static int method_key_compare(const void *key1, const void *key2) {
+    typedef struct {
+        void *method_id;
+    } test_method_key_t;
+    
+    const test_method_key_t *k1 = (const test_method_key_t *)key1;
+    const test_method_key_t *k2 = (const test_method_key_t *)key2;
+    
+    if (k1->method_id == k2->method_id) return 0;
+    return (k1->method_id < k2->method_id) ? -1 : 1;
+}
 
 /* Helper to create a temporary config file */
 static const char *create_temp_config(const char *content) 
@@ -781,6 +805,461 @@ static void test_cpu_cycles()
 #endif
 }
 
+/* Test basic cache functionality */
+static void test_cache_basic()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    /* Simple integer key-value cache */
+    cache_config_t config = {
+        .max_entries = 4,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = NULL, /* Will set custom compare function */
+        .key_copy = NULL,    /* Use default memcpy */
+        .value_copy = NULL,  /* Use default memcpy */
+        .entry_init = NULL,
+        .name = "test_cache"
+    };
+    
+    config.key_compare = int_compare;
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Test cache is initially empty */
+    int value;
+    assert(cache_get(cache, &(int){1}, &value) == 0); /* Should miss */
+    
+    /* Test putting and getting values */
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
+    assert(cache_get(cache, &(int){1}, &value) == 1);
+    assert(value == 100);
+    
+    /* Test multiple entries */
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
+    
+    /* Verify all entries */
+    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
+    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    
+    /* Test cache stats */
+    size_t entries;
+    cache_stats(cache, NULL, NULL, &entries);
+    assert(entries == 4);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_basic: All tests passed\n");
+}
+
+/* Test cache eviction when full */
+static void test_cache_eviction()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    
+    cache_config_t config = {
+        .max_entries = 3,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "eviction_test"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Fill cache to capacity */
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
+    
+    /* Verify all entries are present */
+    int value;
+    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
+    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
+    
+    /* Add another entry - should evict the first one (round-robin) */
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
+    
+    /* First entry should be evicted */
+    assert(cache_get(cache, &(int){1}, &value) == 0); /* Should miss */
+    
+    /* Other entries should still be present */
+    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    
+    /* Add another entry - should evict the second one */
+    assert(cache_put(cache, &(int){5}, &(int){500}) == 1);
+    assert(cache_get(cache, &(int){2}, &value) == 0); /* Should miss */
+    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    assert(cache_get(cache, &(int){5}, &value) == 1 && value == 500);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_eviction: All tests passed\n");
+}
+
+/* Test cache update of existing entries */
+static void test_cache_update()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    cache_config_t config = {
+        .max_entries = 4,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "update_test"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Add initial entry */
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
+    
+    int value;
+    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
+    
+    /* Update existing entry */
+    assert(cache_put(cache, &(int){1}, &(int){999}) == 1);
+    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 999);
+    
+    /* Cache should still have only 1 entry */
+    size_t entries;
+    cache_stats(cache, NULL, NULL, &entries);
+    assert(entries == 1);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_update: All tests passed\n");
+}
+
+/* Test cache clear functionality */
+static void test_cache_clear()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    cache_config_t config = {
+        .max_entries = 4,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "clear_test"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Add some entries */
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
+    
+    /* Verify entries exist */
+    int value;
+    assert(cache_get(cache, &(int){1}, &value) == 1);
+    assert(cache_get(cache, &(int){2}, &value) == 1);
+    assert(cache_get(cache, &(int){3}, &value) == 1);
+    
+    /* Clear the cache */
+    cache_clear(cache);
+    
+    /* All entries should be gone */
+    assert(cache_get(cache, &(int){1}, &value) == 0);
+    assert(cache_get(cache, &(int){2}, &value) == 0);
+    assert(cache_get(cache, &(int){3}, &value) == 0);
+    
+    /* Cache should be empty */
+    size_t entries;
+    cache_stats(cache, NULL, NULL, &entries);
+    assert(entries == 0);
+    
+    /* Should be able to add entries again */
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
+    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_clear: All tests passed\n");
+}
+
+/* Test thread-local cache functionality */
+static void test_cache_tls()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    /* Initialize TLS cache system */
+    assert(cache_tls_init() == 0);
+    
+    cache_config_t config = {
+        .max_entries = 4,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "tls_test"
+    };
+    
+    /* Get thread-local cache instance */
+    cache_t *cache1 = cache_tls_get("test_cache_1", test_arena, &config);
+    assert(cache1 != NULL);
+    
+    /* Get the same cache again - should return same instance */
+    cache_t *cache1_again = cache_tls_get("test_cache_1", test_arena, &config);
+    assert(cache1_again == cache1);
+    
+    /* Get a different cache - should return different instance */
+    cache_t *cache2 = cache_tls_get("test_cache_2", test_arena, &config);
+    assert(cache2 != NULL);
+    assert(cache2 != cache1);
+    
+    /* Test that caches are independent */
+    assert(cache_put(cache1, &(int){1}, &(int){100}) == 1);
+    assert(cache_put(cache2, &(int){1}, &(int){200}) == 1);
+    
+    int value;
+    assert(cache_get(cache1, &(int){1}, &value) == 1 && value == 100);
+    assert(cache_get(cache2, &(int){1}, &value) == 1 && value == 200);
+    
+    /* Cleanup TLS */
+    cache_tls_cleanup();
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_tls: All tests passed\n");
+}
+
+/* Test method cache specific functionality */
+static void test_method_cache()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    /* Method cache key and value structures for testing */
+    typedef struct {
+        void *method_id; /* Using void* to simulate jmethodID */
+    } test_method_key_t;
+    
+    typedef struct {
+        char class_signature[MAX_SIG_SZ];
+        char method_name[64];
+        char method_signature[256];
+        int should_sample;
+    } test_method_value_t;
+    
+    cache_config_t config = {
+        .max_entries = 8,
+        .key_size = sizeof(test_method_key_t),
+        .value_size = sizeof(test_method_value_t),
+        .key_compare = method_key_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "method_cache_test"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Simulate method IDs */
+    void *method1 = (void*)0x1000;
+    void *method2 = (void*)0x2000;
+    void *method3 = (void*)0x3000;
+    
+    /* Test method cache operations */
+    test_method_key_t key1 = { .method_id = method1 };
+    test_method_value_t value1 = {
+        .should_sample = 1
+    };
+    strcpy(value1.class_signature, "Lcom/example/TestClass;");
+    strcpy(value1.method_name, "testMethod");
+    strcpy(value1.method_signature, "()V");
+    
+    /* Cache miss initially */
+    test_method_value_t retrieved;
+    assert(cache_get(cache, &key1, &retrieved) == 0);
+    
+    /* Put method in cache */
+    assert(cache_put(cache, &key1, &value1) == 1);
+    
+    /* Cache hit */
+    assert(cache_get(cache, &key1, &retrieved) == 1);
+    assert(retrieved.should_sample == 1);
+    assert(strcmp(retrieved.class_signature, "Lcom/example/TestClass;") == 0);
+    assert(strcmp(retrieved.method_name, "testMethod") == 0);
+    assert(strcmp(retrieved.method_signature, "()V") == 0);
+    
+    /* Test multiple methods */
+    test_method_key_t key2 = { .method_id = method2 };
+    test_method_value_t value2 = {
+        .should_sample = 0
+    };
+    strcpy(value2.class_signature, "Ljava/lang/Object;");
+    strcpy(value2.method_name, "toString");
+    strcpy(value2.method_signature, "()Ljava/lang/String;");
+    
+    assert(cache_put(cache, &key2, &value2) == 1);
+    assert(cache_get(cache, &key2, &retrieved) == 1);
+    assert(retrieved.should_sample == 0);
+    
+    /* First method should still be cached */
+    assert(cache_get(cache, &key1, &retrieved) == 1);
+    assert(retrieved.should_sample == 1);
+    
+    /* Test method not in cache */
+    test_method_key_t key3 = { .method_id = method3 };
+    assert(cache_get(cache, &key3, &retrieved) == 0);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_method_cache: All tests passed\n");
+}
+
+/* Test cache error conditions */
+static void test_cache_errors()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    /* Test invalid configurations */
+    cache_config_t bad_config = {
+        .max_entries = 0,  /* Invalid */
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "bad_config"
+    };
+    
+    assert(cache_init(test_arena, &bad_config) == NULL);
+    
+    bad_config.max_entries = 4;
+    bad_config.key_size = 0;  /* Invalid */
+    assert(cache_init(test_arena, &bad_config) == NULL);
+    
+    bad_config.key_size = sizeof(int);
+    bad_config.value_size = 0;  /* Invalid */
+    assert(cache_init(test_arena, &bad_config) == NULL);
+    
+    bad_config.value_size = sizeof(int);
+    bad_config.key_compare = NULL;  /* Invalid */
+    assert(cache_init(test_arena, &bad_config) == NULL);
+    
+    /* Test NULL parameters */
+    assert(cache_init(NULL, &bad_config) == NULL);
+    
+    cache_config_t good_config = {
+        .max_entries = 4,
+        .key_size = sizeof(int),
+        .value_size = sizeof(int),
+        .key_compare = int_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "good_config"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &good_config);
+    assert(cache != NULL);
+    
+    /* Test NULL parameters on operations */
+    int value;
+    assert(cache_get(NULL, &(int){1}, &value) == 0);
+    assert(cache_get(cache, NULL, &value) == 0);
+    
+    assert(cache_put(NULL, &(int){1}, &(int){100}) == 0);
+    assert(cache_put(cache, NULL, &(int){100}) == 0);
+    assert(cache_put(cache, &(int){1}, NULL) == 0);
+    
+    /* These should not crash */
+    cache_clear(NULL);
+    cache_stats(NULL, NULL, NULL, NULL);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_errors: All tests passed\n");
+}
+
+/* Test cache with string keys */
+static void test_cache_string_keys()
+{
+    agent_context_t *ctx = init_test_context();
+    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    
+    cache_config_t config = {
+        .max_entries = 4,
+        .key_size = 32,  /* Fixed size string keys */
+        .value_size = sizeof(int),
+        .key_compare = string_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "string_cache"
+    };
+    
+    cache_t *cache = cache_init(test_arena, &config);
+    assert(cache != NULL);
+    
+    /* Test string keys */
+    char key1[32] = "method1";
+    char key2[32] = "method2";
+    char key3[32] = "method3";
+    
+    assert(cache_put(cache, key1, &(int){100}) == 1);
+    assert(cache_put(cache, key2, &(int){200}) == 1);
+    assert(cache_put(cache, key3, &(int){300}) == 1);
+    
+    int value;
+    assert(cache_get(cache, key1, &value) == 1 && value == 100);
+    assert(cache_get(cache, key2, &value) == 1 && value == 200);
+    assert(cache_get(cache, key3, &value) == 1 && value == 300);
+    
+    /* Test with string literals */
+    assert(cache_get(cache, "method1", &value) == 1 && value == 100);
+    assert(cache_get(cache, "method2", &value) == 1 && value == 200);
+    assert(cache_get(cache, "nonexistent", &value) == 0);
+    
+    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    cleanup_test_context(ctx);
+    
+    printf("[TEST] test_cache_string_keys: All tests passed\n");
+}
+
 int main() 
 {
     printf("Running unit tests for cooper.c...\n");
@@ -795,6 +1274,14 @@ int main()
     test_arena();
     test_log_queue();
     test_cpu_cycles();
+    test_cache_basic();
+    test_cache_eviction();
+    test_cache_update();
+    test_cache_clear();
+    test_cache_tls();
+    test_method_cache();
+    test_cache_errors();
+    test_cache_string_keys();
     printf("All tests completed successfully!\n");
     return 0;
 }

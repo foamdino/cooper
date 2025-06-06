@@ -9,6 +9,7 @@
 #include "arena_str.h"
 #include "log.h"
 #include "cpu.h"
+#include "cache.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -16,6 +17,10 @@ static agent_context_t *global_ctx = NULL; /* Single global context */
 static pthread_key_t context_key;
 static int tls_initialized = 0;
 static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Method cache key and value structures */
+typedef struct method_cache_key method_cache_key_t;
+typedef struct method_cache_value method_cache_value_t;
 
 /* Arena configurations */
 static const arena_config_t arena_configs[] = {
@@ -107,6 +112,36 @@ static thread_context_t *get_thread_local_context() {
     }
     
     return context;
+}
+
+/* Key comparison function for method cache */
+static int method_cache_key_compare(const void *key1, const void *key2)
+{
+    const method_cache_key_t *k1 = (const method_cache_key_t *)key1;
+    const method_cache_key_t *k2 = (const method_cache_key_t *)key2;
+    
+    if (k1->method_id == k2->method_id) return 0;
+    return (k1->method_id < k2->method_id) ? -1 : 1;
+}
+
+/* Get method cache instance */
+static cache_t *get_method_cache(void)
+{
+    arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
+    if (!arena) return NULL;
+
+    cache_config_t config = {
+        .max_entries = 128,  /* Cache up to 128 methods per thread */
+        .key_size = sizeof(method_cache_key_t),
+        .value_size = sizeof(method_cache_value_t),
+        .key_compare = method_cache_key_compare,
+        .key_copy = NULL,    /* Will use default memcpy */
+        .value_copy = NULL,  /* Will use default memcpy */
+        .entry_init = NULL,
+        .name = "method_cache"
+    };
+
+    return cache_tls_get("method_cache", arena, &config);
 }
 
 /**
@@ -1331,17 +1366,58 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
  */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method)
 {
-    char *method_name = NULL;
-    char *method_signature = NULL;
-    char *class_signature = NULL;
-    jclass declaring_class;
-    jvmtiError err;
-
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
     if (!context)
         return;
+
+    /* Get our method cache */
+    cache_t *cache = get_method_cache();
+    if (!cache) 
+        return;
+
+    method_cache_key_t cache_key = { .method_id = method };
+    method_cache_value_t cache_value;
+
+    /* Check cache first */
+    if (cache_get(cache, &cache_key, &cache_value)) 
+    {
+        /* Cache hit */
+        if (!cache_value.should_sample) 
+            return;
+
+        /* Use cached method info for sampling */
+        int sample_index = should_sample_method(global_ctx, 
+            cache_value.class_signature, cache_value.method_name, cache_value.method_signature);
+        
+        if (sample_index == 0) 
+            return;
+
+        /* Continue with sampling logic using cached values... */
+        arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
+        if (!arena) 
+            return;
+
+        method_sample_t *sample = init_method_sample(arena, sample_index - 1, method, jvmti, jni, thread);
+        if (!sample) 
+            return;
+
+        sample->parent = context->sample;
+        context->sample = sample;
+        context->stack_depth++;
+
+        LOG_INFO("[ENTRY] Sampling cached method %s.%s%s\n", 
+            cache_value.class_signature, cache_value.method_name, cache_value.method_signature);
+        return;
+    }
+
+    /* Ok we haven't seen this or it's not cached - miss, get the method info via jvmti */
+    char *method_name = NULL;
+    char *method_signature = NULL;
+    char *class_signature = NULL;
+    jclass declaring_class;
+    jvmtiError err;
 
     if (jvmti != global_ctx->jvmti_env)
         LOG_WARN("WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
@@ -1373,6 +1449,15 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
     
+    /* Cache the result */
+    memset(&cache_value, 0, sizeof(cache_value));
+    strncpy(cache_value.class_signature, class_signature, sizeof(cache_value.class_signature) - 1);
+    strncpy(cache_value.method_name, method_name, sizeof(cache_value.method_name) - 1);
+    strncpy(cache_value.method_signature, method_signature, sizeof(cache_value.method_signature) - 1);
+    cache_value.should_sample = (sample_index > 0);
+
+    cache_put(cache, &cache_key, &cache_value);
+
     /* We're sampling this call */
     LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
 
@@ -1381,7 +1466,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         goto deallocate;
 
     /* Create a new sample on our method stack */
-    arena_t *arena = find_arena(global_ctx->arena_head, "sample_arena");
+    arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
     if (!arena)
     {
         LOG_ERROR("Could not find sample_arena!\n");
@@ -2533,6 +2618,9 @@ void cleanup(agent_context_t *ctx)
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) 
     {
+        /* Blow away any caches */
+        cache_tls_cleanup();
+
         /* Signal export thread to stop */
         pthread_mutex_lock(&global_ctx->samples_lock);
         global_ctx->export_running = 0;
