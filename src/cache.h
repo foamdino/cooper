@@ -27,7 +27,8 @@ struct cache_entry
     int valid;              /**< Whether this entry is valid */
 };
 
-struct cache_config {
+struct cache_config 
+{
     size_t max_entries;     /**< Maximum number of cache entries */
     size_t key_size;        /**< Size of cache key in bytes */
     size_t value_size;      /**< Size of cache value in bytes */
@@ -38,7 +39,8 @@ struct cache_config {
     const char *name;       /**< Cache name for debugging */
 };
 
-struct cache {
+struct cache 
+{
     cache_entry_t *entries; /**< Array of cache entries */
     size_t capacity;        /**< Maximum number of entries */
     size_t count;           /**< Current number of valid entries */
@@ -62,7 +64,7 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config);
  * @param cache     Cache instance
  * @param key       Key to search for
  * @param value     Output buffer for value (if found)
- * @return          1 if found, 0 if not found
+ * @return          0 if found, 1 if not found or error
  */
 int cache_get(cache_t *cache, const void *key, void *value);
 
@@ -72,7 +74,7 @@ int cache_get(cache_t *cache, const void *key, void *value);
  * @param cache     Cache instance
  * @param key       Key to store
  * @param value     Value to store
- * @return          1 on success, 0 on failure
+ * @return          0 on success, 1 on failure
  */
 int cache_put(cache_t *cache, const void *key, const void *value);
 

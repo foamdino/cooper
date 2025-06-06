@@ -52,10 +52,6 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config)
 {
     assert(arena != NULL);
     assert(config != NULL);
-    assert(config->max_entries > 0);
-    assert(config->key_size > 0);
-    assert(config->value_size > 0);
-    assert(config->key_compare != NULL);
 
     if (!arena || !config || config->max_entries == 0 || 
         config->key_size == 0 || config->value_size == 0 || !config->key_compare) {
@@ -108,12 +104,17 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config)
     return cache;
 }
 
+/**
+ * Get an entry from the cache
+ * 
+ * @param cache     Cache instance
+ * @param key       Key to search for
+ * @param value     Output buffer for value (if found)
+ * @return          0 if found, 1 if not found or error
+ */
 int cache_get(cache_t *cache, const void *key, void *value)
 {
-    assert(cache != NULL);
-    assert(key != NULL);
-
-    if (!cache || !key) return 0;
+    if (!cache || !key) return 1;
 
     /* Linear search through valid entries */
     for (size_t i = 0; i < cache->capacity; i++) {
@@ -124,20 +125,25 @@ int cache_get(cache_t *cache, const void *key, void *value)
             if (value) {
                 cache->config.value_copy(value, cache->entries[i].value, cache->config.value_size);
             }
-            return 1; /* Hit */
+            return 0; /* Found */
         }
     }
 
-    return 0; /* Miss */
+    return 1; /* Not found */
 }
 
+/**
+ * Add an entry to the cache, will overwrite an exsiting key
+ * 
+ * @param cache pointer to cache_t
+ * @param key void pointer as cache key
+ * @param value void pointer as value
+ * 
+ * @return 1 on failure, 0 on success
+ */
 int cache_put(cache_t *cache, const void *key, const void *value)
 {
-    assert(cache != NULL);
-    assert(key != NULL);
-    assert(value != NULL);
-
-    if (!cache || !key || !value) return 0;
+    if (!cache || !key || !value) return 1;
 
     /* First check if key already exists */
     for (size_t i = 0; i < cache->capacity; i++) {
@@ -146,7 +152,7 @@ int cache_put(cache_t *cache, const void *key, const void *value)
             
             /* Update existing entry */
             cache->config.value_copy(cache->entries[i].value, value, cache->config.value_size);
-            return 1;
+            return 0;
         }
     }
 
@@ -171,18 +177,18 @@ int cache_put(cache_t *cache, const void *key, const void *value)
     cache->config.key_copy(cache->entries[target_index].key, key, cache->config.key_size);
     cache->config.value_copy(cache->entries[target_index].value, value, cache->config.value_size);
 
-    return 1;
+    return 0;
 }
 
 void cache_clear(cache_t *cache)
 {
-    assert(cache != NULL);
-
+    /* Clearing a NULL cache does nothing */
     if (!cache) return;
 
-    for (size_t i = 0; i < cache->capacity; i++) {
+    for (size_t i = 0; i < cache->capacity; i++)
         cache->entries[i].valid = 0;
-    }
+
+    
     cache->count = 0;
     cache->next_victim = 0;
 }

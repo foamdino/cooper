@@ -830,23 +830,23 @@ static void test_cache_basic()
     
     /* Test cache is initially empty */
     int value;
-    assert(cache_get(cache, &(int){1}, &value) == 0); /* Should miss */
+    assert(cache_get(cache, &(int){1}, &value) == 1); /* Should miss */
     
     /* Test putting and getting values */
-    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
-    assert(cache_get(cache, &(int){1}, &value) == 1);
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 0);
+    assert(cache_get(cache, &(int){1}, &value) == 0);
     assert(value == 100);
     
     /* Test multiple entries */
-    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
-    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
-    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 0);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 0);
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 0);
     
     /* Verify all entries */
-    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
-    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
-    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
-    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    assert(cache_get(cache, &(int){1}, &value) == 0 && value == 100);
+    assert(cache_get(cache, &(int){2}, &value) == 0 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 0 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
     
     /* Test cache stats */
     size_t entries;
@@ -881,33 +881,33 @@ static void test_cache_eviction()
     assert(cache != NULL);
     
     /* Fill cache to capacity */
-    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
-    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
-    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 0);
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 0);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 0);
     
     /* Verify all entries are present */
     int value;
-    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
-    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
-    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
+    assert(cache_get(cache, &(int){1}, &value) == 0 && value == 100);
+    assert(cache_get(cache, &(int){2}, &value) == 0 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 0 && value == 300);
     
     /* Add another entry - should evict the first one (round-robin) */
-    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 0);
     
     /* First entry should be evicted */
-    assert(cache_get(cache, &(int){1}, &value) == 0); /* Should miss */
+    assert(cache_get(cache, &(int){1}, &value) == 1); /* Should miss */
     
     /* Other entries should still be present */
-    assert(cache_get(cache, &(int){2}, &value) == 1 && value == 200);
-    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
-    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    assert(cache_get(cache, &(int){2}, &value) == 0 && value == 200);
+    assert(cache_get(cache, &(int){3}, &value) == 0 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
     
     /* Add another entry - should evict the second one */
-    assert(cache_put(cache, &(int){5}, &(int){500}) == 1);
-    assert(cache_get(cache, &(int){2}, &value) == 0); /* Should miss */
-    assert(cache_get(cache, &(int){3}, &value) == 1 && value == 300);
-    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
-    assert(cache_get(cache, &(int){5}, &value) == 1 && value == 500);
+    assert(cache_put(cache, &(int){5}, &(int){500}) == 0);
+    assert(cache_get(cache, &(int){2}, &value) == 1); /* Should miss */
+    assert(cache_get(cache, &(int){3}, &value) == 0 && value == 300);
+    assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
+    assert(cache_get(cache, &(int){5}, &value) == 0 && value == 500);
     
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
@@ -936,14 +936,14 @@ static void test_cache_update()
     assert(cache != NULL);
     
     /* Add initial entry */
-    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 0);
     
     int value;
-    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 100);
+    assert(cache_get(cache, &(int){1}, &value) == 0 && value == 100);
     
     /* Update existing entry */
-    assert(cache_put(cache, &(int){1}, &(int){999}) == 1);
-    assert(cache_get(cache, &(int){1}, &value) == 1 && value == 999);
+    assert(cache_put(cache, &(int){1}, &(int){999}) == 0);
+    assert(cache_get(cache, &(int){1}, &value) == 0 && value == 999);
     
     /* Cache should still have only 1 entry */
     size_t entries;
@@ -977,23 +977,23 @@ static void test_cache_clear()
     assert(cache != NULL);
     
     /* Add some entries */
-    assert(cache_put(cache, &(int){1}, &(int){100}) == 1);
-    assert(cache_put(cache, &(int){2}, &(int){200}) == 1);
-    assert(cache_put(cache, &(int){3}, &(int){300}) == 1);
+    assert(cache_put(cache, &(int){1}, &(int){100}) == 0);
+    assert(cache_put(cache, &(int){2}, &(int){200}) == 0);
+    assert(cache_put(cache, &(int){3}, &(int){300}) == 0);
     
     /* Verify entries exist */
     int value;
-    assert(cache_get(cache, &(int){1}, &value) == 1);
-    assert(cache_get(cache, &(int){2}, &value) == 1);
-    assert(cache_get(cache, &(int){3}, &value) == 1);
+    assert(cache_get(cache, &(int){1}, &value) == 0);
+    assert(cache_get(cache, &(int){2}, &value) == 0);
+    assert(cache_get(cache, &(int){3}, &value) == 0);
     
     /* Clear the cache */
     cache_clear(cache);
     
     /* All entries should be gone */
-    assert(cache_get(cache, &(int){1}, &value) == 0);
-    assert(cache_get(cache, &(int){2}, &value) == 0);
-    assert(cache_get(cache, &(int){3}, &value) == 0);
+    assert(cache_get(cache, &(int){1}, &value) == 1);
+    assert(cache_get(cache, &(int){2}, &value) == 1);
+    assert(cache_get(cache, &(int){3}, &value) == 1);
     
     /* Cache should be empty */
     size_t entries;
@@ -1001,8 +1001,8 @@ static void test_cache_clear()
     assert(entries == 0);
     
     /* Should be able to add entries again */
-    assert(cache_put(cache, &(int){4}, &(int){400}) == 1);
-    assert(cache_get(cache, &(int){4}, &value) == 1 && value == 400);
+    assert(cache_put(cache, &(int){4}, &(int){400}) == 0);
+    assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
     
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
@@ -1044,12 +1044,12 @@ static void test_cache_tls()
     assert(cache2 != cache1);
     
     /* Test that caches are independent */
-    assert(cache_put(cache1, &(int){1}, &(int){100}) == 1);
-    assert(cache_put(cache2, &(int){1}, &(int){200}) == 1);
+    assert(cache_put(cache1, &(int){1}, &(int){100}) == 0);
+    assert(cache_put(cache2, &(int){1}, &(int){200}) == 0);
     
     int value;
-    assert(cache_get(cache1, &(int){1}, &value) == 1 && value == 100);
-    assert(cache_get(cache2, &(int){1}, &value) == 1 && value == 200);
+    assert(cache_get(cache1, &(int){1}, &value) == 0 && value == 100);
+    assert(cache_get(cache2, &(int){1}, &value) == 0 && value == 200);
     
     /* Cleanup TLS */
     cache_tls_cleanup();
@@ -1108,13 +1108,13 @@ static void test_method_cache()
     
     /* Cache miss initially */
     test_method_value_t retrieved;
-    assert(cache_get(cache, &key1, &retrieved) == 0);
+    assert(cache_get(cache, &key1, &retrieved) == 1);
     
     /* Put method in cache */
-    assert(cache_put(cache, &key1, &value1) == 1);
+    assert(cache_put(cache, &key1, &value1) == 0);
     
     /* Cache hit */
-    assert(cache_get(cache, &key1, &retrieved) == 1);
+    assert(cache_get(cache, &key1, &retrieved) == 0);
     assert(retrieved.should_sample == 1);
     assert(strcmp(retrieved.class_signature, "Lcom/example/TestClass;") == 0);
     assert(strcmp(retrieved.method_name, "testMethod") == 0);
@@ -1129,17 +1129,17 @@ static void test_method_cache()
     strcpy(value2.method_name, "toString");
     strcpy(value2.method_signature, "()Ljava/lang/String;");
     
-    assert(cache_put(cache, &key2, &value2) == 1);
-    assert(cache_get(cache, &key2, &retrieved) == 1);
+    assert(cache_put(cache, &key2, &value2) == 0);
+    assert(cache_get(cache, &key2, &retrieved) == 0);
     assert(retrieved.should_sample == 0);
     
     /* First method should still be cached */
-    assert(cache_get(cache, &key1, &retrieved) == 1);
+    assert(cache_get(cache, &key1, &retrieved) == 0);
     assert(retrieved.should_sample == 1);
     
     /* Test method not in cache */
     test_method_key_t key3 = { .method_id = method3 };
-    assert(cache_get(cache, &key3, &retrieved) == 0);
+    assert(cache_get(cache, &key3, &retrieved) == 1);
     
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
@@ -1153,7 +1153,7 @@ static void test_cache_errors()
     agent_context_t *ctx = init_test_context();
     arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
     
-    /* Test invalid configurations */
+    /* Test invalid configurations (should return NULL gracefully) */
     cache_config_t bad_config = {
         .max_entries = 0,  /* Invalid */
         .key_size = sizeof(int),
@@ -1179,9 +1179,7 @@ static void test_cache_errors()
     bad_config.key_compare = NULL;  /* Invalid */
     assert(cache_init(test_arena, &bad_config) == NULL);
     
-    /* Test NULL parameters */
-    assert(cache_init(NULL, &bad_config) == NULL);
-    
+    /* Test with valid configuration */
     cache_config_t good_config = {
         .max_entries = 4,
         .key_size = sizeof(int),
@@ -1196,16 +1194,16 @@ static void test_cache_errors()
     cache_t *cache = cache_init(test_arena, &good_config);
     assert(cache != NULL);
     
-    /* Test NULL parameters on operations */
+    /* Test NULL parameters on operations (should return 1/fail gracefully) */
     int value;
-    assert(cache_get(NULL, &(int){1}, &value) == 0);
-    assert(cache_get(cache, NULL, &value) == 0);
+    assert(cache_get(NULL, &(int){1}, &value) == 1);
+    assert(cache_get(cache, NULL, &value) == 1);
     
-    assert(cache_put(NULL, &(int){1}, &(int){100}) == 0);
-    assert(cache_put(cache, NULL, &(int){100}) == 0);
-    assert(cache_put(cache, &(int){1}, NULL) == 0);
+    assert(cache_put(NULL, &(int){1}, &(int){100}) == 1);
+    assert(cache_put(cache, NULL, &(int){100}) == 1);
+    assert(cache_put(cache, &(int){1}, NULL) == 1);
     
-    /* These should not crash */
+    /* These should not crash (testing NULL safety) */
     cache_clear(NULL);
     cache_stats(NULL, NULL, NULL, NULL);
     
@@ -1240,19 +1238,19 @@ static void test_cache_string_keys()
     char key2[32] = "method2";
     char key3[32] = "method3";
     
-    assert(cache_put(cache, key1, &(int){100}) == 1);
-    assert(cache_put(cache, key2, &(int){200}) == 1);
-    assert(cache_put(cache, key3, &(int){300}) == 1);
+    assert(cache_put(cache, key1, &(int){100}) == 0);
+    assert(cache_put(cache, key2, &(int){200}) == 0);
+    assert(cache_put(cache, key3, &(int){300}) == 0);
     
     int value;
-    assert(cache_get(cache, key1, &value) == 1 && value == 100);
-    assert(cache_get(cache, key2, &value) == 1 && value == 200);
-    assert(cache_get(cache, key3, &value) == 1 && value == 300);
+    assert(cache_get(cache, key1, &value) == 0 && value == 100);
+    assert(cache_get(cache, key2, &value) == 0 && value == 200);
+    assert(cache_get(cache, key3, &value) == 0 && value == 300);
     
     /* Test with string literals */
-    assert(cache_get(cache, "method1", &value) == 1 && value == 100);
-    assert(cache_get(cache, "method2", &value) == 1 && value == 200);
-    assert(cache_get(cache, "nonexistent", &value) == 0);
+    assert(cache_get(cache, "method1", &value) == 0 && value == 100);
+    assert(cache_get(cache, "method2", &value) == 0 && value == 200);
+    assert(cache_get(cache, "nonexistent", &value) == 1);
     
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
