@@ -30,6 +30,7 @@
 #include "cache.h"
 #include "config.h"
 #include "shared_mem.h"
+#include "thread_util.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)
@@ -71,7 +72,6 @@
 /* Ok/Err */
 #define COOPER_OK 0
 #define COOPER_ERR 1
-
 
 
 typedef struct trace_event trace_event_t;

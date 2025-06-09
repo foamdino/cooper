@@ -14,11 +14,10 @@
 #include <stdarg.h>
 #include <time.h>
 #include <assert.h>
-#include <errno.h>
-#include <unistd.h>
 
 #include "arena.h"
 #include "arena_str.h"
+#include "thread_util.h"
 
 /* Maximum size of a log message */
 #define MAX_LOG_MSG_SZ 1024
