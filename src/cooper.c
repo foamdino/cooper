@@ -1316,6 +1316,7 @@ void *mem_sampling_thread_func(void *arg)
     return NULL;
 }
 
+#ifdef ENABLE_DEBUG_LOGS
 /**
  * get a param value for a method
  * 
@@ -1472,6 +1473,7 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
 
     return result;
 }
+#endif
 
 /*
  * Method entry callback
@@ -1776,6 +1778,17 @@ deallocate:
  */
 void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location)
 {
+    UNUSED(jvmti_env);
+    UNUSED(jni_env);
+    UNUSED(thread);
+    UNUSED(method);
+    UNUSED(location);
+    UNUSED(exception);
+    UNUSED(catch_method);
+    UNUSED(catch_location);
+
+    /* TODO do something more useful with exception callbacks - just logging at the moment is noise */
+#ifdef ENABLE_DEBUG_LOGS
     UNUSED(location);
     UNUSED(catch_location);
     
@@ -1898,7 +1911,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
             /* Get the param value */
             char *param_val = get_parameter_value(arena, jvmti_env, jni_env, thread, slot, param_type);
 
-            LOG_ERROR("\tParam %d (%s): %s\n", 
+            LOG_DEBUG("\tParam %d (%s): %s\n", 
                 param_idx, 
                 param_name ? param_name : "<unknown>",
                 param_val ? param_val : "<error>");
@@ -1955,6 +1968,7 @@ deallocate:
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_name);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)catch_method_signature);
+#endif
 }
 
 static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thread, jobject object, jclass klass, jlong size)
