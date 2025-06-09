@@ -615,6 +615,169 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
 }
 
 /**
+ * Convert internal metrics to shared memory format and export
+ */
+static void export_metrics_to_shm(agent_context_t *ctx) 
+{
+    if (!ctx->shm_ctx || !ctx->metrics) 
+        return;
+    
+    pthread_mutex_lock(&ctx->samples_lock);
+    
+    for (size_t i = 0; i < ctx->metrics->count; i++) 
+    {
+        if (ctx->metrics->signatures[i] && ctx->metrics->sample_counts[i] > 0) 
+        {
+            cooper_method_metric_data_t metric_data = {0};
+            
+            strncpy(metric_data.signature, ctx->metrics->signatures[i], 
+                   COOPER_MAX_SIGNATURE_LEN - 1);
+            metric_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+            
+            metric_data.call_count = ctx->metrics->call_counts[i];
+            metric_data.sample_count = ctx->metrics->sample_counts[i];
+            metric_data.total_time_ns = ctx->metrics->total_time_ns[i];
+            metric_data.min_time_ns = ctx->metrics->min_time_ns[i];
+            metric_data.max_time_ns = ctx->metrics->max_time_ns[i];
+            metric_data.alloc_bytes = ctx->metrics->alloc_bytes[i];
+            metric_data.peak_memory = ctx->metrics->peak_memory[i];
+            metric_data.cpu_cycles = ctx->metrics->cpu_cycles[i];
+            metric_data.metric_flags = ctx->metrics->metric_flags[i];
+            metric_data.timestamp = time(NULL) - ctx->shm_ctx->data_shm->start_time;
+            metric_data.data_type = COOPER_DATA_METHOD_METRIC;
+            
+            cooper_shm_write_method_metric(ctx->shm_ctx, &metric_data);
+        }
+    }
+    
+    pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+/**
+ * Export memory samples to shared memory
+ */
+static void export_memory_to_shm(agent_context_t *ctx) 
+{
+    if (!ctx->shm_ctx || !ctx->app_memory_metrics) 
+        return;
+    
+    pthread_mutex_lock(&ctx->app_memory_metrics->lock);
+    
+    /* Export latest process memory sample */
+    if (ctx->app_memory_metrics->sample_count > 0) 
+    {
+        size_t latest_idx = (ctx->app_memory_metrics->sample_count - 1) % MAX_MEMORY_SAMPLES;
+        
+        cooper_memory_sample_data_t sample = {0};
+        sample.process_memory = ctx->app_memory_metrics->process_memory_sample[latest_idx];
+        sample.thread_id = 0; /* Process-wide */
+        sample.thread_memory = 0;
+        sample.timestamp = ctx->app_memory_metrics->timestamps[latest_idx];
+        sample.data_type = COOPER_DATA_MEMORY_SAMPLE;
+        
+        cooper_shm_write_memory_sample(ctx->shm_ctx, &sample);
+    }
+
+    if (ctx->thread_mem_head != NULL)
+    {
+        thread_memory_metrics_t *tm = ctx->thread_mem_head;
+        while(tm)
+        {
+            if (tm->sample_count > 0)
+            {
+                size_t latest_idx = (tm->sample_count - 1) % MAX_MEMORY_SAMPLES;
+            
+                cooper_memory_sample_data_t sample = {0};
+                sample.process_memory = 0; /* Not applicable for thread-specific samples */
+                sample.thread_id = tm->thread_id;
+                sample.thread_memory = tm->memory_samples[latest_idx];
+                sample.timestamp = tm->timestamps[latest_idx];
+                sample.data_type = COOPER_DATA_MEMORY_SAMPLE;
+                
+                cooper_shm_write_memory_sample(ctx->shm_ctx, &sample);
+            }
+
+            /* advance through linked list */
+            tm = tm->next;
+        }
+    }
+    
+    pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
+}
+
+/**
+ * Export object allocation metrics to shared memory
+ */
+static void export_object_alloc_to_shm(agent_context_t *ctx) 
+{
+    if (!ctx->shm_ctx || !ctx->object_metrics) 
+        return;
+    
+    pthread_mutex_lock(&ctx->samples_lock);
+    
+    /* Export each object type's allocation metrics */
+    for (size_t i = 0; i < ctx->object_metrics->count; i++) 
+    {
+        if (ctx->object_metrics->class_signatures[i] && 
+            ctx->object_metrics->allocation_counts[i] > 0) {
+            
+            cooper_method_metric_data_t alloc_data = {0};
+            
+            /* Use signature field for class signature */
+            strncpy(alloc_data.signature, ctx->object_metrics->class_signatures[i], 
+                   COOPER_MAX_SIGNATURE_LEN - 1);
+            alloc_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+            
+            /* Map object allocation fields to metric structure */
+            alloc_data.call_count = ctx->object_metrics->allocation_counts[i];
+            alloc_data.sample_count = ctx->object_metrics->current_instances[i];
+            alloc_data.total_time_ns = ctx->object_metrics->min_size[i];
+            alloc_data.min_time_ns = ctx->object_metrics->max_size[i];
+            alloc_data.max_time_ns = ctx->object_metrics->avg_size[i];
+            alloc_data.alloc_bytes = ctx->object_metrics->total_bytes[i];
+            alloc_data.peak_memory = ctx->object_metrics->peak_instances[i];
+            alloc_data.cpu_cycles = 0; /* Not applicable for object allocations */
+            alloc_data.metric_flags = 0; /* Not applicable */
+            alloc_data.timestamp = time(NULL) - ctx->shm_ctx->data_shm->start_time;
+            alloc_data.data_type = COOPER_DATA_OBJECT_ALLOC;
+            
+            cooper_shm_write_method_metric(ctx->shm_ctx, &alloc_data);
+        }
+    }
+    
+    pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+/**
+ * Shared memory export thread function
+ */
+void *shm_export_thread_func(void *arg) {
+    agent_context_t *ctx = (agent_context_t *)arg;
+    
+    LOG_INFO("Shared memory export thread started");
+    
+    while (ctx->shm_export_running) {
+        /* Clean up entries that CLI has read */
+        cooper_shm_cleanup_read_entries(ctx->shm_ctx);
+        
+        /* Export current metrics */
+        export_metrics_to_shm(ctx);
+        
+        /* Export memory samples */
+        export_memory_to_shm(ctx);
+
+        /* Export object allocation metrics */
+        export_object_alloc_to_shm(ctx);
+        
+        /* Sleep for export interval */
+        sleep(2);
+    }
+    
+    LOG_INFO("Shared memory export thread terminated");
+    return NULL;
+}
+
+/**
  * Helper function to safely join a thread with timeout
  * Works across different platforms without relying on non-portable extensions
  *
@@ -2433,6 +2596,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
+    /* TODO create const for initial_capacity at some point */
     size_t initial_capacity = 256;
     global_ctx->metrics = init_method_metrics(metrics_arena, initial_capacity);
     if (!global_ctx->metrics) 
@@ -2462,6 +2626,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     memset(global_ctx->app_memory_metrics, 0, sizeof(app_memory_metrics_t));
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
+    /* Initialize shared memory */
+    global_ctx->shm_ctx = malloc(sizeof(cooper_shm_context_t));
+    if (!global_ctx->shm_ctx) {
+        LOG_ERROR("Failed to allocate shared memory context");
+        return JNI_ERR;
+    }
+
     /* Grab a copy of the JVM pointer */
     global_ctx->jvm = vm;
 
@@ -2499,6 +2670,29 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         cleanup_log_system();
         return JNI_ERR;
     }
+
+    if (cooper_shm_init_agent(global_ctx->shm_ctx) != 0) 
+    {
+        LOG_WARN("Failed to initialize shared memory - continuing without it");
+        goto cleanup_shm;
+    } 
+    else 
+    {
+        /* Start shared memory export thread */
+        global_ctx->shm_export_running = 1;
+        if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
+        {
+            LOG_WARN("Failed to start shared memory export thread");
+            cooper_shm_cleanup_agent(global_ctx->shm_ctx);
+            goto cleanup_shm;
+        } else {
+            LOG_INFO("Shared memory export enabled");
+        }
+    }
+
+cleanup_shm:
+    free(global_ctx->shm_ctx);
+    global_ctx->shm_ctx = NULL;
 
     if (init_jvm_capabilities(global_ctx) != COOPER_OK)
         return JNI_ERR;
@@ -2607,6 +2801,20 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
             pthread_mutex_destroy(&global_ctx->app_memory_metrics->lock);
             global_ctx->app_memory_metrics = NULL;
             /* when the arena is destroyed, this memory will be reclaimed */
+        }
+
+        /* Cleanup shared memory */
+        if (global_ctx->shm_ctx) 
+        {
+            global_ctx->shm_export_running = 0;
+            
+            int res = safe_thread_join(global_ctx->shm_export_thread, 2);
+            if (res != 0)
+                LOG_WARN("Shared memory export thread did not terminate cleanly");
+            
+            cooper_shm_cleanup_agent(global_ctx->shm_ctx);
+            free(global_ctx->shm_ctx);
+            global_ctx->shm_ctx = NULL;
         }
 
         /* Finally shutdown logging */

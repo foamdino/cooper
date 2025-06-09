@@ -1,5 +1,6 @@
 /*
 * SPDX-FileCopyrightText: (c) 2025 Kev Jackson <foamdino@gmail.com>
+* 
 * SPDX-License-Identifier: BSD-3-Clause
 */
 
@@ -10,6 +11,7 @@
 #include "cpu.h"
 #include "cache.h"
 #include "config.h"
+#include "shared_mem.h"
 
 log_q_t *log_queue = NULL;
 
@@ -1259,6 +1261,351 @@ static void test_cache_string_keys()
     printf("[TEST] test_cache_string_keys: All tests passed\n");
 }
 
+/**
+ * Test basic shared memory initialization and cleanup
+ */
+static void test_shared_memory_init() {
+    cooper_shm_context_t ctx = {0};
+    
+    /* Test successful initialization */
+    int result = cooper_shm_init_agent(&ctx);
+    assert(result == 0);
+    assert(ctx.data_shm != NULL);
+    assert(ctx.status_shm != NULL);
+    assert(ctx.data_fd > 0);
+    assert(ctx.status_fd > 0);
+    
+    /* Verify header initialization */
+    assert(ctx.data_shm->version == COOPER_SHM_VERSION);
+    assert(ctx.data_shm->max_entries == COOPER_MAX_ENTRIES);
+    assert(ctx.data_shm->next_write_index == 0);
+    
+    /* Verify all status entries are empty */
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
+        assert(ctx.status_shm->status[i] == ENTRY_EMPTY);
+    }
+    
+    /* Test cleanup */
+    result = cooper_shm_cleanup_agent(&ctx);
+    assert(result == 0);
+    
+    printf("[TEST] test_shared_memory_init: All tests passed\n");
+}
+
+/**
+ * Test status state transitions
+ */
+static void test_shared_memory_status_transitions() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    /* Initial state should be EMPTY */
+    assert(ctx.status_shm->status[0] == ENTRY_EMPTY);
+    
+    /* Create test data */
+    cooper_method_metric_data_t test_metric = {0};
+    strcpy(test_metric.signature, "TestMethod");
+    test_metric.call_count = 100;
+    test_metric.data_type = COOPER_DATA_METHOD_METRIC;
+    test_metric.timestamp = 12345;
+    
+    /* Write should succeed on empty slot */
+    int result = cooper_shm_write_method_metric(&ctx, &test_metric);
+    assert(result == 0);
+    assert(ctx.status_shm->status[0] == ENTRY_READY);
+    
+    /* Writing to same slot should fail (backpressure) */
+    ctx.data_shm->next_write_index = 0; /* Reset to same slot */
+    result = cooper_shm_write_method_metric(&ctx, &test_metric);
+    assert(result == -1); /* Should fail */
+    assert(ctx.status_shm->status[0] == ENTRY_READY); /* State unchanged */
+    
+    /* Simulate CLI reading the data */
+    cooper_method_metric_data_t read_metric;
+    memcpy(&read_metric, &ctx.data_shm->metrics[0], sizeof(read_metric));
+    assert(strcmp(read_metric.signature, "TestMethod") == 0);
+    assert(read_metric.call_count == 100);
+    
+    /* Mark as read */
+    ctx.status_shm->status[0] = ENTRY_READ;
+    
+    /* Cleanup should reset to empty */
+    cooper_shm_cleanup_read_entries(&ctx);
+    assert(ctx.status_shm->status[0] == ENTRY_EMPTY);
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_status_transitions: All tests passed\n");
+}
+
+/**
+ * Test writing and reading method metrics
+ */
+static void test_shared_memory_method_metrics() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    /* Create test method metrics */
+    cooper_method_metric_data_t metrics[3] = {
+        {
+            .signature = "com/example/Method1",
+            .call_count = 500,
+            .sample_count = 50,
+            .total_time_ns = 1000000,
+            .alloc_bytes = 2048,
+            .data_type = COOPER_DATA_METHOD_METRIC,
+            .timestamp = 1000
+        },
+        {
+            .signature = "com/example/Method2", 
+            .call_count = 200,
+            .sample_count = 20,
+            .total_time_ns = 500000,
+            .alloc_bytes = 1024,
+            .data_type = COOPER_DATA_METHOD_METRIC,
+            .timestamp = 2000
+        },
+        {
+            .signature = "com/example/Method3",
+            .call_count = 100,
+            .sample_count = 10,
+            .total_time_ns = 250000,
+            .alloc_bytes = 512,
+            .data_type = COOPER_DATA_METHOD_METRIC,
+            .timestamp = 3000
+        }
+    };
+    
+    /* Write all metrics */
+    for (int i = 0; i < 3; i++) {
+        int result = cooper_shm_write_method_metric(&ctx, &metrics[i]);
+        assert(result == 0);
+        assert(ctx.status_shm->status[i] == ENTRY_READY);
+    }
+    
+    /* Verify write index advanced */
+    assert(ctx.data_shm->next_write_index == 3);
+    
+    /* Read back and verify data integrity */
+    for (int i = 0; i < 3; i++) {
+        assert(ctx.status_shm->status[i] == ENTRY_READY);
+        
+        cooper_method_metric_data_t *entry = &ctx.data_shm->metrics[i];
+        assert(strcmp(entry->signature, metrics[i].signature) == 0);
+        assert(entry->call_count == metrics[i].call_count);
+        assert(entry->sample_count == metrics[i].sample_count);
+        assert(entry->total_time_ns == metrics[i].total_time_ns);
+        assert(entry->alloc_bytes == metrics[i].alloc_bytes);
+        assert(entry->data_type == COOPER_DATA_METHOD_METRIC);
+        assert(entry->timestamp == metrics[i].timestamp);
+        
+        /* Mark as read */
+        ctx.status_shm->status[i] = ENTRY_READ;
+    }
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_method_metrics: All tests passed\n");
+}
+
+/**
+ * Test writing and reading memory samples
+ */
+static void test_shared_memory_memory_samples() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    /* Create test memory samples */
+    cooper_memory_sample_data_t samples[] = {
+        {
+            .process_memory = 1024 * 1024 * 100, /* 100MB */
+            .thread_id = 0, /* Process-wide */
+            .thread_memory = 0,
+            .timestamp = 5000,
+            .data_type = COOPER_DATA_MEMORY_SAMPLE
+        },
+        {
+            .process_memory = 0,
+            .thread_id = 12345, /* Specific thread */
+            .thread_memory = 1024 * 1024 * 10, /* 10MB */
+            .timestamp = 6000,
+            .data_type = COOPER_DATA_MEMORY_SAMPLE
+        }
+    };
+    
+    /* Write memory samples */
+    for (int i = 0; i < 2; i++) {
+        int result = cooper_shm_write_memory_sample(&ctx, &samples[i]);
+        assert(result == 0);
+        assert(ctx.status_shm->status[i] == ENTRY_READY);
+    }
+    
+    /* Read back and verify field mapping */
+    for (int i = 0; i < 2; i++) {
+        cooper_method_metric_data_t *entry = &ctx.data_shm->metrics[i];
+        
+        assert(entry->data_type == COOPER_DATA_MEMORY_SAMPLE);
+        assert(strcmp(entry->signature, "memory_sample") == 0);
+        
+        /* Verify field mapping:
+         * process_memory -> alloc_bytes
+         * thread_id -> call_count  
+         * thread_memory -> peak_memory
+         */
+        assert(entry->alloc_bytes == samples[i].process_memory);
+        assert(entry->call_count == samples[i].thread_id);
+        assert(entry->peak_memory == samples[i].thread_memory);
+        assert(entry->timestamp == samples[i].timestamp);
+        
+        ctx.status_shm->status[i] = ENTRY_READ;
+    }
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_memory_samples: All tests passed\n");
+}
+
+/**
+ * Test buffer wraparound behavior
+ */
+static void test_shared_memory_wraparound() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    cooper_method_metric_data_t test_metric = {0};
+    strcpy(test_metric.signature, "WrapTest");
+    test_metric.call_count = 1;
+    test_metric.data_type = COOPER_DATA_METHOD_METRIC;
+    
+    /* Fill the entire buffer */
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
+        test_metric.call_count = i + 1; /* Unique identifier */
+        int result = cooper_shm_write_method_metric(&ctx, &test_metric);
+        assert(result == 0);
+        assert(ctx.status_shm->status[i] == ENTRY_READY);
+    }
+    
+    /* Verify write index wrapped around */
+    assert(ctx.data_shm->next_write_index == 0);
+    
+    /* Next write should fail (buffer full) */
+    int result = cooper_shm_write_method_metric(&ctx, &test_metric);
+    assert(result == -1);
+    
+    /* Mark first few entries as read */
+    for (int i = 0; i < 5; i++) {
+        ctx.status_shm->status[i] = ENTRY_READ;
+    }
+    
+    /* Cleanup read entries */
+    cooper_shm_cleanup_read_entries(&ctx);
+    
+    /* Verify first few entries are now empty */
+    for (int i = 0; i < 5; i++) {
+        assert(ctx.status_shm->status[i] == ENTRY_EMPTY);
+    }
+    
+    /* Should be able to write to first slot again */
+    ctx.data_shm->next_write_index = 0; /* Reset write index */
+    test_metric.call_count = 9999; /* New unique value */
+    result = cooper_shm_write_method_metric(&ctx, &test_metric);
+    assert(result == 0);
+    assert(ctx.status_shm->status[0] == ENTRY_READY);
+    assert(ctx.data_shm->metrics[0].call_count == 9999);
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_wraparound: All tests passed\n");
+}
+
+/**
+ * Test concurrent-like access patterns
+ */
+static void test_shared_memory_concurrent_patterns() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    cooper_method_metric_data_t test_metric = {0};
+    strcpy(test_metric.signature, "ConcurrentTest");
+    test_metric.data_type = COOPER_DATA_METHOD_METRIC;
+    
+    /* Simulate interleaved read/write pattern */
+    for (int round = 0; round < 3; round++) {
+        /* Write some entries */
+        for (int i = 0; i < 5; i++) {
+            test_metric.call_count = round * 100 + i;
+            int result = cooper_shm_write_method_metric(&ctx, &test_metric);
+            assert(result == 0);
+        }
+        
+        /* Simulate CLI reading every other entry */
+        for (int i = 0; i < 5; i += 2) {
+            uint32_t idx = (round * 5 + i) % COOPER_MAX_ENTRIES;
+            assert(ctx.status_shm->status[idx] == ENTRY_READY);
+            ctx.status_shm->status[idx] = ENTRY_READ;
+        }
+        
+        /* Cleanup read entries */
+        cooper_shm_cleanup_read_entries(&ctx);
+        
+        /* Mark remaining entries as read */
+        for (int i = 1; i < 5; i += 2) {
+            uint32_t idx = (round * 5 + i) % COOPER_MAX_ENTRIES;
+            ctx.status_shm->status[idx] = ENTRY_READ;
+        }
+        
+        cooper_shm_cleanup_read_entries(&ctx);
+    }
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_concurrent_patterns: All tests passed\n");
+}
+
+/**
+ * Test multiple data types in mixed order
+ */
+static void test_shared_memory_mixed_data_types() {
+    cooper_shm_context_t ctx = {0};
+    assert(cooper_shm_init_agent(&ctx) == 0);
+    
+    /* Write mixed data types */
+    
+    /* 1. Method metric */
+    cooper_method_metric_data_t method_metric = {0};
+    strcpy(method_metric.signature, "MixedTest::method");
+    method_metric.call_count = 42;
+    method_metric.data_type = COOPER_DATA_METHOD_METRIC;
+    assert(cooper_shm_write_method_metric(&ctx, &method_metric) == 0);
+    
+    /* 2. Memory sample */
+    cooper_memory_sample_data_t memory_sample = {
+        .process_memory = 1024 * 1024 * 50,
+        .thread_id = 0,
+        .thread_memory = 0,
+        .data_type = COOPER_DATA_MEMORY_SAMPLE
+    };
+    assert(cooper_shm_write_memory_sample(&ctx, &memory_sample) == 0);
+    
+    /* 3. Another method metric */
+    strcpy(method_metric.signature, "MixedTest::method2");
+    method_metric.call_count = 84;
+    assert(cooper_shm_write_method_metric(&ctx, &method_metric) == 0);
+    
+    /* Verify data types are preserved */
+    assert(ctx.data_shm->metrics[0].data_type == COOPER_DATA_METHOD_METRIC);
+    assert(ctx.data_shm->metrics[1].data_type == COOPER_DATA_MEMORY_SAMPLE);
+    assert(ctx.data_shm->metrics[2].data_type == COOPER_DATA_METHOD_METRIC);
+    
+    /* Verify data integrity */
+    assert(strcmp(ctx.data_shm->metrics[0].signature, "MixedTest::method") == 0);
+    assert(ctx.data_shm->metrics[0].call_count == 42);
+    
+    assert(strcmp(ctx.data_shm->metrics[1].signature, "memory_sample") == 0);
+    assert(ctx.data_shm->metrics[1].alloc_bytes == 1024 * 1024 * 50);
+    
+    assert(strcmp(ctx.data_shm->metrics[2].signature, "MixedTest::method2") == 0);
+    assert(ctx.data_shm->metrics[2].call_count == 84);
+    
+    cooper_shm_cleanup_agent(&ctx);
+    printf("[TEST] test_shared_memory_mixed_data_types: All tests passed\n");
+}
+
 int main() 
 {
     printf("Running unit tests for cooper.c...\n");
@@ -1281,6 +1628,13 @@ int main()
     test_method_cache();
     test_cache_errors();
     test_cache_string_keys();
+    test_shared_memory_init();
+    test_shared_memory_status_transitions();
+    test_shared_memory_method_metrics();
+    test_shared_memory_memory_samples();
+    test_shared_memory_wraparound();
+    test_shared_memory_concurrent_patterns();
+    test_shared_memory_mixed_data_types();
     printf("All tests completed successfully!\n");
     return 0;
 }

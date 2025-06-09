@@ -29,6 +29,7 @@
 #include "cpu.h"
 #include "cache.h"
 #include "config.h"
+#include "shared_mem.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)
@@ -254,9 +255,12 @@ struct agent_context
     pthread_t log_thread;           /**< Logging thread */
     pthread_t export_thread;        /**< Export thread */
     pthread_t mem_sampling_thread;  /**< Mem sampling background thread */
+    pthread_t shm_export_thread;    /**< Export via shared mem thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     int export_running;             /**< Flag to signal if export thread should continue */
     int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
+    int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
+    cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
