@@ -539,7 +539,7 @@ static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, con
         return -1;
     }
     
-    for (int i = 0; i < obj_metrics->count; i++)
+    for (size_t i = 0; i < obj_metrics->count; i++)
     {
         if (obj_metrics->class_signatures[i] != NULL)
         {
@@ -587,13 +587,12 @@ static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, con
     return index;
 }
 
-static void update_object_allocation_stats(agent_context_t *ctx, const char *class_sig, jlong size)
+static void update_object_allocation_stats(agent_context_t *ctx, const char *class_sig, uint64_t safe_sz)
 {
     assert(ctx != NULL);
     assert(class_sig != NULL);
-    assert(size != NULL);
 
-    if (!ctx || !class_sig || !size)
+    if (!ctx || !class_sig)
         return;
 
     pthread_mutex_lock(&ctx->samples_lock);
@@ -602,15 +601,15 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
     if (index >= 0) 
     {
         ctx->object_metrics->allocation_counts[index]++;
-        ctx->object_metrics->total_bytes[index] += size;
+        ctx->object_metrics->total_bytes[index] += safe_sz;
         ctx->object_metrics->current_instances[index]++;
         
         /* Update size statistics */
-        if (size < ctx->object_metrics->min_size[index])
-            ctx->object_metrics->min_size[index] = size;
+        if (safe_sz < ctx->object_metrics->min_size[index])
+            ctx->object_metrics->min_size[index] = safe_sz;
 
-        if (size > ctx->object_metrics->max_size[index])
-            ctx->object_metrics->max_size[index] = size;
+        if (safe_sz > ctx->object_metrics->max_size[index])
+            ctx->object_metrics->max_size[index] = safe_sz;
         
         /* Update average size */
         ctx->object_metrics->avg_size[index] = 
@@ -1210,7 +1209,7 @@ void *mem_sampling_thread_func(void *arg)
  * 
  */
 static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_env, 
-    jthread thread, jmethodID method, jint param_index, jint param_slot, char param_type)
+    jthread thread, jint param_slot, char param_type)
 {
     char *result = NULL;
     jvalue value;
@@ -1785,9 +1784,9 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
             }
             
             /* Get the param value */
-            char *param_val = get_parameter_value(arena, jvmti_env, jni_env, thread, method, param_idx, slot, param_type);
+            char *param_val = get_parameter_value(arena, jvmti_env, jni_env, thread, slot, param_type);
 
-            LOG_DEBUG("\tParam %d (%s): %s\n", 
+            LOG_ERROR("\tParam %d (%s): %s\n", 
                 param_idx, 
                 param_name ? param_name : "<unknown>",
                 param_val ? param_val : "<error>");
@@ -1861,8 +1860,10 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
         return;
     }
 
+    /* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
+    uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
     /* Update the global allocation stats */
-    update_object_allocation_stats(global_ctx, class_sig, size);
+    update_object_allocation_stats(global_ctx, class_sig, safe_sz);
 
     /* Get thread-local context to prevent re-entrancy */
     thread_context_t *context = get_thread_local_context();
@@ -1886,13 +1887,13 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
         return;
 
     /* Add allocation to the current method being sampled */
-    sample->current_alloc_bytes += size;
+    sample->current_alloc_bytes += safe_sz;
 
     LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld", 
-         (long long)size, sample->method_index, (long long)sample->current_alloc_bytes);
+         safe_sz, sample->method_index, (long long)sample->current_alloc_bytes);
     
     LOG_DEBUG("Allocated object of class: %s, size: %lld\n", 
-        class_sig, (long long)size);
+        class_sig, safe_sz);
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
 }
 
@@ -2167,18 +2168,16 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
 
     /* We found the method, increment its call count */
     ctx->metrics->call_counts[method_index]++;
-    uint64_t current_count = ctx->metrics->call_counts[method_index];
 
     /* Log call count updates for debugging */
     LOG_DEBUG("Method %s call_count incremented to %lu\n", 
-        ctx->metrics->signatures[method_index], 
-        (unsigned long)current_count);
+        ctx->metrics->signatures[method_index], ctx->metrics->call_counts[method_index]);
 
     /* Check if we should sample this call based on the sample rate */
     int should_sample = (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index]) == 0;
     LOG_DEBUG("Method %s: call_count=%lu, sample_rate=%d, should_sample=%d\n", 
         ctx->metrics->signatures[method_index], 
-        (unsigned long)current_count, 
+        ctx->metrics->call_counts[method_index], 
         ctx->metrics->sample_rates[method_index], 
         should_sample);
 

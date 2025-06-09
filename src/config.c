@@ -17,9 +17,82 @@
 #define METRIC_FLAG_CPU     0x0004
 
 /**
+ * Extract value part from a "key = value" string and trim it, using arena allocation
+ * Also handles quoted values by removing surrounding quotes
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Extracted and trimmed value, or NULL if no value found or on error
+ */
+char *config_extract_and_trim_value(arena_t *arena, const char *line)
+{
+    assert(arena != NULL);
+    assert(line != NULL);
+    
+    if (!arena || !line)
+        return NULL;
+    
+    /* Find the equals sign */
+    const char *eq = strchr(line, '=');
+    if (!eq)
+        return NULL;
+    
+    /* Move to the value part (after the equals sign) */
+    const char *value_start = eq + 1;
+    
+    // Trim the value part
+    char *trimmed_value = arena_trim(arena, value_start);
+    if (!trimmed_value)
+        return NULL;
+    
+    /* Check for quoted value */
+    size_t trimmed_len = strlen(trimmed_value);
+    if (trimmed_len >= 2 && trimmed_value[0] == '"' && trimmed_value[trimmed_len - 1] == '"') {
+        /* Allocate space for string without quotes */
+        char *unquoted = arena_alloc(arena, trimmed_len - 1); /* -1 because we're removing 2 quotes but need null terminator */
+        if (!unquoted)
+            return NULL;
+        
+        /* Copy the string without quotes */
+        memcpy(unquoted, trimmed_value + 1, trimmed_len - 2);
+        unquoted[trimmed_len - 2] = '\0';
+        return unquoted;
+    }
+    
+    return trimmed_value;
+}
+
+/**
+ * Process a line from a configuration file - strip comments and trim whitespace
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Processed line, or NULL on error
+ */
+char *config_process_config_line(arena_t *arena, const char *line)
+{
+    assert(arena != NULL);
+    assert(line != NULL);
+    
+    if (!arena || !line)
+        return NULL;
+    
+    /* First strip comments, then trim whitespace */
+    char *without_comments = arena_strip_comment(arena, line);
+    if (!without_comments)
+        return NULL;
+    
+    char *trimmed = arena_trim(arena, without_comments);
+    
+    /* We can return trimmed directly - no need to free without_comments
+      as it's managed by the arena */
+    return trimmed;
+}
+
+/**
  * Parse metrics string and return flags
  */
-static unsigned int parse_metric_flags(const char *metrics_str)
+static unsigned int config_parse_metric_flags(const char *metrics_str)
 {
     unsigned int flags = 0;
     
@@ -141,7 +214,7 @@ int config_parse(arena_t *arena, const char *config_file, cooper_config_t *confi
     
     while (fgets(line, sizeof(line), fp)) {
         /* Process the line (strip comments, trim whitespace) */
-        char *processed = arena_process_config_line(arena, line);
+        char *processed = config_process_config_line(arena, line);
 
         if (!processed || processed[0] == '\0')
             continue;  /* Skip empty lines */
@@ -159,7 +232,7 @@ int config_parse(arena_t *arena, const char *config_file, cooper_config_t *confi
         
         /* Parse based on current section */
         if (strcmp(current_section, "[sample_rate]") == 0) {
-            char *value = arena_extract_and_trim_value(arena, processed);
+            char *value = config_extract_and_trim_value(arena, processed);
             if (value && strstr(processed, "rate")) {
                 int rate;
                 if (sscanf(value, "%d", &rate) == 1 && rate > 0) {
@@ -194,7 +267,7 @@ int config_parse(arena_t *arena, const char *config_file, cooper_config_t *confi
             }
             
             /* Parse metric flags */
-            unsigned int metric_flags = parse_metric_flags(metrics);
+            unsigned int metric_flags = config_parse_metric_flags(metrics);
             
             /* Add the filter */
             if (config_add_filter(arena, config, class_sig, method_name, 
@@ -204,14 +277,14 @@ int config_parse(arena_t *arena, const char *config_file, cooper_config_t *confi
             }
         }
         else if (strcmp(current_section, "[sample_file_location]") == 0) {
-            char *value = arena_extract_and_trim_value(arena, processed);
+            char *value = config_extract_and_trim_value(arena, processed);
             if (value && strstr(processed, "path")) {
                 config->sample_file_path = value;
                 LOG_DEBUG("Set sample file path: %s\n", value);
             }
         }
         else if (strcmp(current_section, "[export]") == 0) {
-            char *value = arena_extract_and_trim_value(arena, processed);
+            char *value = config_extract_and_trim_value(arena, processed);
             if (!value) continue;
             
             if (strstr(processed, "method")) {

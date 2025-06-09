@@ -9,6 +9,7 @@
 #include "arena_str.h"
 #include "cpu.h"
 #include "cache.h"
+#include "config.h"
 
 log_q_t *log_queue = NULL;
 
@@ -174,126 +175,126 @@ static void test_arena_strip_comment()
     printf("[TEST] test_arena_strip_comment: All tests passed\n");
 }
 
-/* Test arena_extract_and_trim_value function */
-static void test_arena_extract_and_trim_value() 
+/* Test config_extract_and_trim_value function */
+static void test_config_extract_and_trim_value() 
 {
     agent_context_t *ctx = init_test_context();
     arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
     /* Standard key-value pair */
-    char *result1 = arena_extract_and_trim_value(config_arena, "key = value");
+    char *result1 = config_extract_and_trim_value(config_arena, "key = value");
     assert(result1 != NULL);
     assert(strcmp(result1, "value") == 0);
 
     /* Key-value pair with extra whitespace */
-    char *result2 = arena_extract_and_trim_value(config_arena, "key =   value   ");
+    char *result2 = config_extract_and_trim_value(config_arena, "key =   value   ");
     assert(result2 != NULL);
     assert(strcmp(result2, "value") == 0);
 
     /* Key-value pair with no space after equals */
-    char *result3 = arena_extract_and_trim_value(config_arena, "key=value");
+    char *result3 = config_extract_and_trim_value(config_arena, "key=value");
     assert(result3 != NULL);
     assert(strcmp(result3, "value") == 0);
     
     /* Key with no value */
-    char *result4 = arena_extract_and_trim_value(config_arena, "key = ");
+    char *result4 = config_extract_and_trim_value(config_arena, "key = ");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
     /* No equals sign */
-    char *result5 = arena_extract_and_trim_value(config_arena, "key value");
+    char *result5 = config_extract_and_trim_value(config_arena, "key value");
     assert(result5 == NULL);
 
     /* Only equals sign */
-    char *result6 = arena_extract_and_trim_value(config_arena, "=value");
+    char *result6 = config_extract_and_trim_value(config_arena, "=value");
     assert(result6 != NULL);
     assert(strcmp(result6, "value") == 0);
 
     /* Empty string */
-    char *result7 = arena_extract_and_trim_value(config_arena, "");
+    char *result7 = config_extract_and_trim_value(config_arena, "");
     assert(result7 == NULL);
 
     /* Quoted value - should remove quotes */
-    char *result8 = arena_extract_and_trim_value(config_arena, "key = \"quoted value\"");
+    char *result8 = config_extract_and_trim_value(config_arena, "key = \"quoted value\"");
     assert(result8 != NULL);
     assert(strcmp(result8, "quoted value") == 0);
 
     /* Quoted value with spaces around quotes */
-    char *result9 = arena_extract_and_trim_value(config_arena, "key =  \"quoted value\"  ");
+    char *result9 = config_extract_and_trim_value(config_arena, "key =  \"quoted value\"  ");
     assert(result9 != NULL);
     assert(strcmp(result9, "quoted value") == 0);
 
     /* Quoted value with only opening quote */
-    char *result10 = arena_extract_and_trim_value(config_arena, "key = \"quoted value");
+    char *result10 = config_extract_and_trim_value(config_arena, "key = \"quoted value");
     assert(result10 != NULL);
     assert(strcmp(result10, "\"quoted value") == 0);
 
     /* Quoted value with only closing quote */
-    char *result11 = arena_extract_and_trim_value(config_arena, "key = quoted value\"");
+    char *result11 = config_extract_and_trim_value(config_arena, "key = quoted value\"");
     assert(result11 != NULL);
     assert(strcmp(result11, "quoted value\"") == 0);
 
     /* Empty quoted value */
-    char *result12 = arena_extract_and_trim_value(config_arena, "key = \"\"");
+    char *result12 = config_extract_and_trim_value(config_arena, "key = \"\"");
     assert(result12 != NULL);
     assert(strlen(result12) == 0);
 
     /* Quoted value with embedded equals sign */
-    char *result13 = arena_extract_and_trim_value(config_arena, "key = \"value=with=equals\"");
+    char *result13 = config_extract_and_trim_value(config_arena, "key = \"value=with=equals\"");
     assert(result13 != NULL);
     assert(strcmp(result13, "value=with=equals") == 0);
 
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
 
-    printf("[TEST] test_arena_extract_and_trim_value: All tests passed\n");
+    printf("[TEST] test_config_extract_and_trim_value: All tests passed\n");
 }
 
-/* Test arena_process_config_line function */
-static void test_arena_process_config_line() 
+/* Test config_process_config_line function */
+static void test_config_process_config_line() 
 {
     agent_context_t *ctx = init_test_context();
     arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
 
     /* Line with a comment */
-    char *result1 = arena_process_config_line(config_arena, "key = value # comment");
+    char *result1 = config_process_config_line(config_arena, "key = value # comment");
     assert(result1 != NULL);
     assert(strcmp(result1, "key = value") == 0);
 
     /* Line with just whitespace */
-    char *result2 = arena_process_config_line(config_arena, "  \t\n");
+    char *result2 = config_process_config_line(config_arena, "  \t\n");
     assert(result2 != NULL);
     assert(strlen(result2) == 0);
 
     /* Line with both leading/trailing whitespace and comment */
-    char *result3 = arena_process_config_line(config_arena, "   key = value   # comment ");
+    char *result3 = config_process_config_line(config_arena, "   key = value   # comment ");
     assert(result3 != NULL);
     assert(strcmp(result3, "key = value") == 0);
 
     /* Line with only a comment */
-    char *result4 = arena_process_config_line(config_arena, "# just a comment");
+    char *result4 = config_process_config_line(config_arena, "# just a comment");
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
     /* Empty line */
-    char *result5 = arena_process_config_line(config_arena, "");
+    char *result5 = config_process_config_line(config_arena, "");
     assert(result5 != NULL);
     assert(strlen(result5) == 0);
 
     /* Line with quoted value and comment */
-    char *result6 = arena_process_config_line(config_arena, "key = \"quoted value\" # comment");
+    char *result6 = config_process_config_line(config_arena, "key = \"quoted value\" # comment");
     assert(result6 != NULL);
     assert(strcmp(result6, "key = \"quoted value\"") == 0);
 
     /* Line with embedded '#' in quoted value */
-    char *result7 = arena_process_config_line(config_arena, "key = \"value with # inside quotes\"");
+    char *result7 = config_process_config_line(config_arena, "key = \"value with # inside quotes\"");
     assert(result7 != NULL);
     assert(strcmp(result7, "key = \"value with # inside quotes\"") == 0);
 
     destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
     cleanup_test_context(ctx);
 
-    printf("[TEST] test_arena_process_config_line: All tests passed\n");
+    printf("[TEST] test_config_process_config_line: All tests passed\n");
 }
 
 /* Test load_config with a simple config */
@@ -1264,8 +1265,8 @@ int main()
 
     test_arena_trim();
     test_arena_strip_comment();
-    test_arena_extract_and_trim_value();
-    test_arena_process_config_line();
+    test_config_extract_and_trim_value();
+    test_config_process_config_line();
     test_load_config();
     test_should_sample_method();
     test_record_method_execution();

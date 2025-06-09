@@ -62,4 +62,23 @@ int config_parse(arena_t *arena, const char *config_file, cooper_config_t *confi
  */
 int config_init(arena_t *arena, cooper_config_t *config);
 
+/**
+ * Extract value part from a "key = value" string and trim it, using arena allocation
+ * Also handles quoted values by removing surrounding quotes
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Extracted and trimmed value, or NULL if no value found or on error
+ */
+char *config_extract_and_trim_value(arena_t *arena, const char *line);
+
+/**
+ * Process a line from a configuration file - strip comments and trim whitespace
+ * 
+ * @param arena     Pointer to the arena
+ * @param line      Line to process
+ * @return          Processed line, or NULL on error
+ */
+char *config_process_config_line(arena_t *arena, const char *line);
+
 #endif /* CONFIG_H */
