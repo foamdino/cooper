@@ -39,6 +39,7 @@ int main(int argc, char **argv)
     Nob_Cmd cc_cmd = {0};
     Nob_Cmd javac_cmd = {0};
     Nob_Cmd test_cmd = {0};
+    Nob_Cmd cli_cmd = {0};
 
     const char *JAVA_HOME = getenv("JAVA_HOME");
     assert(JAVA_HOME != NULL);
@@ -91,6 +92,12 @@ int main(int argc, char **argv)
         SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread", "-lrt");
     
     if (!nob_cmd_run_sync(test_cmd)) return 1;
+
+    /* compile cli */
+    nob_cmd_append(&cli_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"cli", 
+        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cli.c", "-pthread", "-lrt");
+
+    if (!nob_cmd_run_sync(cli_cmd)) return 1;
 
     return 0;
 }

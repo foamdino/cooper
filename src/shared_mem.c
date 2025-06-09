@@ -25,6 +25,7 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     /* Create data shared memory (agent writes, CLI reads) */
     ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);
     if (ctx->data_fd == -1) {
+        LOG_ERROR("shm_open failed for %s: %s (errno=%d)", COOPER_DATA_SHM_NAME, strerror(errno), errno);
         /* Try to unlink and recreate */
         shm_unlink(COOPER_DATA_SHM_NAME);
         ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);

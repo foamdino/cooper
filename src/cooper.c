@@ -756,7 +756,15 @@ void *shm_export_thread_func(void *arg) {
     
     LOG_INFO("Shared memory export thread started");
     
+    /* TODO move export interval to const */
     while (ctx->shm_export_running) {
+        if (ctx->shm_ctx == NULL)
+        {
+            LOG_DEBUG("Shared mem not available, thread sleeping");
+            sleep(2);
+            continue;
+        }
+
         /* Clean up entries that CLI has read */
         cooper_shm_cleanup_read_entries(ctx->shm_ctx);
         
@@ -2476,6 +2484,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->arena_head = NULL;
     global_ctx->arena_tail = NULL;
     global_ctx->thread_mem_head = NULL;
+    global_ctx->shm_ctx = NULL;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
     memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 
@@ -2574,7 +2583,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     
     /* Initialize shared memory */
     global_ctx->shm_ctx = malloc(sizeof(cooper_shm_context_t));
-    if (!global_ctx->shm_ctx) {
+    if (!global_ctx->shm_ctx) 
+    {
         LOG_ERROR("Failed to allocate shared memory context");
         return JNI_ERR;
     }
@@ -2628,7 +2638,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         global_ctx->shm_export_running = 1;
         if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
         {
-            LOG_WARN("Failed to start shared memory export thread");
+            LOG_INFO("Failed to start shared memory export thread");
             cooper_shm_cleanup_agent(global_ctx->shm_ctx);
             goto cleanup_shm;
         } else {
@@ -2639,6 +2649,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 cleanup_shm:
     free(global_ctx->shm_ctx);
     global_ctx->shm_ctx = NULL;
+    global_ctx->shm_export_running = 0;
 
     if (init_jvm_capabilities(global_ctx) != COOPER_OK)
         return JNI_ERR;
