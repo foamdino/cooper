@@ -4,18 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
-#include <time.h>
-#include <assert.h>
-#include <pthread.h>
-#include <errno.h>
-
 #include "log.h"
-#include "arena.h"
-#include "arena_str.h"
 
 /* Static level names for output */
 static const char *level_names[] = 

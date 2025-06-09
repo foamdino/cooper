@@ -4,11 +4,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include <stdint.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <string.h>
-
 #include "arena.h"
 
 /**

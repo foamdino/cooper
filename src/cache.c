@@ -5,9 +5,6 @@
  */
 
 #include "cache.h"
-#include <string.h>
-#include <stdlib.h>
-#include <assert.h>
 
 #define MAX_TLS_CACHES 8  /**< Maximum number of different cache types per thread */
 

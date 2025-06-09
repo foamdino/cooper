@@ -5,11 +5,6 @@
  */
 
 #include "config.h"
-#include "arena_str.h"
-#include "log.h"
-#include <stdio.h>
-#include <string.h>
-#include <assert.h>
 
 /* Metric flag constants - these should match cooper.h */
 #define METRIC_FLAG_TIME    0x0001

@@ -7,7 +7,13 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+
 #include "arena.h"
+#include "arena_str.h"
+#include "log.h"
 
 #define DEFAULT_CFG_FILE "trace.ini"
 #define MAX_FILTER_ENTRIES 256

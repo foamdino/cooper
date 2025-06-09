@@ -5,12 +5,7 @@
  */
 
 #include "cooper.h"
-#include "arena.h"
-#include "arena_str.h"
-#include "log.h"
-#include "cpu.h"
-#include "cache.h"
-#include "config.h"
+
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -723,9 +718,9 @@ void export_to_file(agent_context_t *ctx)
     /* Export memory samples in chronological order */
     for (size_t i = 0; i < ctx->app_memory_metrics->sample_count; i++) 
     {
-        fprintf(fp, "%llu,%llu\n", 
-            (unsigned long long)ctx->app_memory_metrics->timestamps[i],
-            (unsigned long long)ctx->app_memory_metrics->process_memory_sample[i]);
+        fprintf(fp, "%" PRIu64 ",%" PRIu64 "\n", 
+            ctx->app_memory_metrics->timestamps[i],
+            ctx->app_memory_metrics->process_memory_sample[i]);
     }
 
     fprintf(fp, "# ------ \n\n");
@@ -759,10 +754,10 @@ void export_to_file(agent_context_t *ctx)
                 idx = (oldest_idx + i) % MAX_MEMORY_SAMPLES;
             }
             
-            fprintf(fp, "%lld,%llu,%llu\n", 
-                (long long)thread_metrics->thread_id,
-                (unsigned long long)thread_metrics->timestamps[idx],
-                (unsigned long long)thread_metrics->memory_samples[idx]);
+            fprintf(fp, "%" PRId64 ",%" PRIu64 ",%" PRIu64 "\n", 
+                thread_metrics->thread_id,
+                thread_metrics->timestamps[idx],
+                thread_metrics->memory_samples[idx]);
         }
         
         thread_metrics = thread_metrics->next;

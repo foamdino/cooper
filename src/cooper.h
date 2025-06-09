@@ -18,11 +18,17 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
 #include "arena.h"
+#include "arena_str.h"
+#include "log.h"
+#include "cpu.h"
+#include "cache.h"
+#include "config.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)

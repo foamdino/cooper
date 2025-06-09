@@ -9,6 +9,16 @@
 
 #include <stdio.h>
 #include <pthread.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+#include <time.h>
+#include <assert.h>
+#include <errno.h>
+#include <unistd.h>
+
+#include "arena.h"
+#include "arena_str.h"
 
 /* Maximum size of a log message */
 #define MAX_LOG_MSG_SZ 1024
