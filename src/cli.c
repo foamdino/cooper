@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <math.h>
+#include <stdarg.h>
 
 #include "shared_mem.h"
 
@@ -62,6 +63,7 @@ typedef struct {
 static struct termios orig_termios;
 static int term_width = 80;
 static int term_height = 24;
+static int lines_drawn = 0;
 static view_mode_e current_view = VIEW_OVERVIEW;
 static cli_shm_context_t shm_ctx = {0};
 
@@ -300,8 +302,25 @@ void read_shared_memory_data() {
     }
 }
 
+/* Modify the printf functions to track lines */
+static void safe_printf(const char *format, ...) 
+{
+    if (lines_drawn >= term_height - 1) return; /* Don't exceed terminal height */
+    
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    
+    /* Count newlines in the format string */
+    for (const char *p = format; *p; p++) {
+        if (*p == '\n') lines_drawn++;
+    }
+}
+
 /* Visualization functions */
-void draw_header() {
+void draw_header() 
+{
     const char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
     char title[256];
     snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[current_view]);
@@ -309,27 +328,27 @@ void draw_header() {
     int title_len = strlen(title);
     int padding = (term_width - title_len) / 2;
     
-    printf("┌");
-    for (int i = 0; i < term_width - 2; i++) printf("─");
-    printf("┐\n");
+    safe_printf("┌");
+    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+    safe_printf("┐\n");
     
-    printf("│");
-    for (int i = 0; i < padding; i++) printf(" ");
-    printf("%s", title);
-    for (int i = padding + title_len; i < term_width - 1; i++) printf(" ");
-    printf("│\n");
+    safe_printf("│");
+    for (int i = 0; i < padding; i++) safe_printf(" ");
+    safe_printf("%s", title);
+    for (int i = padding + title_len; i < term_width - 1; i++) safe_printf(" ");
+    safe_printf("│\n");
     
-    printf("├");
-    for (int i = 0; i < term_width - 2; i++) printf("─");
-    printf("┤\n");
+    safe_printf("├");
+    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+    safe_printf("┤\n");
     
-    printf("│ Keys: [1-4] Switch views  [q] Quit");
-    for (int i = 34; i < term_width - 1; i++) printf(" ");
-    printf("│\n");
+    safe_printf("│ Keys: [1-4] Switch views  [q] Quit");
+    for (int i = 34; i < term_width - 1; i++) safe_printf(" ");
+    safe_printf("│\n");
     
-    printf("├");
-    for (int i = 0; i < term_width - 2; i++) printf("─");
-    printf("┤\n");
+    safe_printf("├");
+    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+    safe_printf("┤\n");
 }
 
 void draw_bar_chart(const char* title, const char* items[], uint64_t values[], int count, uint64_t max_val) {
@@ -455,24 +474,24 @@ void draw_histogram(const char* title, uint64_t values[], int count) {
 }
 
 void draw_overview() {
-    printf("│ System Overview\n");
-    printf("│\n");
-    printf("│ Process Memory: %lu MB\n", (unsigned long)(memory_data.process_memory / 1024 / 1024));
-    printf("│ Active Threads: %d\n", memory_data.active_threads);
-    printf("│ Tracked Methods: %d\n", method_count);
-    printf("│ Object Types: %d\n", object_count);
-    printf("│\n");
+    safe_printf("│ System Overview\n");
+    safe_printf("│\n");
+    safe_printf("│ Process Memory: %lu MB\n", (unsigned long)(memory_data.process_memory / 1024 / 1024));
+    safe_printf("│ Active Threads: %d\n", memory_data.active_threads);
+    safe_printf("│ Tracked Methods: %d\n", method_count);
+    safe_printf("│ Object Types: %d\n", object_count);
+    safe_printf("│\n");
     
     /* Show top methods by call count */
     if (method_count > 0) {
-        printf("│ Top Methods by Calls:\n");
+        safe_printf("│ Top Methods by Calls:\n");
         for (int i = 0; i < method_count && i < 5; i++) {
             char short_name[50];
             const char* last_slash = strrchr(methods[i].signature, '/');
             const char* display_name = last_slash ? last_slash + 1 : methods[i].signature;
             snprintf(short_name, sizeof(short_name), "%.45s", display_name);
             
-            printf("│   %-45s %8lu calls\n", short_name, (unsigned long)methods[i].call_count);
+            safe_printf("│   %-45s %8lu calls\n", short_name, (unsigned long)methods[i].call_count);
         }
     }
 }
@@ -535,13 +554,14 @@ void draw_objects_view()
 }
 
 void draw_footer() {
-    printf("└");
-    for (int i = 0; i < term_width - 2; i++) printf("─");
-    printf("┘\n");
+    safe_printf("└");
+    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+    safe_printf("┘\n");
 }
 
 void draw_ui() {
     clear_screen();
+    lines_drawn = 0; /* reset line counter */
     draw_header();
     
     switch (current_view) {
@@ -564,13 +584,46 @@ void draw_ui() {
     /* Fill remaining space */
     int lines_used = 8; /* Header + footer estimate */
     for (int i = lines_used; i < term_height - 1; i++) {
-        printf("│");
-        for (int j = 0; j < term_width - 2; j++) printf(" ");
-        printf("│\n");
+        safe_printf("│");
+        for (int j = 0; j < term_width - 2; j++) safe_printf(" ");
+        safe_printf("│\n");
     }
     
     draw_footer();
     fflush(stdout);
+}
+
+void debug_shared_memory() {
+    if (!shm_ctx.data_shm || !shm_ctx.status_shm) {
+        printf("DEBUG: No shared memory mapped\n");
+        return;
+    }
+    
+    printf("DEBUG: SHM Status - version=%u, max_entries=%u, next_write=%u\n",
+           shm_ctx.data_shm->version, shm_ctx.data_shm->max_entries, 
+           shm_ctx.data_shm->next_write_index);
+    
+    int ready_count = 0, read_count = 0, empty_count = 0;
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
+        switch (shm_ctx.status_shm->status[i]) 
+        {
+            case ENTRY_EMPTY: empty_count++; break;
+            case ENTRY_READY: ready_count++; break;
+            case ENTRY_READ: read_count++; break;
+        }
+    }
+    
+    printf("DEBUG: Status counts - Empty: %d, Ready: %d, Read: %d\n", 
+           empty_count, ready_count, read_count);
+    
+    /* Show first few ready entries */
+    for (uint32_t i = 0; i < 5 && i < COOPER_MAX_ENTRIES; i++) {
+        if (shm_ctx.status_shm->status[i] == ENTRY_READY) {
+            cooper_method_metric_data_t *entry = &shm_ctx.data_shm->metrics[i];
+            printf("DEBUG: Ready entry[%u]: type=%d, sig='%s'\n", 
+                   i, entry->data_type, entry->signature);
+        }
+    }
 }
 
 int main() 
@@ -611,6 +664,12 @@ int main()
         }
         
         read_shared_memory_data();
+
+        /* Add debug output every few seconds */
+        static int debug_counter = 0;
+        if (++debug_counter % 20 == 0) { /* Every ~5 seconds */
+            debug_shared_memory();
+        }
         draw_ui();
         usleep(REFRESH_INTERVAL);
     }

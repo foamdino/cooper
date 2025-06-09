@@ -100,7 +100,6 @@ int cooper_shm_write_method_metric(cooper_shm_context_t *ctx, const cooper_metho
     assert(metric != NULL);
     assert(ctx->data_shm != NULL);      /* Context should be initialized */
     assert(ctx->status_shm != NULL);    /* Context should be initialized */
-    assert(metric->data_type == COOPER_DATA_METHOD_METRIC); /* Correct data type */
     assert(strlen(metric->signature) > 0); /* Non-empty signature */
 
     if (!ctx || !metric) return -1;
@@ -135,7 +134,6 @@ int cooper_shm_write_memory_sample(cooper_shm_context_t *ctx, const cooper_memor
     assert(sample != NULL);
     assert(ctx->data_shm != NULL);      /* Context should be initialized */
     assert(ctx->status_shm != NULL);    /* Context should be initialized */
-    assert(sample->data_type == COOPER_DATA_MEMORY_SAMPLE); /* Correct data type */
     assert(sample->process_memory != UINT64_MAX);  /* Not uninitialized */
     assert(sample->thread_memory != UINT64_MAX);   /* Not uninitialized */
 

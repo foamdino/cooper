@@ -2644,7 +2644,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (cooper_shm_init_agent(global_ctx->shm_ctx) != 0) 
     {
         LOG_WARN("Failed to initialize shared memory - continuing without it");
-        goto cleanup_shm;
+        free(global_ctx->shm_ctx);
+        global_ctx->shm_ctx = NULL;
     } 
     else 
     {
@@ -2654,16 +2655,13 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         {
             LOG_INFO("Failed to start shared memory export thread");
             cooper_shm_cleanup_agent(global_ctx->shm_ctx);
-            goto cleanup_shm;
+            free(global_ctx->shm_ctx);
+            global_ctx->shm_ctx = NULL;
+            global_ctx->shm_export_running = 0;
         } else {
             LOG_INFO("Shared memory export enabled");
         }
     }
-
-cleanup_shm:
-    free(global_ctx->shm_ctx);
-    global_ctx->shm_ctx = NULL;
-    global_ctx->shm_export_running = 0;
 
     if (init_jvm_capabilities(global_ctx) != COOPER_OK)
         return JNI_ERR;
