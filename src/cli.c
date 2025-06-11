@@ -1,4 +1,10 @@
-/* src/cli.c */
+/*
+ * SPDX-FileCopyrightText: (c) 2025 Kev Jackson <foamdino@gmail.com>
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,19 +17,10 @@
 #include <math.h>
 #include <stdarg.h>
 
+#include "tui.h"
 #include "shared_mem.h"
 
 #define REFRESH_INTERVAL 250000  /* 250ms */
-#define MAX_DISPLAY_ITEMS 20
-#define MAX_HISTORY_POINTS 100
-
-typedef enum {
-    VIEW_OVERVIEW = 0,
-    VIEW_METHODS = 1,
-    VIEW_MEMORY = 2,
-    VIEW_OBJECTS = 3,
-    VIEW_COUNT
-} view_mode_e;
 
 typedef struct {
     cooper_data_shm_t *data_shm;
@@ -55,7 +52,7 @@ typedef struct {
     uint64_t thread_memory[10]; /* Track up to 10 threads */
     uint64_t thread_ids[10];
     int active_threads;
-    uint64_t memory_history[MAX_HISTORY_POINTS];
+    uint64_t memory_history[UI_MAX_HISTORY_POINTS];
     int history_count;
     time_t last_updated;
 } memory_display_t;
@@ -64,12 +61,12 @@ static struct termios orig_termios;
 static int term_width = 80;
 static int term_height = 24;
 static int lines_drawn = 0;
-static view_mode_e current_view = VIEW_OVERVIEW;
+static view_mode_e current_view = UI_VIEW_OVERVIEW;
 static cli_shm_context_t shm_ctx = {0};
 
 /* Display data structures */
-static method_display_t methods[MAX_DISPLAY_ITEMS];
-static object_display_t objects[MAX_DISPLAY_ITEMS];
+static method_display_t methods[UI_MAX_DISPLAY_ITEMS];
+static object_display_t objects[UI_MAX_DISPLAY_ITEMS];
 static memory_display_t memory_data = {0};
 static int method_count = 0;
 static int object_count = 0;
@@ -201,7 +198,7 @@ void read_shared_memory_data() {
                         }
                     }
                     
-                    if (method_idx == -1 && method_count < MAX_DISPLAY_ITEMS)
+                    if (method_idx == -1 && method_count < UI_MAX_DISPLAY_ITEMS)
                         method_idx = method_count++;
                     
                     if (method_idx >= 0) {
@@ -231,14 +228,14 @@ void read_shared_memory_data() {
                         memory_data.process_memory = process_memory;
                         
                         /* Add to history */
-                        if (memory_data.history_count < MAX_HISTORY_POINTS) {
+                        if (memory_data.history_count < UI_MAX_HISTORY_POINTS) {
                             memory_data.memory_history[memory_data.history_count++] = process_memory;
                         } else {
                             /* Shift history */
-                            for (int j = 0; j < MAX_HISTORY_POINTS - 1; j++) {
+                            for (int j = 0; j < UI_MAX_HISTORY_POINTS - 1; j++) {
                                 memory_data.memory_history[j] = memory_data.memory_history[j + 1];
                             }
-                            memory_data.memory_history[MAX_HISTORY_POINTS - 1] = process_memory;
+                            memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = process_memory;
                         }
                     } else {
                         /* Thread memory */
