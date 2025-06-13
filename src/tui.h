@@ -14,12 +14,158 @@
 #define UI_MAX_HISTORY_POINTS 100
 #define UI_MAX_SIGNATURE_LEN 512
 
-typedef enum {
+typedef enum tui_view_mode tui_view_mode_e;
+typedef struct tui_method_display tui_method_display_t;
+typedef struct tui_object_display tui_object_display_t;
+typedef struct tui_memory_display tui_memory_display_t;
+typedef struct tui_terminal_info tui_terminal_info_t;
+typedef struct tui_context tui_context_t;
+
+enum tui_view_mode {
     UI_VIEW_OVERVIEW = 0,
     UI_VIEW_METHODS = 1,
     UI_VIEW_MEMORY = 2,
     UI_VIEW_OBJECTS = 3,
     UI_VIEW_COUNT
-} ui_view_mode_e;
+};
+
+struct tui_method_display 
+{
+    char signature[UI_MAX_SIGNATURE_LEN];
+    uint64_t call_count;
+    uint64_t total_time_ns;
+    uint64_t avg_time_ns;
+    uint64_t alloc_bytes;
+    time_t last_updated;
+};
+
+struct tui_object_display 
+{
+    char class_name[UI_MAX_SIGNATURE_LEN];
+    uint64_t allocation_count;
+    uint64_t total_bytes;
+    uint64_t current_instances;
+    uint64_t avg_size;
+    time_t last_updated;
+};
+
+struct tui_memory_display 
+{
+    uint64_t process_memory;
+    uint64_t thread_memory[10]; /* Track up to 10 threads */
+    uint64_t thread_ids[10];
+    int active_threads;
+    uint64_t memory_history[UI_MAX_HISTORY_POINTS];
+    int history_count;
+    time_t last_updated;
+};
+
+struct tui_terminal_info
+{
+    int width;
+    int height;
+};
+
+struct tui_context 
+{
+    tui_method_display_t *methods;
+    tui_object_display_t *objects;
+    tui_memory_display_t *memory_data;
+    tui_view_mode_e current_view;
+    tui_terminal_info_t terminal;
+    int method_count;
+    int object_count;
+};
+
+/**
+ * Initialize the UI library
+ * @return 0 on success, non-zero on failure
+ */
+int tui_init(void);
+
+/**
+ * Cleanup the UI library
+ */
+void tui_cleanup(void);
+
+/**
+ * Get the library version string
+ * @return Version string
+ */
+char tui_get_version(void);
+
+/**
+ * Draw the complete UI
+ * @param ctx UI context containing all display data
+ */
+void tui_draw(const tui_context_t *ctx);
+
+/**
+ *Draw just the header section
+ *@param ctx UI context
+ */
+void tui_draw_header(const tui_context_t *ctx);
+
+/**
+ * Draw just the footer section
+ * @param ctx UI context
+ */
+void tui_draw_footer(const tui_context_t *ctx);
+
+/**
+ * Draw the overview view
+ * @param ctx UI context
+ */
+void tui_draw_overview(const tui_context_t *ctx);
+
+/**
+ * Draw the methods view
+ * @param ctx UI context
+ */
+void tui_draw_methods_view(const tui_context_t *ctx);
+
+/**
+ * Draw the memory view
+ * @param ctx UI context
+ */
+void tui_draw_memory_view(const tui_context_t *ctx);
+
+/**
+ * Draw the objects view
+ * @param ctx UI context
+ */
+void tui_draw_objects_view(const tui_context_t *ctx);
+
+/**
+ * Clear the screen
+ */
+void tui_clear_screen(void);
+
+/**
+ * Draw a bar chart
+ * @param title Chart title
+ * @param items Array of item names
+ * @param values Array of values
+ * @param count Number of items
+ * @param max_val Maximum value for scaling
+ * @param term_width Terminal width
+ */
+void tui_draw_bar_chart(const char title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+
+/**
+ * Draw memory history chart
+ * @param memory_data Memory data structure
+ * @param term_width Terminal width
+ */
+void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width);
+
+/**
+ * Draw a histogram
+ * @param title Chart title
+ * @param values Array of values
+ * @param count Number of values
+ * @param term_width Terminal width
+ */
+void tui_draw_histogram(const char title, uint64_t values[], int count, int term_width);
 
 #endif /* TUI_H */
