@@ -1,4 +1,10 @@
-/* src/cli.c */
+/*
+ * SPDX-FileCopyrightText: (c) 2025 Kev Jackson <foamdino@gmail.com>
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,19 +17,13 @@
 #include <math.h>
 #include <stdarg.h>
 
+#include "tui_loader.h"
 #include "shared_mem.h"
 
 #define REFRESH_INTERVAL 250000  /* 250ms */
-#define MAX_DISPLAY_ITEMS 20
-#define MAX_HISTORY_POINTS 100
 
-typedef enum {
-    VIEW_OVERVIEW = 0,
-    VIEW_METHODS = 1,
-    VIEW_MEMORY = 2,
-    VIEW_OBJECTS = 3,
-    VIEW_COUNT
-} view_mode_e;
+/* Global UI loader */
+static tui_loader_t* loader = NULL;
 
 typedef struct {
     cooper_data_shm_t *data_shm;
@@ -55,7 +55,7 @@ typedef struct {
     uint64_t thread_memory[10]; /* Track up to 10 threads */
     uint64_t thread_ids[10];
     int active_threads;
-    uint64_t memory_history[MAX_HISTORY_POINTS];
+    uint64_t memory_history[UI_MAX_HISTORY_POINTS];
     int history_count;
     time_t last_updated;
 } memory_display_t;
@@ -64,13 +64,13 @@ static struct termios orig_termios;
 static int term_width = 80;
 static int term_height = 24;
 static int lines_drawn = 0;
-static view_mode_e current_view = VIEW_OVERVIEW;
+static tui_view_mode_e current_view = UI_VIEW_OVERVIEW;
 static cli_shm_context_t shm_ctx = {0};
 
 /* Display data structures */
-static method_display_t methods[MAX_DISPLAY_ITEMS];
-static object_display_t objects[MAX_DISPLAY_ITEMS];
-static memory_display_t memory_data = {0};
+static tui_method_display_t methods[UI_MAX_DISPLAY_ITEMS];
+static tui_object_display_t objects[UI_MAX_DISPLAY_ITEMS];
+static tui_memory_display_t memory_data = {0};
 static int method_count = 0;
 static int object_count = 0;
 
@@ -201,7 +201,7 @@ void read_shared_memory_data() {
                         }
                     }
                     
-                    if (method_idx == -1 && method_count < MAX_DISPLAY_ITEMS)
+                    if (method_idx == -1 && method_count < UI_MAX_DISPLAY_ITEMS)
                         method_idx = method_count++;
                     
                     if (method_idx >= 0) {
@@ -231,14 +231,14 @@ void read_shared_memory_data() {
                         memory_data.process_memory = process_memory;
                         
                         /* Add to history */
-                        if (memory_data.history_count < MAX_HISTORY_POINTS) {
+                        if (memory_data.history_count < UI_MAX_HISTORY_POINTS) {
                             memory_data.memory_history[memory_data.history_count++] = process_memory;
                         } else {
                             /* Shift history */
-                            for (int j = 0; j < MAX_HISTORY_POINTS - 1; j++) {
+                            for (int j = 0; j < UI_MAX_HISTORY_POINTS - 1; j++) {
                                 memory_data.memory_history[j] = memory_data.memory_history[j + 1];
                             }
-                            memory_data.memory_history[MAX_HISTORY_POINTS - 1] = process_memory;
+                            memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = process_memory;
                         }
                     } else {
                         /* Thread memory */
@@ -282,7 +282,7 @@ void read_shared_memory_data() {
                         }
                     }
                     
-                    if (obj_idx == -1 && object_count < MAX_DISPLAY_ITEMS)
+                    if (obj_idx == -1 && object_count < UI_MAX_DISPLAY_ITEMS)
                         obj_idx = object_count++;
                     
                     if (obj_idx >= 0) {
@@ -302,296 +302,282 @@ void read_shared_memory_data() {
     }
 }
 
-/* Modify the printf functions to track lines */
-static void safe_printf(const char *format, ...) 
-{
-    if (lines_drawn >= term_height - 1) return; /* Don't exceed terminal height */
-    
-    va_list args;
-    va_start(args, format);
-    vprintf(format, args);
-    va_end(args);
-    
-    /* Count newlines in the format string */
-    for (const char *p = format; *p; p++) {
-        if (*p == '\n') lines_drawn++;
-    }
-}
 
-/* Visualization functions */
-void draw_header() 
-{
-    const char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
-    char title[256];
-    snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[current_view]);
-    
-    int title_len = strlen(title);
-    int padding = (term_width - title_len) / 2;
-    
-    safe_printf("┌");
-    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
-    safe_printf("┐\n");
-    
-    safe_printf("│");
-    for (int i = 0; i < padding; i++) safe_printf(" ");
-    safe_printf("%s", title);
-    for (int i = padding + title_len; i < term_width - 1; i++) safe_printf(" ");
-    safe_printf("│\n");
-    
-    safe_printf("├");
-    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
-    safe_printf("┤\n");
-    
-    safe_printf("│ Keys: [1-4] Switch views  [q] Quit");
-    for (int i = 34; i < term_width - 1; i++) safe_printf(" ");
-    safe_printf("│\n");
-    
-    safe_printf("├");
-    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
-    safe_printf("┤\n");
-}
 
-void draw_bar_chart(const char* title, const char* items[], uint64_t values[], int count, uint64_t max_val) {
-    printf("│ %s\n", title);
-    printf("│\n");
+// /* Visualization functions */
+// void draw_header() 
+// {
+//     const char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
+//     char title[256];
+//     snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[current_view]);
     
-    int max_name_len = 25;
-    int bar_width = term_width - max_name_len - 15; /* Leave space for value and borders */
+//     int title_len = strlen(title);
+//     int padding = (term_width - title_len) / 2;
     
-    if (bar_width < 10) bar_width = 10;
+//     safe_printf("┌");
+//     for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+//     safe_printf("┐\n");
     
-    for (int i = 0; i < count && i < term_height - 10; i++) {
-        printf("│ %-*.*s", max_name_len, max_name_len, items[i]);
+//     safe_printf("│");
+//     for (int i = 0; i < padding; i++) safe_printf(" ");
+//     safe_printf("%s", title);
+//     for (int i = padding + title_len; i < term_width - 1; i++) safe_printf(" ");
+//     safe_printf("│\n");
+    
+//     safe_printf("├");
+//     for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+//     safe_printf("┤\n");
+    
+//     safe_printf("│ Keys: [1-4] Switch views  [q] Quit");
+//     for (int i = 34; i < term_width - 1; i++) safe_printf(" ");
+//     safe_printf("│\n");
+    
+//     safe_printf("├");
+//     for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+//     safe_printf("┤\n");
+// }
+
+// void draw_bar_chart(const char* title, const char* items[], uint64_t values[], int count, uint64_t max_val) {
+//     printf("│ %s\n", title);
+//     printf("│\n");
+    
+//     int max_name_len = 25;
+//     int bar_width = term_width - max_name_len - 15; /* Leave space for value and borders */
+    
+//     if (bar_width < 10) bar_width = 10;
+    
+//     for (int i = 0; i < count && i < term_height - 10; i++) {
+//         printf("│ %-*.*s", max_name_len, max_name_len, items[i]);
         
-        int bar_len = max_val > 0 ? (values[i] * bar_width) / max_val : 0;
-        if (bar_len > bar_width) bar_len = bar_width;
+//         int bar_len = max_val > 0 ? (values[i] * bar_width) / max_val : 0;
+//         if (bar_len > bar_width) bar_len = bar_width;
         
-        printf(" [");
-        for (int j = 0; j < bar_len; j++) printf("█");
-        for (int j = bar_len; j < bar_width; j++) printf(" ");
-        printf("] %8lu\n", (unsigned long)values[i]);
-    }
-}
+//         printf(" [");
+//         for (int j = 0; j < bar_len; j++) printf("█");
+//         for (int j = bar_len; j < bar_width; j++) printf(" ");
+//         printf("] %8lu\n", (unsigned long)values[i]);
+//     }
+// }
 
-void draw_memory_history() {
-    printf("│ Process Memory History (MB)\n");
-    printf("│\n");
+// void draw_memory_history() {
+//     printf("│ Process Memory History (MB)\n");
+//     printf("│\n");
     
-    if (memory_data.history_count < 2) {
-        printf("│ Collecting data...\n");
-        return;
-    }
+//     if (memory_data.history_count < 2) {
+//         printf("│ Collecting data...\n");
+//         return;
+//     }
     
-    /* Find min/max for scaling */
-    uint64_t min_mem = memory_data.memory_history[0];
-    uint64_t max_mem = memory_data.memory_history[0];
+//     /* Find min/max for scaling */
+//     uint64_t min_mem = memory_data.memory_history[0];
+//     uint64_t max_mem = memory_data.memory_history[0];
     
-    for (int i = 1; i < memory_data.history_count; i++) {
-        if (memory_data.memory_history[i] < min_mem) min_mem = memory_data.memory_history[i];
-        if (memory_data.memory_history[i] > max_mem) max_mem = memory_data.memory_history[i];
-    }
+//     for (int i = 1; i < memory_data.history_count; i++) {
+//         if (memory_data.memory_history[i] < min_mem) min_mem = memory_data.memory_history[i];
+//         if (memory_data.memory_history[i] > max_mem) max_mem = memory_data.memory_history[i];
+//     }
     
-    int chart_height = 8;
-    int chart_width = term_width - 10;
+//     int chart_height = 8;
+//     int chart_width = term_width - 10;
     
-    /* Draw the chart from top to bottom */
-    for (int row = 0; row < chart_height; row++) {
-        printf("│ ");
-        uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
+//     /* Draw the chart from top to bottom */
+//     for (int row = 0; row < chart_height; row++) {
+//         printf("│ ");
+//         uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
         
-        for (int col = 0; col < memory_data.history_count && col < chart_width; col++) {
-            if (memory_data.memory_history[col] >= threshold) {
-                printf("█");
-            } else {
-                printf(" ");
-            }
-        }
-        printf("\n");
-    }
+//         for (int col = 0; col < memory_data.history_count && col < chart_width; col++) {
+//             if (memory_data.memory_history[col] >= threshold) {
+//                 printf("█");
+//             } else {
+//                 printf(" ");
+//             }
+//         }
+//         printf("\n");
+//     }
     
-    printf("│ Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
-           (unsigned long)(min_mem / 1024 / 1024),
-           (unsigned long)(max_mem / 1024 / 1024),
-           (unsigned long)(memory_data.process_memory / 1024 / 1024));
-}
+//     printf("│ Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
+//            (unsigned long)(min_mem / 1024 / 1024),
+//            (unsigned long)(max_mem / 1024 / 1024),
+//            (unsigned long)(memory_data.process_memory / 1024 / 1024));
+// }
 
-void draw_histogram(const char* title, uint64_t values[], int count) {
-    printf("│ %s\n", title);
-    printf("│\n");
+// void draw_histogram(const char* title, uint64_t values[], int count) {
+//     printf("│ %s\n", title);
+//     printf("│\n");
     
-    if (count == 0) 
-    {
-        printf("│ No data available\n");
-        return;
-    }
+//     if (count == 0) 
+//     {
+//         printf("│ No data available\n");
+//         return;
+//     }
     
-    /* Create histogram buckets */
-    uint64_t min_val = values[0];
-    uint64_t max_val = values[0];
+//     /* Create histogram buckets */
+//     uint64_t min_val = values[0];
+//     uint64_t max_val = values[0];
     
-    for (int i = 1; i < count; i++) {
-        if (values[i] < min_val) min_val = values[i];
-        if (values[i] > max_val) max_val = values[i];
-    }
+//     for (int i = 1; i < count; i++) {
+//         if (values[i] < min_val) min_val = values[i];
+//         if (values[i] > max_val) max_val = values[i];
+//     }
     
-    if (max_val == min_val) 
-    {
-        printf("│ All values are identical: %lu\n", (unsigned long)min_val);
-        return;
-    }
+//     if (max_val == min_val) 
+//     {
+//         printf("│ All values are identical: %lu\n", (unsigned long)min_val);
+//         return;
+//     }
     
-    int num_buckets = 20;
-    int buckets[20] = {0};
-    uint64_t bucket_size = (max_val - min_val) / num_buckets;
+//     int num_buckets = 20;
+//     int buckets[20] = {0};
+//     uint64_t bucket_size = (max_val - min_val) / num_buckets;
     
-    for (int i = 0; i < count; i++) 
-    {
-        int bucket = (values[i] - min_val) / bucket_size;
-        if (bucket >= num_buckets) bucket = num_buckets - 1;
-        buckets[bucket]++;
-    }
+//     for (int i = 0; i < count; i++) 
+//     {
+//         int bucket = (values[i] - min_val) / bucket_size;
+//         if (bucket >= num_buckets) bucket = num_buckets - 1;
+//         buckets[bucket]++;
+//     }
     
-    /* Find max bucket count for scaling */
-    int max_bucket = 0;
-    for (int i = 0; i < num_buckets; i++) {
-        if (buckets[i] > max_bucket) max_bucket = buckets[i];
-    }
+//     /* Find max bucket count for scaling */
+//     int max_bucket = 0;
+//     for (int i = 0; i < num_buckets; i++) {
+//         if (buckets[i] > max_bucket) max_bucket = buckets[i];
+//     }
     
-    /* Draw histogram */
-    int bar_height = 6;
-    for (int row = bar_height; row > 0; row--) {
-        printf("│ ");
-        for (int col = 0; col < num_buckets; col++) {
-            int height = max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
-            if (height >= row) {
-                printf("█");
-            } else {
-                printf(" ");
-            }
-        }
-        printf("\n");
-    }
-}
+//     /* Draw histogram */
+//     int bar_height = 6;
+//     for (int row = bar_height; row > 0; row--) {
+//         printf("│ ");
+//         for (int col = 0; col < num_buckets; col++) {
+//             int height = max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
+//             if (height >= row) {
+//                 printf("█");
+//             } else {
+//                 printf(" ");
+//             }
+//         }
+//         printf("\n");
+//     }
+// }
 
-void draw_overview() {
-    safe_printf("│ System Overview\n");
-    safe_printf("│\n");
-    safe_printf("│ Process Memory: %lu MB\n", (unsigned long)(memory_data.process_memory / 1024 / 1024));
-    safe_printf("│ Active Threads: %d\n", memory_data.active_threads);
-    safe_printf("│ Tracked Methods: %d\n", method_count);
-    safe_printf("│ Object Types: %d\n", object_count);
-    safe_printf("│\n");
+// void draw_overview() {
+//     safe_printf("│ System Overview\n");
+//     safe_printf("│\n");
+//     safe_printf("│ Process Memory: %lu MB\n", (unsigned long)(memory_data.process_memory / 1024 / 1024));
+//     safe_printf("│ Active Threads: %d\n", memory_data.active_threads);
+//     safe_printf("│ Tracked Methods: %d\n", method_count);
+//     safe_printf("│ Object Types: %d\n", object_count);
+//     safe_printf("│\n");
     
-    /* Show top methods by call count */
-    if (method_count > 0) {
-        safe_printf("│ Top Methods by Calls:\n");
-        for (int i = 0; i < method_count && i < 5; i++) {
-            char short_name[50];
-            const char* last_slash = strrchr(methods[i].signature, '/');
-            const char* display_name = last_slash ? last_slash + 1 : methods[i].signature;
-            snprintf(short_name, sizeof(short_name), "%.45s", display_name);
+//     /* Show top methods by call count */
+//     if (method_count > 0) {
+//         safe_printf("│ Top Methods by Calls:\n");
+//         for (int i = 0; i < method_count && i < 5; i++) {
+//             char short_name[50];
+//             const char* last_slash = strrchr(methods[i].signature, '/');
+//             const char* display_name = last_slash ? last_slash + 1 : methods[i].signature;
+//             snprintf(short_name, sizeof(short_name), "%.45s", display_name);
             
-            safe_printf("│   %-45s %8lu calls\n", short_name, (unsigned long)methods[i].call_count);
-        }
-    }
-}
+//             safe_printf("│   %-45s %8lu calls\n", short_name, (unsigned long)methods[i].call_count);
+//         }
+//     }
+// }
 
-void draw_methods_view() {
-    if (method_count == 0) {
-        printf("│ No method data available\n");
-        return;
-    }
+// void draw_methods_view() {
+//     if (method_count == 0) {
+//         printf("│ No method data available\n");
+//         return;
+//     }
     
-    /* Show methods by average execution time */
-    const char* method_names[MAX_DISPLAY_ITEMS];
-    uint64_t avg_times[MAX_DISPLAY_ITEMS];
-    uint64_t max_time = 0;
+//     /* Show methods by average execution time */
+//     const char* method_names[MAX_DISPLAY_ITEMS];
+//     uint64_t avg_times[MAX_DISPLAY_ITEMS];
+//     uint64_t max_time = 0;
     
-    for (int i = 0; i < method_count; i++) {
-        const char* last_slash = strrchr(methods[i].signature, '/');
-        method_names[i] = last_slash ? last_slash + 1 : methods[i].signature;
-        avg_times[i] = methods[i].avg_time_ns / 1000; /* Convert to microseconds */
-        if (avg_times[i] > max_time) max_time = avg_times[i];
-    }
+//     for (int i = 0; i < method_count; i++) {
+//         const char* last_slash = strrchr(methods[i].signature, '/');
+//         method_names[i] = last_slash ? last_slash + 1 : methods[i].signature;
+//         avg_times[i] = methods[i].avg_time_ns / 1000; /* Convert to microseconds */
+//         if (avg_times[i] > max_time) max_time = avg_times[i];
+//     }
     
-    draw_bar_chart("Method Execution Times (μs)", method_names, avg_times, method_count, max_time);
-}
+//     draw_bar_chart("Method Execution Times (μs)", method_names, avg_times, method_count, max_time);
+// }
 
-void draw_memory_view() {
-    draw_memory_history();
-    printf("│\n");
+// void draw_memory_view() {
+//     draw_memory_history();
+//     printf("│\n");
     
-    if (memory_data.active_threads > 0) {
-        printf("│ Thread Memory Usage (MB):\n");
-        for (int i = 0; i < memory_data.active_threads; i++) {
-            printf("│ Thread %lu: %lu MB\n", 
-                   (unsigned long)memory_data.thread_ids[i],
-                   (unsigned long)(memory_data.thread_memory[i] / 1024 / 1024));
-        }
-    }
-}
+//     if (memory_data.active_threads > 0) {
+//         printf("│ Thread Memory Usage (MB):\n");
+//         for (int i = 0; i < memory_data.active_threads; i++) {
+//             printf("│ Thread %lu: %lu MB\n", 
+//                    (unsigned long)memory_data.thread_ids[i],
+//                    (unsigned long)(memory_data.thread_memory[i] / 1024 / 1024));
+//         }
+//     }
+// }
 
-void draw_objects_view() 
-{
-    if (object_count == 0) {
-        printf("│ No object allocation data available\n");
-        return;
-    }
+// void draw_objects_view() 
+// {
+//     if (object_count == 0) {
+//         printf("│ No object allocation data available\n");
+//         return;
+//     }
     
-    /* Show objects by total bytes allocated */
-    const char* object_names[MAX_DISPLAY_ITEMS];
-    uint64_t bytes_allocated[MAX_DISPLAY_ITEMS];
-    uint64_t max_bytes = 0;
+//     /* Show objects by total bytes allocated */
+//     const char* object_names[MAX_DISPLAY_ITEMS];
+//     uint64_t bytes_allocated[MAX_DISPLAY_ITEMS];
+//     uint64_t max_bytes = 0;
     
-    for (int i = 0; i < object_count; i++) {
-        const char* last_slash = strrchr(objects[i].class_name, '/');
-        object_names[i] = last_slash ? last_slash + 1 : objects[i].class_name;
-        bytes_allocated[i] = objects[i].total_bytes;
-        if (bytes_allocated[i] > max_bytes) max_bytes = bytes_allocated[i];
-    }
+//     for (int i = 0; i < object_count; i++) {
+//         const char* last_slash = strrchr(objects[i].class_name, '/');
+//         object_names[i] = last_slash ? last_slash + 1 : objects[i].class_name;
+//         bytes_allocated[i] = objects[i].total_bytes;
+//         if (bytes_allocated[i] > max_bytes) max_bytes = bytes_allocated[i];
+//     }
     
-    draw_bar_chart("Object Allocations (bytes)", object_names, bytes_allocated, object_count, max_bytes);
-}
+//     draw_bar_chart("Object Allocations (bytes)", object_names, bytes_allocated, object_count, max_bytes);
+// }
 
-void draw_footer() {
-    safe_printf("└");
-    for (int i = 0; i < term_width - 2; i++) safe_printf("─");
-    safe_printf("┘\n");
-}
+// void draw_footer() {
+//     safe_printf("└");
+//     for (int i = 0; i < term_width - 2; i++) safe_printf("─");
+//     safe_printf("┘\n");
+// }
 
-void draw_ui() {
-    clear_screen();
-    lines_drawn = 0; /* reset line counter */
-    draw_header();
+// void draw_ui() {
+//     clear_screen();
+//     lines_drawn = 0; /* reset line counter */
+//     draw_header();
     
-    switch (current_view) {
-        case VIEW_OVERVIEW:
-            draw_overview();
-            break;
-        case VIEW_METHODS:
-            draw_methods_view();
-            break;
-        case VIEW_MEMORY:
-            draw_memory_view();
-            break;
-        case VIEW_OBJECTS:
-            draw_objects_view();
-            break;
-        default:
-            break;
-    }
+//     switch (current_view) {
+//         case VIEW_OVERVIEW:
+//             draw_overview();
+//             break;
+//         case VIEW_METHODS:
+//             draw_methods_view();
+//             break;
+//         case VIEW_MEMORY:
+//             draw_memory_view();
+//             break;
+//         case VIEW_OBJECTS:
+//             draw_objects_view();
+//             break;
+//         default:
+//             break;
+//     }
     
-    /* Fill remaining space */
-    int lines_used = 8; /* Header + footer estimate */
-    for (int i = lines_used; i < term_height - 1; i++) {
-        safe_printf("│");
-        for (int j = 0; j < term_width - 2; j++) safe_printf(" ");
-        safe_printf("│\n");
-    }
+//     /* Fill remaining space */
+//     int lines_used = 8; /* Header + footer estimate */
+//     for (int i = lines_used; i < term_height - 1; i++) {
+//         safe_printf("│");
+//         for (int j = 0; j < term_width - 2; j++) safe_printf(" ");
+//         safe_printf("│\n");
+//     }
     
-    draw_footer();
-    fflush(stdout);
-}
+//     draw_footer();
+//     fflush(stdout);
+// }
 
 void debug_shared_memory() {
     if (!shm_ctx.data_shm || !shm_ctx.status_shm) {
@@ -635,6 +621,14 @@ int main()
         return 1;
     }
     
+    /* Initialize UI loader */
+    loader = tui_loader_init("./libtui.so");
+    if (!loader) {
+        printf("Error: Could not load UI library\n");
+        cleanup_cli_shm();
+        return 1;
+    }
+
     enable_raw_mode();
     get_terminal_size();
     
@@ -649,33 +643,47 @@ int main()
                 case 'Q':
                     goto cleanup_exit;
                 case '1':
-                    current_view = VIEW_OVERVIEW;
+                    current_view = UI_VIEW_OVERVIEW;
                     break;
                 case '2':
-                    current_view = VIEW_METHODS;
+                    current_view = UI_VIEW_METHODS;
                     break;
                 case '3':
-                    current_view = VIEW_MEMORY;
+                    current_view = UI_VIEW_MEMORY;
                     break;
                 case '4':
-                    current_view = VIEW_OBJECTS;
+                    current_view = UI_VIEW_OBJECTS;
                     break;
             }
         }
         
+        /* Check for UI library changes and reload if necessary */
+        tui_loader_check_and_reload(loader);
+
         read_shared_memory_data();
 
-        /* Add debug output every few seconds */
-        static int debug_counter = 0;
-        if (++debug_counter % 20 == 0) { /* Every ~5 seconds */
-            debug_shared_memory();
-        }
-        draw_ui();
+        /* Prepare UI context */
+        tui_context_t ui_ctx = {
+            .methods = methods,
+            .objects = objects,
+            .memory_data = &memory_data,
+            .method_count = method_count,
+            .object_count = object_count,
+            .current_view = current_view,
+            .terminal = { .width = term_width, .height = term_height }
+        };
+        
+        /* Draw using the loaded UI library */
+        tui_loader_draw(loader, &ui_ctx);
+
         usleep(REFRESH_INTERVAL);
     }
     
 cleanup_exit:
     disable_raw_mode();
+    if (loader)
+        tui_loader_cleanup(loader);
+
     cleanup_cli_shm();
     clear_screen();
     return 0;
