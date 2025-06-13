@@ -670,7 +670,7 @@ int main()
             .method_count = method_count,
             .object_count = object_count,
             .current_view = current_view,
-            .terminal = { .width = term_width, .height = term_height }
+            .terminal = { .width = term_width, .height = term_height, lines_drawn = 0 }
         };
         
         /* Draw using the loaded UI library */

@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <time.h>
+#include <stdarg.h>
 
 #define UI_MAX_DISPLAY_ITEMS 20
 #define UI_MAX_HISTORY_POINTS 100
@@ -64,6 +65,7 @@ struct tui_terminal_info
 {
     int width;
     int height;
+    int lines_drawn;
 };
 
 struct tui_context 
@@ -98,48 +100,64 @@ char* tui_get_version(void);
  * Draw the complete UI
  * @param ctx UI context containing all display data
  */
-void tui_draw(const tui_context_t *ctx);
+void tui_draw(tui_context_t *ctx);
 
 /**
  *Draw just the header section
  *@param ctx UI context
  */
-void tui_draw_header(const tui_context_t *ctx);
+void tui_draw_header(tui_context_t *ctx);
 
 /**
  * Draw just the footer section
  * @param ctx UI context
  */
-void tui_draw_footer(const tui_context_t *ctx);
+void tui_draw_footer(tui_context_t *ctx);
 
 /**
  * Draw the overview view
  * @param ctx UI context
  */
-void tui_draw_overview(const tui_context_t *ctx);
+void tui_draw_overview(tui_context_t *ctx);
 
 /**
  * Draw the methods view
  * @param ctx UI context
  */
-void tui_draw_methods_view(const tui_context_t *ctx);
+void tui_draw_methods_view(tui_context_t *ctx);
 
 /**
  * Draw the memory view
  * @param ctx UI context
  */
-void tui_draw_memory_view(const tui_context_t *ctx);
+void tui_draw_memory_view(tui_context_t *ctx);
 
 /**
  * Draw the objects view
  * @param ctx UI context
  */
-void tui_draw_objects_view(const tui_context_t *ctx);
+void tui_draw_objects_view(tui_context_t *ctx);
 
 /**
  * Clear the screen
  */
 void tui_clear_screen(void);
+
+/**
+ * Safe print that respects terminal boundaries
+ * @param terminal Terminal info with line tracking
+ * @param format Printf-style format string
+ */
+void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...);
+
+/**
+ * Build a formatted line with proper padding and borders
+ * @param buffer Output buffer
+ * @param buffer_size Size of output buffer  
+ * @param content Content to display
+ * @param width Terminal width
+ */
+void tui_build_line(char *buffer, size_t buffer_size, const char *content, int width);
 
 /**
  * Draw a bar chart
@@ -150,14 +168,14 @@ void tui_clear_screen(void);
  * @param max_val Maximum value for scaling
  * @param term_width Terminal width
  */
-void tui_draw_bar_chart(char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+void tui_draw_bar_chart(tui_context_t *ctx, char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
 
 /**
  * Draw memory history chart
  * @param memory_data Memory data structure
  * @param term_width Terminal width
  */
-void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width);
+void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width);
 
 /**
  * Draw a histogram
@@ -166,6 +184,6 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
  * @param count Number of values
  * @param term_width Terminal width
  */
-void tui_draw_histogram(char* title, uint64_t values[], int count, int term_width);
+void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int count, int term_width);
 
 #endif /* TUI_H */

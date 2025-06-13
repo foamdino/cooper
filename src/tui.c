@@ -11,20 +11,35 @@
 #define UI_VERSION "1.0.0"
 
 /* Modify the printf functions to track lines */
-// static void safe_printf(const char *format, ...) 
-// {
-//     if (lines_drawn >= term_height - 1) return; /* Don't exceed terminal height */
+void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...) 
+{
+    if (terminal->lines_drawn >= terminal->height - 1) 
+        return; /* Don't exceed terminal height */
     
-//     va_list args;
-//     va_start(args, format);
-//     vprintf(format, args);
-//     va_end(args);
+    char line_buffer[1024]; /* Adjust size as needed */
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line_buffer, sizeof(line_buffer), format, args);
+    va_end(args);
     
-//     /* Count newlines in the format string */
-//     for (const char *p = format; *p; p++) {
-//         if (*p == '\n') lines_drawn++;
-//     }
-// }
+    printf("%s", line_buffer);
+    
+    /* Count newlines in the format string */
+    for (const char *p = format; *p; p++) {
+        if (*p == '\n') 
+            terminal->lines_drawn++;
+    }
+}
+
+void tui_build_line(char *buffer, size_t buffer_size, const char *content, int width)
+{
+    int content_len = strlen(content);
+    int padding_needed = width - content_len - 2; /* Account for │ + │ */
+    
+    if (padding_needed < 0) padding_needed = 0;
+    
+    snprintf(buffer, buffer_size, "│%s%*s│\n", content, padding_needed, "");
+}
 
 int tui_init(void)
 {
@@ -47,65 +62,76 @@ void tui_clear_screen(void)
     printf("\033[2J\033[H");
 }
 
-void tui_draw_header(const tui_context_t *ctx)
+/* Function to clear screen and reset line counter */
+void tui_clear_screen_safe(tui_terminal_info_t *terminal)
 {
+    printf("\033[2J\033[H");
+    terminal->lines_drawn = 0; /* Reset line counter */
+}
+
+void tui_draw_header(tui_context_t *ctx)
+{
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
     char title[256];
+    char line[256];
     snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[ctx->current_view]);
     int title_len = strlen(title);
     int padding = (ctx->terminal.width - title_len) / 2;
 
-    printf("┌");
-    for (int i = 0; i < ctx->terminal.width - 2; i++) printf("─");
-    printf("┐\n");
+    tui_safe_print(term, "┌");
+    for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
+    tui_safe_print(term, "┐\n");
 
-    printf("│");
-    for (int i = 0; i < padding; i++) printf(" ");
-    printf("%s", title);
-    for (int i = padding + title_len; i < ctx->terminal.width -1; i++) printf(" ");
-    printf("│\n");
+    tui_safe_print(term, "│");
+    for (int i = 0; i < padding; i++) tui_safe_print(term," ");
+    tui_safe_print(term, "%s", title);
+    for (int i = padding + title_len; i < ctx->terminal.width -2; i++) tui_safe_print(term, " ");
+    tui_safe_print(term, "│\n");
 
-    printf("├");
-    for (int i = 0; i < ctx->terminal.width - 2; i++) printf("─");
-    printf("┤\n");
+    tui_safe_print(term, "├");
+    for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
+    tui_safe_print(term, "┤\n");
 
-    printf("│ Keys: [1-4] Switch views  [q] Quit");
-    for (int i = 34; i < ctx->terminal.width - 1; i++) printf(" ");
-    printf("│\n");
+    tui_build_line(line, sizeof(line), " Keys: [1-4] Switch views  [q] Quit", ctx->terminal.width);
 
-    printf("├");
-    for (int i = 0; i < ctx->terminal.width - 2; i++) printf("─");
-    printf("┤\n");
+    tui_safe_print(term, "%s", line);
+
+    tui_safe_print(term, "├");
+    for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
+    tui_safe_print(term, "┤\n");
 }
 
-void tui_draw_bar_chart(char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width)
+void tui_draw_bar_chart(tui_context_t *ctx, char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
-    printf("│ %s\n", title);
-    printf("│\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_safe_print(term, "│ %s\n", title);
+    tui_safe_print(term, "│\n");
     int max_name_len = 25;
     int bar_width = term_width - max_name_len - 15; /* Leave space for value and borders */
 
     if (bar_width < 10) bar_width = 10;
 
     for (int i = 0; i < count && i < term_width - 10; i++) {
-        printf("│ %-*.*s", max_name_len, max_name_len, items[i]);
+        tui_safe_print(term, "│ %-*.*s", max_name_len, max_name_len, items[i]);
         
         int bar_len = max_val > 0 ? (values[i] * bar_width) / max_val : 0;
         if (bar_len > bar_width) bar_len = bar_width;
         
-        printf(" [");
-        for (int j = 0; j < bar_len; j++) printf("█");
-        for (int j = bar_len; j < bar_width; j++) printf(" ");
-        printf("] %8lu\n", (unsigned long)values[i]);
+        tui_safe_print(term, " [");
+        for (int j = 0; j < bar_len; j++) tui_safe_print(term, "█");
+        for (int j = bar_len; j < bar_width; j++) tui_safe_print(term, " ");
+        tui_safe_print(term, "] %8lu\n", (unsigned long)values[i]);
     }
 }
 
-void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width)
+void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width)
 {
-    printf("│ Process Memory History (MB)\n");
-    printf("│\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_safe_print(term, "│ Process Memory History (MB)\n");
+    tui_safe_print(term, "│\n");
     if (memory_data->history_count < 2) {
-        printf("│ Collecting data...\n");
+        tui_safe_print(term, "│ Collecting data...\n");
         return;
     }
 
@@ -123,31 +149,32 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
 
     /* Draw the chart from top to bottom */
     for (int row = 0; row < chart_height; row++) {
-        printf("│ ");
+        tui_safe_print(term,"│ ");
         uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
         
         for (int col = 0; col < memory_data->history_count && col < chart_width; col++) {
             if (memory_data->memory_history[col] >= threshold) {
-                printf("█");
+                tui_safe_print(term,"█");
             } else {
-                printf(" ");
+                tui_safe_print(term," ");
             }
         }
-        printf("\n");
+        tui_safe_print(term,"\n");
     }
 
-    printf("│ Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
+    tui_safe_print(term,"│ Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
         (unsigned long)(min_mem / 1024 / 1024),
         (unsigned long)(max_mem / 1024 / 1024),
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void tui_draw_histogram(char* title, uint64_t values[], int count, int term_width)
+void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int count, int term_width)
 {
-    printf("│ %s\n", title);
-    printf("│\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_safe_print(term, "│ %s\n", title);
+    tui_safe_print(term, "│\n");
     if (count == 0) {
-        printf("│ No data available\n");
+        tui_safe_print(term, "│ No data available\n");
         return;
     }
 
@@ -161,7 +188,7 @@ void tui_draw_histogram(char* title, uint64_t values[], int count, int term_widt
     }
 
     if (max_val == min_val) {
-        printf("│ All values are identical: %lu\n", (unsigned long)min_val);
+        tui_safe_print(term, "│ All values are identical: %lu\n", (unsigned long)min_val);
         return;
     }
 
@@ -184,47 +211,52 @@ void tui_draw_histogram(char* title, uint64_t values[], int count, int term_widt
     /* Draw histogram */
     int bar_height = 6;
     for (int row = bar_height; row > 0; row--) {
-        printf("│ ");
+        tui_safe_print(term, "│ ");
         for (int col = 0; col < num_buckets; col++) {
             int height = max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
             if (height >= row) {
-                printf("█");
+                tui_safe_print(term, "█");
             } else {
-                printf(" ");
+                tui_safe_print(term, " ");
             }
         }
-        printf("\n");
+        tui_safe_print(term, "\n");
     }
 }
 
-void tui_draw_overview(const tui_context_t *ctx)
+void tui_draw_overview(tui_context_t *ctx)
 {
-    printf("│ System Overview Test Hot Reload\n");
-    printf("│\n");
-    printf("│ Process Memory: %lu MB\n", (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
-    printf("│ Active Threads: %d\n", ctx->memory_data->active_threads);
-    printf("│ Tracked Methods: %d\n", ctx->method_count);
-    printf("│ Object Types: %d\n", ctx->object_count);
-    printf("│\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_safe_print(term,"│ System Overview\n");
+    tui_safe_print(term,"│\n");
+    tui_safe_print(term,"│ Process Memory: %lu MB\n", (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
+    tui_safe_print(term,"│ Active Threads: %d\n", ctx->memory_data->active_threads);
+    tui_safe_print(term,"│ Tracked Methods: %d\n", ctx->method_count);
+    tui_safe_print(term,"│ Object Types: %d\n", ctx->object_count);
+    tui_safe_print(term,"│\n");
 
     /* Show top methods by call count */
     if (ctx->method_count > 0) {
-        printf("│ Top Methods by Calls:\n");
+        tui_safe_print(term,"│ Top Methods by Calls:\n");
         for (int i = 0; i < ctx->method_count && i < 5; i++) {
             char short_name[50];
             const char* last_slash = strrchr(ctx->methods[i].signature, '/');
             const char* display_name = last_slash ? last_slash + 1 : ctx->methods[i].signature;
             snprintf(short_name, sizeof(short_name), "%.45s", display_name);
             
-            printf("│   %-45s %8lu calls\n", short_name, (unsigned long)ctx->methods[i].call_count);
+            tui_safe_print(term,"│   %-45s %8lu calls\n", short_name, (unsigned long)ctx->methods[i].call_count);
         }
     }
 }
 
-void tui_draw_methods_view(const tui_context_t *ctx)
-{
+void tui_draw_methods_view(tui_context_t *ctx)
+{    
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    char line[256];
+    
     if (ctx->method_count == 0) {
-        printf("│ No method data available\n");
+        tui_build_line(line, sizeof(line), " No method data available", term->width);
+        tui_safe_print(term, "%s", line);
         return;
     }
     /* Show methods by average execution time */
@@ -239,29 +271,33 @@ void tui_draw_methods_view(const tui_context_t *ctx)
         if (avg_times[i] > max_time) max_time = avg_times[i];
     }
 
-    tui_draw_bar_chart("Method Execution Times (μs)", method_names, avg_times, 
+    tui_draw_bar_chart(ctx, "Method Execution Times (μs)", method_names, avg_times, 
                     ctx->method_count, max_time, ctx->terminal.width);
 }
 
-void tui_draw_memory_view(const tui_context_t *ctx)
+void tui_draw_memory_view(tui_context_t *ctx)
 {
-    tui_draw_memory_history(ctx->memory_data, ctx->terminal.width);
-    printf("│\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_draw_memory_history(ctx, ctx->memory_data, ctx->terminal.width);
+    tui_safe_print(term, "│\n");
 
     if (ctx->memory_data->active_threads > 0) {
-        printf("│ Thread Memory Usage (MB):\n");
+        tui_safe_print(term, "│ Thread Memory Usage (MB):\n");
         for (int i = 0; i < ctx->memory_data->active_threads; i++) {
-            printf("│ Thread %lu: %lu MB\n", 
+            tui_safe_print(term, "│ Thread %lu: %lu MB\n", 
                 (unsigned long)ctx->memory_data->thread_ids[i],
                 (unsigned long)(ctx->memory_data->thread_memory[i] / 1024 / 1024));
         }
     }
 }
 
-void tui_draw_objects_view(const tui_context_t *ctx)
+void tui_draw_objects_view(tui_context_t *ctx)
 {
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    char line[256];
     if (ctx->object_count == 0) {
-        printf("│ No object allocation data available\n");
+        tui_build_line(line, sizeof(line), " No object allocation data available", term->width);
+        tui_safe_print(term, "%s", line);
         return;
     }
 
@@ -277,20 +313,22 @@ void tui_draw_objects_view(const tui_context_t *ctx)
         if (bytes_allocated[i] > max_bytes) max_bytes = bytes_allocated[i];
     }
 
-    tui_draw_bar_chart("Object Allocations (bytes)", object_names, bytes_allocated, 
+    tui_draw_bar_chart(ctx, "Object Allocations (bytes)", object_names, bytes_allocated, 
                     ctx->object_count, max_bytes, ctx->terminal.width);
 }
 
-void tui_draw_footer(const tui_context_t *ctx)
+void tui_draw_footer(tui_context_t *ctx)
 {
-    printf("└");
-    for (int i = 0; i < ctx->terminal.width - 2; i++) printf("─");
-    printf("┘\n");
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_safe_print(term, "└");
+    for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
+    tui_safe_print(term, "┘\n");
 }
 
-void tui_draw(const tui_context_t *ctx)
+void tui_draw(tui_context_t *ctx)
 {
-    tui_clear_screen();
+    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
+    tui_clear_screen_safe(term);
     tui_draw_header(ctx);
     switch (ctx->current_view) {
         case UI_VIEW_OVERVIEW:
@@ -312,9 +350,9 @@ void tui_draw(const tui_context_t *ctx)
     /* Fill remaining space */
     int lines_used = 8; /* Header + footer estimate */
     for (int i = lines_used; i < ctx->terminal.height - 1; i++) {
-        printf("│");
-        for (int j = 0; j < ctx->terminal.width - 2; j++) printf(" ");
-        printf("│\n");
+        tui_safe_print(term, "│");
+        for (int j = 0; j < ctx->terminal.width - 2; j++) tui_safe_print(term, " ");
+        tui_safe_print(term, "│\n");
     }
 
     tui_draw_footer(ctx);
