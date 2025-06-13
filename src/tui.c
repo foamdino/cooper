@@ -49,7 +49,7 @@ void tui_clear_screen(void)
 
 void tui_draw_header(const tui_context_t *ctx)
 {
-    const char view_names[] = {"Overview", "Methods", "Memory", "Objects"};
+    char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
     char title[256];
     snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[ctx->current_view]);
     int title_len = strlen(title);
@@ -62,7 +62,7 @@ void tui_draw_header(const tui_context_t *ctx)
     printf("│");
     for (int i = 0; i < padding; i++) printf(" ");
     printf("%s", title);
-    for (int i = padding + title_len; i < ctx->terminal.width - 1; i++) printf(" ");
+    for (int i = padding + title_len; i < ctx->terminal.width -1; i++) printf(" ");
     printf("│\n");
 
     printf("├");
@@ -78,7 +78,7 @@ void tui_draw_header(const tui_context_t *ctx)
     printf("┤\n");
 }
 
-void tui_draw_bar_chart(const char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width)
+void tui_draw_bar_chart(char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
     printf("│ %s\n", title);
     printf("│\n");
@@ -142,7 +142,7 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void tui_draw_histogram(const char* title, uint64_t values[], int count, int term_width)
+void tui_draw_histogram(char* title, uint64_t values[], int count, int term_width)
 {
     printf("│ %s\n", title);
     printf("│\n");
@@ -199,7 +199,7 @@ void tui_draw_histogram(const char* title, uint64_t values[], int count, int ter
 
 void tui_draw_overview(const tui_context_t *ctx)
 {
-    printf("│ System Overview\n");
+    printf("│ System Overview Test Hot Reload\n");
     printf("│\n");
     printf("│ Process Memory: %lu MB\n", (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
     printf("│ Active Threads: %d\n", ctx->memory_data->active_threads);

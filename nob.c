@@ -97,7 +97,7 @@ int main(int argc, char **argv)
     /* compile tui lib */
     nob_cmd_append(&tui_cmd, "cc", "-Wall", "-Wextra", "-shared", "-fPIC", "-o", BUILD_FOLDER"libtui.so", 
                SRC_FOLDER"tui.c");
-    if (!nob_cmd_run_sync(cc_cmd)) return 1;
+    if (!nob_cmd_run_sync(tui_cmd)) return 1;
 
     /* compile cli */
     nob_cmd_append(&cli_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"cli", 

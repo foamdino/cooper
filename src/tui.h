@@ -92,7 +92,7 @@ void tui_cleanup(void);
  * Get the library version string
  * @return Version string
  */
-char tui_get_version(void);
+char* tui_get_version(void);
 
 /**
  * Draw the complete UI
@@ -150,7 +150,7 @@ void tui_clear_screen(void);
  * @param max_val Maximum value for scaling
  * @param term_width Terminal width
  */
-void tui_draw_bar_chart(const char title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+void tui_draw_bar_chart(char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
 
 /**
  * Draw memory history chart
@@ -166,6 +166,6 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
  * @param count Number of values
  * @param term_width Terminal width
  */
-void tui_draw_histogram(const char title, uint64_t values[], int count, int term_width);
+void tui_draw_histogram(char* title, uint64_t values[], int count, int term_width);
 
 #endif /* TUI_H */

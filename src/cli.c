@@ -622,7 +622,7 @@ int main()
     }
     
     /* Initialize UI loader */
-    loader = tui_loader_init("build/libtui.so");
+    loader = tui_loader_init("./libtui.so");
     if (!loader) {
         printf("Error: Could not load UI library\n");
         cleanup_cli_shm();
