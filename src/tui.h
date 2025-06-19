@@ -22,7 +22,8 @@ typedef struct tui_memory_display tui_memory_display_t;
 typedef struct tui_terminal_info tui_terminal_info_t;
 typedef struct tui_context tui_context_t;
 
-enum tui_view_mode {
+enum tui_view_mode 
+{
     UI_VIEW_OVERVIEW = 0,
     UI_VIEW_METHODS = 1,
     UI_VIEW_MEMORY = 2,
@@ -94,7 +95,7 @@ void tui_cleanup(void);
  * Get the library version string
  * @return Version string
  */
-char* tui_get_version(void);
+char *tui_get_version(void);
 
 /**
  * Draw the complete UI
@@ -168,7 +169,7 @@ void tui_build_line(char *buffer, size_t buffer_size, const char *content, int w
  * @param max_val Maximum value for scaling
  * @param term_width Terminal width
  */
-void tui_draw_bar_chart(tui_context_t *ctx, char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width);
 
 /**
  * Draw memory history chart
@@ -184,6 +185,6 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
  * @param count Number of values
  * @param term_width Terminal width
  */
-void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int count, int term_width);
+void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width);
 
 #endif /* TUI_H */

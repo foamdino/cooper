@@ -102,7 +102,7 @@ void tui_draw_header(tui_context_t *ctx)
     tui_safe_print(term, "┤\n");
 }
 
-void tui_draw_bar_chart(tui_context_t *ctx, char* title, const char* items[], uint64_t values[], int count, uint64_t max_val, int term_width)
+void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     tui_safe_print(term, "│ %s\n", title);
@@ -139,7 +139,8 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
     uint64_t min_mem = memory_data->memory_history[0];
     uint64_t max_mem = memory_data->memory_history[0];
 
-    for (int i = 1; i < memory_data->history_count; i++) {
+    for (int i = 1; i < memory_data->history_count; i++) 
+    {
         if (memory_data->memory_history[i] < min_mem) min_mem = memory_data->memory_history[i];
         if (memory_data->memory_history[i] > max_mem) max_mem = memory_data->memory_history[i];
     }
@@ -148,7 +149,8 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
     int chart_width = term_width - 10;
 
     /* Draw the chart from top to bottom */
-    for (int row = 0; row < chart_height; row++) {
+    for (int row = 0; row < chart_height; row++) 
+    {
         tui_safe_print(term,"│ ");
         uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
         
@@ -168,7 +170,7 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int count, int term_width)
+void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     tui_safe_print(term, "│ %s\n", title);
@@ -196,7 +198,8 @@ void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int 
     int buckets[20] = {0};
     uint64_t bucket_size = (max_val - min_val) / num_buckets;
 
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < count; i++) 
+    {
         int bucket = (values[i] - min_val) / bucket_size;
         if (bucket >= num_buckets) bucket = num_buckets - 1;
         buckets[bucket]++;
@@ -204,13 +207,16 @@ void tui_draw_histogram(tui_context_t *ctx, char* title, uint64_t values[], int 
 
     /* Find max bucket count for scaling */
     int max_bucket = 0;
-    for (int i = 0; i < num_buckets; i++) {
-        if (buckets[i] > max_bucket) max_bucket = buckets[i];
+    for (int i = 0; i < num_buckets; i++) 
+    {
+        if (buckets[i] > max_bucket) 
+            max_bucket = buckets[i];
     }
 
     /* Draw histogram */
     int bar_height = 6;
-    for (int row = bar_height; row > 0; row--) {
+    for (int row = bar_height; row > 0; row--) 
+    {
         tui_safe_print(term, "│ ");
         for (int col = 0; col < num_buckets; col++) {
             int height = max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
@@ -264,11 +270,13 @@ void tui_draw_methods_view(tui_context_t *ctx)
     uint64_t avg_times[UI_MAX_DISPLAY_ITEMS];
     uint64_t max_time = 0;
 
-    for (int i = 0; i < ctx->method_count; i++) {
+    for (int i = 0; i < ctx->method_count; i++) 
+    {
         const char* last_slash = strrchr(ctx->methods[i].signature, '/');
         method_names[i] = last_slash ? last_slash + 1 : ctx->methods[i].signature;
         avg_times[i] = ctx->methods[i].avg_time_ns / 1000; /* Convert to microseconds */
-        if (avg_times[i] > max_time) max_time = avg_times[i];
+        if (avg_times[i] > max_time) 
+            max_time = avg_times[i];
     }
 
     tui_draw_bar_chart(ctx, "Method Execution Times (μs)", method_names, avg_times, 
@@ -281,7 +289,8 @@ void tui_draw_memory_view(tui_context_t *ctx)
     tui_draw_memory_history(ctx, ctx->memory_data, ctx->terminal.width);
     tui_safe_print(term, "│\n");
 
-    if (ctx->memory_data->active_threads > 0) {
+    if (ctx->memory_data->active_threads > 0) 
+    {
         tui_safe_print(term, "│ Thread Memory Usage (MB):\n");
         for (int i = 0; i < ctx->memory_data->active_threads; i++) {
             tui_safe_print(term, "│ Thread %lu: %lu MB\n", 
@@ -295,7 +304,8 @@ void tui_draw_objects_view(tui_context_t *ctx)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     char line[256];
-    if (ctx->object_count == 0) {
+    if (ctx->object_count == 0) 
+    {
         tui_build_line(line, sizeof(line), " No object allocation data available", term->width);
         tui_safe_print(term, "%s", line);
         return;
@@ -306,7 +316,8 @@ void tui_draw_objects_view(tui_context_t *ctx)
     uint64_t bytes_allocated[UI_MAX_DISPLAY_ITEMS];
     uint64_t max_bytes = 0;
 
-    for (int i = 0; i < ctx->object_count; i++) {
+    for (int i = 0; i < ctx->object_count; i++) 
+    {
         const char* last_slash = strrchr(ctx->objects[i].class_name, '/');
         object_names[i] = last_slash ? last_slash + 1 : ctx->objects[i].class_name;
         bytes_allocated[i] = ctx->objects[i].total_bytes;
