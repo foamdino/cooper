@@ -36,7 +36,6 @@
 #define UNUSED(x) (void)(x)
 
 #define DEFAULT_CFG_FILE "trace.ini"
-#define MAX_STR_LEN 4096 /**< Max length of string we want to care about */
 #define MAX_SIG_SZ 1024 /**< The max size of a class/method sig we are willing to tolerate */
 #define MAX_THREAD_MAPPINGS 1024
 #define MAX_MEMORY_SAMPLES 100 /**< The max number of memory samples to keep */

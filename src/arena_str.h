@@ -13,6 +13,11 @@
 
 #include "arena.h"
 
+/* Maximum length for general-purpose string operations */
+#ifndef MAX_STR_LEN
+#define MAX_STR_LEN 4096
+#endif
+
 /**
  * Strip trailing comment from a string using arena allocation
  * Preserves '#' characters inside quoted strings
@@ -34,6 +39,16 @@ char *arena_trim(arena_t *arena, const char *str);
 
 /**
  * Duplicate a string using arena memory
+ * 
+ * @param arena     Pointer to the arena
+ * @param str       String to duplicate
+ * @param max_len   Max length of string
+ * @return          Pointer to the duplicated string in arena memory, or NULL on failure
+ */
+char *arena_strndup(arena_t *arena, const char *str, size_t max_len);
+
+/**
+ * Duplicate a string using arena memory with default length limit
  * 
  * @param arena     Pointer to the arena
  * @param str       String to duplicate

@@ -115,13 +115,17 @@ char *arena_trim(arena_t *arena, const char *str)
  * 
  * @param arena     Pointer to the arena
  * @param str       String to duplicate
+ * @param max_len   Max length of string
  * @return          Pointer to the duplicated string in arena memory, or NULL on failure
  */
-char *arena_strdup(arena_t *arena, const char *str)
+char *arena_strndup(arena_t *arena, const char *str, size_t max_len)
 {
     if (!arena || !str) return NULL;
     
     size_t len = strlen(str);
+    if (len >= max_len)
+        return NULL; /* String is too long */
+    
     /* +1 for null terminator */
     char *dup = arena_alloc(arena, len + 1);
     if (dup) {
@@ -129,4 +133,16 @@ char *arena_strdup(arena_t *arena, const char *str)
         dup[len] = '\0';
     }
     return dup;
+}
+
+/**
+ * Duplicate a string using arena memory with default length limit
+ * 
+ * @param arena     Pointer to the arena
+ * @param str       String to duplicate
+ * @return          Pointer to the duplicated string in arena memory, or NULL on failure
+ */
+char *arena_strdup(arena_t *arena, const char *str)
+{
+    return arena_strndup(arena, str, MAX_STR_LEN);
 }
