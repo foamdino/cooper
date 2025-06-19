@@ -23,7 +23,7 @@
 #define REFRESH_INTERVAL 250000  /* 250ms */
 
 /* Global UI loader */
-static tui_loader_t* loader = NULL;
+static tui_loader_t *loader = NULL;
 
 typedef struct {
     cooper_data_shm_t *data_shm;
@@ -75,11 +75,13 @@ static int method_count = 0;
 static int object_count = 0;
 
 /* Terminal handling functions */
-void disable_raw_mode() {
+void disable_raw_mode() 
+{
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-void enable_raw_mode() {
+void enable_raw_mode() 
+{
     tcgetattr(STDIN_FILENO, &orig_termios);
     atexit(disable_raw_mode);
 
@@ -90,27 +92,32 @@ void enable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-void get_terminal_size() {
+void get_terminal_size() 
+{
     struct winsize w;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) 
+    {
         term_width = w.ws_col;
         term_height = w.ws_row;
     }
 }
 
-void handle_sigwinch(int sig) {
+void handle_sigwinch(int sig) 
+{
     (void)sig;
     get_terminal_size();
 }
 
-void handle_sigint(int sig) {
+void handle_sigint(int sig) 
+{
     (void)sig;
     disable_raw_mode();
     printf("\033[2J\033[H");
     exit(0);
 }
 
-void clear_screen() {
+void clear_screen() 
+{
     printf("\033[2J\033[H");
 }
 
@@ -122,7 +129,8 @@ int kbhit() {
     return select(STDIN_FILENO+1, &fds, NULL, NULL, &tv);
 }
 
-char getch() {
+char getch() 
+{
     char c;
     if (read(STDIN_FILENO, &c, 1) == -1) return 0;
     return c;
@@ -162,147 +170,161 @@ int init_cli_shm()
     return 0;
 }
 
-void cleanup_cli_shm() {
-    if (shm_ctx.data_shm && shm_ctx.data_shm != MAP_FAILED) {
+void cleanup_cli_shm() 
+{
+    if (shm_ctx.data_shm && shm_ctx.data_shm != MAP_FAILED)
         munmap(shm_ctx.data_shm, sizeof(cooper_data_shm_t));
-    }
-    if (shm_ctx.status_shm && shm_ctx.status_shm != MAP_FAILED) {
+    
+    if (shm_ctx.status_shm && shm_ctx.status_shm != MAP_FAILED)
         munmap(shm_ctx.status_shm, sizeof(cooper_status_shm_t));
-    }
-    if (shm_ctx.data_fd > 0) close(shm_ctx.data_fd);
-    if (shm_ctx.status_fd > 0) close(shm_ctx.status_fd);
+    
+    if (shm_ctx.data_fd > 0) 
+        close(shm_ctx.data_fd);
+
+    if (shm_ctx.status_fd > 0) 
+        close(shm_ctx.status_fd);
 }
 
 /* Data reading and processing functions */
-void read_shared_memory_data() {
-    if (!shm_ctx.data_shm || !shm_ctx.status_shm) return;
+void read_shared_memory_data() 
+{
+    if (!shm_ctx.data_shm || !shm_ctx.status_shm) 
+        return;
     
     time_t current_time = time(NULL);
     
-    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
-        /* Only read entries that haven't been read yet */
-        if (shm_ctx.status_shm->status[i] == ENTRY_READY) {
-            cooper_method_metric_data_t *entry = &shm_ctx.data_shm->metrics[i];
-            
-            /* Skip empty entries (check if there's actual data) */
-            if (entry->data_type == 0)
-                continue;
-            
-
-            switch (entry->data_type)
-            {
-                case COOPER_DATA_METHOD_METRIC:
-                    /* Find or add method */
-                    int method_idx = -1;
-                    for (int j = 0; j < method_count; j++) {
-                        if (strcmp(methods[j].signature, entry->signature) == 0) {
-                            method_idx = j;
-                            break;
-                        }
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) 
+    {
+        /* Ignore entries that are not in the READY state */
+        if (shm_ctx.status_shm->status[i] != ENTRY_READY)
+            continue;
+        
+        cooper_method_metric_data_t *entry = &shm_ctx.data_shm->metrics[i];
+        
+        /* Skip empty entries (check if there's actual data) */
+        if (entry->data_type == 0)
+            continue;
+        
+        switch (entry->data_type)
+        {
+            case COOPER_DATA_METHOD_METRIC:
+                /* Find or add method */
+                int method_idx = -1;
+                for (int j = 0; j < method_count; j++) 
+                {
+                    if (strcmp(methods[j].signature, entry->signature) == 0) 
+                    {
+                        method_idx = j;
+                        break;
                     }
-                    
-                    if (method_idx == -1 && method_count < UI_MAX_DISPLAY_ITEMS)
-                        method_idx = method_count++;
-                    
-                    if (method_idx >= 0) {
-                        strncpy(methods[method_idx].signature, entry->signature, 
-                            sizeof(methods[method_idx].signature) - 1);
-                        methods[method_idx].call_count = entry->call_count;
-                        methods[method_idx].total_time_ns = entry->total_time_ns;
-                        methods[method_idx].avg_time_ns = entry->sample_count > 0 ? 
-                            entry->total_time_ns / entry->sample_count : 0;
-                        methods[method_idx].alloc_bytes = entry->alloc_bytes;
-                        methods[method_idx].last_updated = current_time;
-                    }
-                    break;
+                }
+                
+                if (method_idx == -1 && method_count < UI_MAX_DISPLAY_ITEMS)
+                    method_idx = method_count++;
+                
+                if (method_idx >= 0) 
+                {
+                    strncpy(methods[method_idx].signature, entry->signature, sizeof(methods[method_idx].signature) - 1);
+                    methods[method_idx].call_count = entry->call_count;
+                    methods[method_idx].total_time_ns = entry->total_time_ns;
+                    methods[method_idx].avg_time_ns = entry->sample_count > 0 ? 
+                        entry->total_time_ns / entry->sample_count : 0;
+                    methods[method_idx].alloc_bytes = entry->alloc_bytes;
+                    methods[method_idx].last_updated = current_time;
+                }
+                break;
 
-                case COOPER_DATA_MEMORY_SAMPLE:
-                    /* Memory sample fields are mapped to cooper_method_metric_data_t:
-                    * process_memory -> alloc_bytes
-                    * thread_id -> call_count  
-                    * thread_memory -> peak_memory
-                    */
-                    uint64_t thread_id = entry->call_count;
-                    uint64_t process_memory = entry->alloc_bytes;
-                    uint64_t thread_memory = entry->peak_memory;
+            case COOPER_DATA_MEMORY_SAMPLE:
+                /* Memory sample fields are mapped to cooper_method_metric_data_t:
+                * process_memory -> alloc_bytes
+                * thread_id -> call_count  
+                * thread_memory -> peak_memory
+                */
+                uint64_t thread_id = entry->call_count;
+                uint64_t process_memory = entry->alloc_bytes;
+                uint64_t thread_memory = entry->peak_memory;
+                
+                if (thread_id == 0) 
+                {
+                    /* Process memory */
+                    memory_data.process_memory = process_memory;
                     
-                    if (thread_id == 0) {
-                        /* Process memory */
-                        memory_data.process_memory = process_memory;
-                        
-                        /* Add to history */
-                        if (memory_data.history_count < UI_MAX_HISTORY_POINTS) {
-                            memory_data.memory_history[memory_data.history_count++] = process_memory;
-                        } else {
-                            /* Shift history */
-                            for (int j = 0; j < UI_MAX_HISTORY_POINTS - 1; j++) {
-                                memory_data.memory_history[j] = memory_data.memory_history[j + 1];
-                            }
-                            memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = process_memory;
-                        }
+                    /* Add to history */
+                    if (memory_data.history_count < UI_MAX_HISTORY_POINTS) {
+                        memory_data.memory_history[memory_data.history_count++] = process_memory;
                     } else {
-                        /* Thread memory */
-                        int thread_idx = -1;
-                        for (int j = 0; j < memory_data.active_threads; j++) {
-                            if (memory_data.thread_ids[j] == thread_id) {
-                                thread_idx = j;
-                                break;
-                            }
+                        /* Shift history */
+                        for (int j = 0; j < UI_MAX_HISTORY_POINTS - 1; j++) {
+                            memory_data.memory_history[j] = memory_data.memory_history[j + 1];
                         }
-                        
-                        if (thread_idx == -1 && memory_data.active_threads < 10) {
-                            thread_idx = memory_data.active_threads++;
-                            memory_data.thread_ids[thread_idx] = thread_id;
-                        }
-                        
-                        if (thread_idx >= 0)
-                            memory_data.thread_memory[thread_idx] = thread_memory;
+                        memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = process_memory;
                     }
-                    memory_data.last_updated = current_time;
-                    break;
-
-                case COOPER_DATA_OBJECT_ALLOC:
-                    /* Object allocation fields are mapped to cooper_method_metric_data_t:
-                    * class_signature -> signature
-                    * allocation_count -> call_count
-                    * total_bytes -> alloc_bytes
-                    * current_instances -> sample_count
-                    * min_size -> total_time_ns
-                    * max_size -> min_time_ns  
-                    * avg_size -> max_time_ns
-                    * peak_instances -> peak_memory
-                    */
-                    
-                    /* Find or add object type */
-                    int obj_idx = -1;
-                    for (int j = 0; j < object_count; j++) {
-                        if (strcmp(objects[j].class_name, entry->signature) == 0) {
-                            obj_idx = j;
+                } 
+                else 
+                {
+                    /* Thread memory */
+                    int thread_idx = -1;
+                    for (int j = 0; j < memory_data.active_threads; j++) {
+                        if (memory_data.thread_ids[j] == thread_id) {
+                            thread_idx = j;
                             break;
                         }
                     }
                     
-                    if (obj_idx == -1 && object_count < UI_MAX_DISPLAY_ITEMS)
-                        obj_idx = object_count++;
-                    
-                    if (obj_idx >= 0) {
-                        strncpy(objects[obj_idx].class_name, entry->signature, 
-                            sizeof(objects[obj_idx].class_name) - 1);
-                        objects[obj_idx].allocation_count = entry->call_count;
-                        objects[obj_idx].total_bytes = entry->alloc_bytes;
-                        objects[obj_idx].current_instances = entry->sample_count;
-                        objects[obj_idx].avg_size = entry->max_time_ns;
-                        objects[obj_idx].last_updated = current_time;
+                    if (thread_idx == -1 && memory_data.active_threads < 10) {
+                        thread_idx = memory_data.active_threads++;
+                        memory_data.thread_ids[thread_idx] = thread_id;
                     }
-                    break;
-            }
-            /* IMPORTANT: Mark entry as read so agent can reuse this slot */
-            shm_ctx.status_shm->status[i] = ENTRY_READ;
+                    
+                    if (thread_idx >= 0)
+                        memory_data.thread_memory[thread_idx] = thread_memory;
+                }
+                memory_data.last_updated = current_time;
+                break;
+
+            case COOPER_DATA_OBJECT_ALLOC:
+                /* Object allocation fields are mapped to cooper_method_metric_data_t:
+                * class_signature -> signature
+                * allocation_count -> call_count
+                * total_bytes -> alloc_bytes
+                * current_instances -> sample_count
+                * min_size -> total_time_ns
+                * max_size -> min_time_ns  
+                * avg_size -> max_time_ns
+                * peak_instances -> peak_memory
+                */
+                
+                /* Find or add object type */
+                int obj_idx = -1;
+                for (int j = 0; j < object_count; j++) {
+                    if (strcmp(objects[j].class_name, entry->signature) == 0) {
+                        obj_idx = j;
+                        break;
+                    }
+                }
+                
+                if (obj_idx == -1 && object_count < UI_MAX_DISPLAY_ITEMS)
+                    obj_idx = object_count++;
+                
+                if (obj_idx >= 0) {
+                    strncpy(objects[obj_idx].class_name, entry->signature, 
+                        sizeof(objects[obj_idx].class_name) - 1);
+                    objects[obj_idx].allocation_count = entry->call_count;
+                    objects[obj_idx].total_bytes = entry->alloc_bytes;
+                    objects[obj_idx].current_instances = entry->sample_count;
+                    objects[obj_idx].avg_size = entry->max_time_ns;
+                    objects[obj_idx].last_updated = current_time;
+                }
+                break;
         }
+
+        /* IMPORTANT: Mark entry as read so agent can reuse this slot */
+        shm_ctx.status_shm->status[i] = ENTRY_READ;
     }
 }
 
-void debug_shared_memory() {
+void debug_shared_memory() 
+{
     if (!shm_ctx.data_shm || !shm_ctx.status_shm) {
         printf("DEBUG: No shared memory mapped\n");
         return;

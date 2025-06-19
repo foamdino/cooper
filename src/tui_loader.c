@@ -13,7 +13,7 @@
 
 
 
-static time_t get_file_mod_time(const char* path)
+static time_t get_file_mod_time(const char *path)
 {
     struct stat st;
     if (stat(path, &st) == 0)
@@ -22,7 +22,7 @@ static time_t get_file_mod_time(const char* path)
     return 0;
 }
 
-static int load_tui_functions(tui_loader_t* loader)
+static int load_tui_functions(tui_loader_t *loader)
 {
     /* Load all UI function pointers */
     loader->tui_init = dlsym(loader->handle, "tui_init");
@@ -46,7 +46,7 @@ static int load_tui_functions(tui_loader_t* loader)
     return 0;
 }
 
-static int load_tui_library(tui_loader_t* loader)
+static int load_tui_library(tui_loader_t *loader)
 {
     /* Close existing handle if open */
     if (loader->handle) {
@@ -80,12 +80,12 @@ static int load_tui_library(tui_loader_t* loader)
     return 0;
 }
 
-tui_loader_t* tui_loader_init(const char* tui_library_path)
+tui_loader_t *tui_loader_init(const char *tui_library_path)
 {
     if (!tui_library_path)
         return NULL;
     
-    tui_loader_t* loader = calloc(1, sizeof(tui_loader_t));
+    tui_loader_t *loader = calloc(1, sizeof(tui_loader_t));
     if (!loader)
         return NULL;
 
@@ -105,7 +105,7 @@ tui_loader_t* tui_loader_init(const char* tui_library_path)
     return loader;
 }
 
-void tui_loader_cleanup(tui_loader_t* loader)
+void tui_loader_cleanup(tui_loader_t *loader)
 {
     if (!loader) 
         return;
@@ -121,7 +121,7 @@ void tui_loader_cleanup(tui_loader_t* loader)
     free(loader);
 }
 
-int tui_loader_check_and_reload(tui_loader_t* loader)
+int tui_loader_check_and_reload(tui_loader_t *loader)
 {
     if (!loader) 
         return -1;
@@ -142,13 +142,13 @@ int tui_loader_check_and_reload(tui_loader_t* loader)
     return 0; /* No reload needed */
 }
 
-void tui_loader_draw(tui_loader_t* loader, const tui_context_t* ctx)
+void tui_loader_draw(tui_loader_t *loader, const tui_context_t *ctx)
 {
     if (loader && loader->tui_draw)
         loader->tui_draw(ctx);
 }
 
-char* tui_loader_get_version(tui_loader_t* loader)
+char* tui_loader_get_version(tui_loader_t *loader)
 {
     if (loader && loader->tui_get_version)
         return loader->tui_get_version();
@@ -156,7 +156,7 @@ char* tui_loader_get_version(tui_loader_t* loader)
     return NULL;
 }
 
-int tui_loader_is_loaded(tui_loader_t* loader)
+int tui_loader_is_loaded(tui_loader_t *loader)
 {
     return loader && loader->handle != NULL;
 }
