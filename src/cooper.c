@@ -28,6 +28,9 @@ static const arena_config_t arena_configs[] = {
     {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS}
 };
 
+/* Cache the arena pointer globally to avoid repeated lookups */
+static arena_t *cached_cache_arena = NULL;
+
 #ifdef ENABLE_DEBUG_LOGS
 /* Debug function for dumping method stack */
 static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
@@ -124,8 +127,12 @@ static int method_cache_key_compare(const void *key1, const void *key2)
 /* Get method cache instance */
 static cache_t *get_method_cache(void)
 {
-    arena_t *arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
-    if (!arena) return NULL;
+    if (!cached_cache_arena)
+    {
+        cached_cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
+        if (!cached_cache_arena)
+            return NULL;
+    }
 
     cache_config_t config = {
         .max_entries = METHOD_CACHE_MAX_ENTRIES,
@@ -138,7 +145,7 @@ static cache_t *get_method_cache(void)
         .name = METHOD_CACHE_NAME
     };
 
-    return cache_tls_get(METHOD_CACHE_NAME, arena, &config);
+    return cache_tls_get(METHOD_CACHE_NAME, cached_cache_arena, &config);
 }
 
 /**
