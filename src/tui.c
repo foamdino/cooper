@@ -31,12 +31,32 @@ void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...)
     }
 }
 
-void tui_build_line(char *buffer, size_t buffer_size, const char *content, int width)
+void tui_build_line(char *buffer, size_t buffer_size, int width, const char *format, ...)
 {
-    int content_len = strlen(content);
-    int padding_needed = width - content_len - 2; /* Account for │ + │ */
+    char content[512]; /* Temporary buffer for formatted content */
+    va_list args;
+    int content_len;
+    int padding_needed;
     
-    if (padding_needed < 0) padding_needed = 0;
+    /* Format the content string */
+    va_start(args, format);
+    content_len = vsnprintf(content, sizeof(content), format, args);
+    va_end(args);
+    
+    /* Handle formatting errors or truncation */
+    if (content_len < 0) 
+    {
+        content[0] = '\0';
+        content_len = 0;
+    } 
+    else if (content_len >= (int)sizeof(content)) 
+    {
+        content_len = sizeof(content) - 1;
+    }
+    
+    padding_needed = width - content_len - 2; /* Account for │ + │ */
+    if (padding_needed < 0) 
+        padding_needed = 0;
     
     snprintf(buffer, buffer_size, "│%s%*s│\n", content, padding_needed, "");
 }
@@ -93,7 +113,7 @@ void tui_draw_header(tui_context_t *ctx)
     for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
     tui_safe_print(term, "┤\n");
 
-    tui_build_line(line, sizeof(line), " Keys: [1-4] Switch views  [q] Quit", ctx->terminal.width);
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Keys: [1-4] Switch views  [q] Quit");
 
     tui_safe_print(term, "%s", line);
 
@@ -233,16 +253,31 @@ void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int 
 void tui_draw_overview(tui_context_t *ctx)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-    tui_safe_print(term,"│ System Overview\n");
-    tui_safe_print(term,"│\n");
-    tui_safe_print(term,"│ Process Memory: %lu MB\n", (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
-    tui_safe_print(term,"│ Active Threads: %d\n", ctx->memory_data->active_threads);
-    tui_safe_print(term,"│ Tracked Methods: %d\n", ctx->method_count);
-    tui_safe_print(term,"│ Object Types: %d\n", ctx->object_count);
-    tui_safe_print(term,"│\n");
+    char line[256];
+
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " System Overview");
+    tui_safe_print(term, "%s", line);
+    tui_build_line(line, sizeof(line), ctx->terminal.width, "");
+    tui_safe_print(term, "%s", line);
+
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Process Memory: %lu MB", (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
+    tui_safe_print(term, "%s", line);
+
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Active Threads: %d", ctx->memory_data->active_threads);
+    tui_safe_print(term, "%s", line);
+
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Tracked Methods: %d", ctx->method_count);
+    tui_safe_print(term, "%s", line);
+
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Object Types: %d", ctx->object_count);
+    tui_safe_print(term, "%s", line);
+
+    tui_build_line(line, sizeof(line),ctx->terminal.width, "");
+    tui_safe_print(term, "%s", line);
 
     /* Show top methods by call count */
-    if (ctx->method_count > 0) {
+    if (ctx->method_count > 0) 
+    {
         tui_safe_print(term,"│ Top Methods by Calls:\n");
         for (int i = 0; i < ctx->method_count && i < 5; i++) {
             char short_name[50];
@@ -260,8 +295,9 @@ void tui_draw_methods_view(tui_context_t *ctx)
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     char line[256];
     
-    if (ctx->method_count == 0) {
-        tui_build_line(line, sizeof(line), " No method data available", term->width);
+    if (ctx->method_count == 0) 
+    {
+        tui_build_line(line, sizeof(line), term->width, " No method data available");
         tui_safe_print(term, "%s", line);
         return;
     }
@@ -306,7 +342,7 @@ void tui_draw_objects_view(tui_context_t *ctx)
     char line[256];
     if (ctx->object_count == 0) 
     {
-        tui_build_line(line, sizeof(line), " No object allocation data available", term->width);
+        tui_build_line(line, sizeof(line), term->width, " No object allocation data available");
         tui_safe_print(term, "%s", line);
         return;
     }

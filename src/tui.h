@@ -154,11 +154,12 @@ void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...);
 /**
  * Build a formatted line with proper padding and borders
  * @param buffer Output buffer
- * @param buffer_size Size of output buffer  
- * @param content Content to display
+ * @param buffer_size Size of output buffer
  * @param width Terminal width
+ * @param format Printf-style format string
+ * @param ... Format arguments
  */
-void tui_build_line(char *buffer, size_t buffer_size, const char *content, int width);
+void tui_build_line(char *buffer, size_t buffer_size, int width, const char *format, ...);
 
 /**
  * Draw a bar chart
