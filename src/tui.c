@@ -148,10 +148,14 @@ void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], ui
 void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-    tui_safe_print(term, "│ Process Memory History (MB)\n");
+    char line[256];
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Process Memory History (MB)");
+    tui_safe_print(term, "%s", line);
     tui_safe_print(term, "│\n");
-    if (memory_data->history_count < 2) {
-        tui_safe_print(term, "│ Collecting data...\n");
+    if (memory_data->history_count < 2) 
+    {
+        tui_build_line(line, sizeof(line), ctx->terminal.width, " Collecting data...");
+        tui_safe_print(term, "%s", line);
         return;
     }
 
@@ -166,28 +170,42 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
     }
 
     int chart_height = 8;
-    int chart_width = term_width - 10;
+    int chart_width = term_width - 4;
 
     /* Draw the chart from top to bottom */
     for (int row = 0; row < chart_height; row++) 
     {
-        tui_safe_print(term,"│ ");
+        char chart_line[256];
+    
+        /* Initialize with just a space */
+        chart_line[0] = '\0';  /* Null terminate for strcat */
+        strcat(chart_line, " ");
+        
         uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
         
-        for (int col = 0; col < memory_data->history_count && col < chart_width; col++) {
-            if (memory_data->memory_history[col] >= threshold) {
-                tui_safe_print(term,"█");
+        for (int col = 0; col < chart_width; col++) {
+            if (col < memory_data->history_count) {
+                if (memory_data->memory_history[col] >= threshold) {
+                    strcat(chart_line, "█");
+                } else {
+                    strcat(chart_line, " ");
+                }
             } else {
-                tui_safe_print(term," ");
+                /* Fill remaining space with spaces */
+                strcat(chart_line, " ");
             }
         }
-        tui_safe_print(term,"\n");
+        
+        /* Use "%s" format and pass chart_line as argument */
+        tui_build_line(line, sizeof(line), ctx->terminal.width, "%s", chart_line);
+        tui_safe_print(term, "%s", line);
     }
 
-    tui_safe_print(term,"│ Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
+    tui_build_line(line, sizeof(line), ctx->terminal.width, " Min: %lu MB  Max: %lu MB  Current: %lu MB", 
         (unsigned long)(min_mem / 1024 / 1024),
         (unsigned long)(max_mem / 1024 / 1024),
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
+    tui_safe_print(term, "%s", line);
 }
 
 void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width)
@@ -272,7 +290,7 @@ void tui_draw_overview(tui_context_t *ctx)
     tui_build_line(line, sizeof(line), ctx->terminal.width, " Object Types: %d", ctx->object_count);
     tui_safe_print(term, "%s", line);
 
-    tui_build_line(line, sizeof(line),ctx->terminal.width, "");
+    tui_build_line(line, sizeof(line), ctx->terminal.width, "");
     tui_safe_print(term, "%s", line);
 
     /* Show top methods by call count */
@@ -323,15 +341,21 @@ void tui_draw_memory_view(tui_context_t *ctx)
 {
     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     tui_draw_memory_history(ctx, ctx->memory_data, ctx->terminal.width);
-    tui_safe_print(term, "│\n");
+    char line[256];
+    tui_build_line(line, sizeof(line), ctx->terminal.width, "");
+    tui_safe_print(term, "%s", line);
 
     if (ctx->memory_data->active_threads > 0) 
     {
-        tui_safe_print(term, "│ Thread Memory Usage (MB):\n");
-        for (int i = 0; i < ctx->memory_data->active_threads; i++) {
-            tui_safe_print(term, "│ Thread %lu: %lu MB\n", 
+        tui_build_line(line, sizeof(line), term->width, "Thread Memory Usage (MB):");
+        tui_safe_print(term, "%s", line);
+        for (int i = 0; i < ctx->memory_data->active_threads; i++) 
+        {
+            
+            tui_build_line(line, sizeof(line), term->width, "Thread %lu: %lu MB", 
                 (unsigned long)ctx->memory_data->thread_ids[i],
                 (unsigned long)(ctx->memory_data->thread_memory[i] / 1024 / 1024));
+            tui_safe_print(term, "%s", line);
         }
     }
 }
