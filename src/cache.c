@@ -10,14 +10,16 @@
 
 typedef struct tls_cache_entry tls_cache_entry_t;
 
-struct tls_cache_entry {
+struct tls_cache_entry 
+{
     char cache_id[32];      /**< Cache identifier */
     cache_t *cache;         /**< Cache instance */
 };
 
 typedef struct tls_cache_manager tls_cache_manager_t;
 
-struct tls_cache_manager {
+struct tls_cache_manager 
+{
     tls_cache_entry_t caches[MAX_TLS_CACHES];
     size_t count;
     size_t hits;            /**< Global hit counter for this thread */
@@ -80,22 +82,21 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config)
     cache->arena = arena;
 
     /* Set up default copy functions if not provided */
-    if (!cache->config.key_copy) {
+    if (!cache->config.key_copy)
         cache->config.key_copy = default_copy;
-    }
-    if (!cache->config.value_copy) {
+    
+    if (!cache->config.value_copy)
         cache->config.value_copy = default_copy;
-    }
 
     /* Initialize entries */
-    for (size_t i = 0; i < config->max_entries; i++) {
+    for (size_t i = 0; i < config->max_entries; i++) 
+    {
         cache->entries[i].key = (char*)key_memory + (i * config->key_size);
         cache->entries[i].value = (char*)value_memory + (i * config->value_size);
         cache->entries[i].valid = 0;
         
-        if (config->entry_init) {
+        if (config->entry_init)
             config->entry_init(&cache->entries[i]);
-        }
     }
 
     return cache;
@@ -114,14 +115,15 @@ int cache_get(cache_t *cache, const void *key, void *value)
     if (!cache || !key) return 1;
 
     /* Linear search through valid entries */
-    for (size_t i = 0; i < cache->capacity; i++) {
+    for (size_t i = 0; i < cache->capacity; i++) 
+    {
         if (cache->entries[i].valid && 
             cache->config.key_compare(cache->entries[i].key, key) == 0) {
             
             /* Found - copy value if requested */
-            if (value) {
+            if (value)
                 cache->config.value_copy(value, cache->entries[i].value, cache->config.value_size);
-            }
+            
             return 0; /* Found */
         }
     }
@@ -140,10 +142,12 @@ int cache_get(cache_t *cache, const void *key, void *value)
  */
 int cache_put(cache_t *cache, const void *key, const void *value)
 {
-    if (!cache || !key || !value) return 1;
+    if (!cache || !key || !value) 
+        return 1;
 
     /* First check if key already exists */
-    for (size_t i = 0; i < cache->capacity; i++) {
+    for (size_t i = 0; i < cache->capacity; i++) 
+    {
         if (cache->entries[i].valid && 
             cache->config.key_compare(cache->entries[i].key, key) == 0) {
             
@@ -157,13 +161,15 @@ int cache_put(cache_t *cache, const void *key, const void *value)
     size_t target_index;
     if (cache->count < cache->capacity) {
         /* Find first empty slot */
-        for (target_index = 0; target_index < cache->capacity; target_index++) {
-            if (!cache->entries[target_index].valid) {
+        for (target_index = 0; target_index < cache->capacity; target_index++) 
+        {
+            if (!cache->entries[target_index].valid)
                 break;
-            }
         }
         cache->count++;
-    } else {
+    } 
+    else 
+    {
         /* Cache is full, use round-robin eviction */
         target_index = cache->next_victim;
         cache->next_victim = (cache->next_victim + 1) % cache->capacity;
@@ -180,7 +186,8 @@ int cache_put(cache_t *cache, const void *key, const void *value)
 void cache_clear(cache_t *cache)
 {
     /* Clearing a NULL cache does nothing */
-    if (!cache) return;
+    if (!cache) 
+        return;
 
     for (size_t i = 0; i < cache->capacity; i++)
         cache->entries[i].valid = 0;
@@ -192,29 +199,33 @@ void cache_clear(cache_t *cache)
 
 void cache_stats(cache_t *cache, size_t *hits, size_t *misses, size_t *entries)
 {
-    if (!cache) return;
+    if (!cache) 
+        return;
 
-    if (entries) {
+    if (entries)
         *entries = cache->count;
-    }
 
     /* Note: Individual cache instances don't track hits/misses to keep them lightweight.
        Hit/miss tracking is done at the thread level by the TLS manager. */
-    if (hits) *hits = 0;
-    if (misses) *misses = 0;
+    if (hits) 
+        *hits = 0;
+
+    if (misses) 
+        *misses = 0;
 }
 
 /* Thread-local cache management */
 
 int cache_tls_init(void)
 {
-    if (!tls_initialized) {
+    if (!tls_initialized) 
+    {
         pthread_mutex_lock(&tls_init_mutex);
         if (!tls_initialized) {
             int result = pthread_key_create(&tls_cache_key, destroy_tls_cache_manager);
-            if (result == 0) {
+            if (result == 0)
                 tls_initialized = 1;
-            }
+
         }
         pthread_mutex_unlock(&tls_init_mutex);
     }
@@ -225,15 +236,19 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_
 {
     assert(cache_id != NULL);
 
-    if (!cache_id) return NULL;
+    if (!cache_id) 
+        return NULL;
 
-    if (cache_tls_init() != 0) return NULL;
+    if (cache_tls_init() != 0) 
+        return NULL;
 
     tls_cache_manager_t *manager = pthread_getspecific(tls_cache_key);
-    if (!manager) {
+    if (!manager) 
+    {
         /* First time - create manager */
         manager = calloc(1, sizeof(tls_cache_manager_t));
-        if (!manager) return NULL;
+        if (!manager) 
+            return NULL;
 
         if (pthread_setspecific(tls_cache_key, manager) != 0) {
             free(manager);
@@ -242,19 +257,19 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_
     }
 
     /* Look for existing cache */
-    for (size_t i = 0; i < manager->count; i++) {
-        if (strcmp(manager->caches[i].cache_id, cache_id) == 0) {
+    for (size_t i = 0; i < manager->count; i++) 
+    {
+        if (strcmp(manager->caches[i].cache_id, cache_id) == 0)
             return manager->caches[i].cache;
-        }
     }
 
     /* Need to create new cache */
-    if (manager->count >= MAX_TLS_CACHES || !arena || !config) {
+    if (manager->count >= MAX_TLS_CACHES || !arena || !config)
         return NULL;
-    }
 
     cache_t *new_cache = cache_init(arena, config);
-    if (!new_cache) return NULL;
+    if (!new_cache) 
+        return NULL;
 
     /* Add to manager */
     size_t index = manager->count;
@@ -270,7 +285,8 @@ void cache_tls_cleanup(void)
 {
     if (tls_initialized) {
         tls_cache_manager_t *manager = pthread_getspecific(tls_cache_key);
-        if (manager) {
+        if (manager)
+        {
             free(manager);
             pthread_setspecific(tls_cache_key, NULL);
         }

@@ -58,7 +58,7 @@ static int load_tui_library(tui_loader_t* loader)
     }
 
     /* Load the new library */
-    loader->handle = dlopen(loader->library_path, RTLD_LAZY);
+    loader->handle = dlopen(loader->library_path, RTLD_NOW);
     if (!loader->handle) {
         fprintf(stderr, "Failed to load TUI library: %s\n", dlerror());
         return -1;
