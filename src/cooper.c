@@ -793,10 +793,10 @@ int start_thread(pthread_t *thread, thread_fn *fun, char *name, agent_context_t 
     if (err != 0)
     {
         printf("Failed to start %s thread: %d\n", name, err);
-        return 1;
+        return COOPER_ERR;
     }
 
-    return 0;
+    return COOPER_OK;
 }
 
 /**
@@ -2367,7 +2367,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
 
     /* Init the memory sampling */
     global_ctx->mem_sampling_running = 1;
-    if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
+    if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != COOPER_OK)
     {
         LOG_ERROR("Failed to start memory sampling thread - unable to continue\n");
         exit(1);
@@ -2465,20 +2465,16 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     return COOPER_OK; /* Success */
 }
 
-/*
- * Entry point
- */
-JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
+agent_context_t *cooper_init(char *options)
 {
-    UNUSED(reserved);
-    
     /* Allocate and initialize the agent context */
     global_ctx = malloc(sizeof(agent_context_t));
     if (!global_ctx) 
     {
         printf("Failed to allocate agent context\n");
-        return JNI_ERR;
+        return NULL;
     }
+
     memset(global_ctx, 0, sizeof(agent_context_t));
     global_ctx->jvmti_env = NULL;
     global_ctx->jvm = NULL;
@@ -2539,7 +2535,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         if (!arena) 
         {
             printf("Failed to create %s\n", arena_configs[i].name);
-            return JNI_ERR;
+            return NULL;
         }
     }
 
@@ -2548,14 +2544,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!cache_arena) 
     {
         LOG_ERROR("Cache arena not found\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     /* Initialize cache system */
     if (cache_init_system(cache_arena) != 0) 
     {
         LOG_ERROR("Failed to initialize cache system\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     /* Init logging after all arenas are created */
@@ -2563,14 +2559,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!log_arena) 
     {
         printf("Log arena not found\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     /* We start the logging thread as we initialise the system now */
     if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
     {
         cleanup(global_ctx);
-        return JNI_ERR;
+        return NULL;
     }
 
     /* Initialize metrics after all arenas are created */
@@ -2578,7 +2574,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!metrics_arena) 
     {
         LOG_ERROR("Metrics arena not found\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     /* TODO create const for initial_capacity at some point */
@@ -2587,7 +2583,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->metrics) 
     {
         LOG_ERROR("Failed to initialize metrics structure\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     LOG_DEBUG("Metrics arena usage before object init: %zu / %zu bytes\n", metrics_arena->used, metrics_arena->total_sz);
@@ -2597,7 +2593,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->object_metrics) 
     {
         LOG_ERROR("Failed to initialize object allocation metrics structure\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     LOG_DEBUG("Metrics arena usage after object init: %zu / %zu bytes\n", metrics_arena->used, metrics_arena->total_sz);
@@ -2606,7 +2602,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->app_memory_metrics)
     {
         LOG_ERROR("Failed to allocate memory for app_memory_metrics\n");
-        return JNI_ERR;
+        return NULL;
     }
     memset(global_ctx->app_memory_metrics, 0, sizeof(app_memory_metrics_t));
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
@@ -2616,7 +2612,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (!global_ctx->shm_ctx) 
     {
         LOG_ERROR("Failed to allocate shared memory context");
-        return JNI_ERR;
+        return NULL;
     }
 
     /* Grab a copy of the JVM pointer */
@@ -2634,7 +2630,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (load_config(global_ctx, "./trace.ini") != COOPER_OK)
     {
         LOG_ERROR("Unable to load config_file!\n");
-        return JNI_ERR;
+        return NULL;
     }
 
     LOG_INFO("Config: rate=%d, method='%s', path='%s'\n",
@@ -2643,18 +2639,18 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     if (strcmp(global_ctx->config.export_method, "file") != 0)
     {
         LOG_ERROR("Unknown export method: [%s]", global_ctx->config.export_method);
-        return JNI_ERR;
+        return NULL;
     }
 
     /* Set export_running to true before starting the thread */
     global_ctx->export_running = 1;
 
     /* Init the event/sample handling */
-    if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
+    if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != COOPER_OK)
     {
         cleanup(global_ctx);
         cleanup_log_system();
-        return JNI_ERR;
+        return NULL;
     }
 
     if (cooper_shm_init_agent(global_ctx->shm_ctx) != 0) 
@@ -2667,22 +2663,45 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     {
         /* Start shared memory export thread */
         global_ctx->shm_export_running = 1;
-        if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
+        if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != COOPER_OK) 
         {
             LOG_INFO("Failed to start shared memory export thread");
             cooper_shm_cleanup_agent(global_ctx->shm_ctx);
             free(global_ctx->shm_ctx);
             global_ctx->shm_ctx = NULL;
             global_ctx->shm_export_running = 0;
-        } else {
+        } 
+        else 
             LOG_INFO("Shared memory export enabled");
-        }
     }
 
     if (init_jvm_capabilities(global_ctx) != COOPER_OK)
-        return JNI_ERR;
+        return NULL;
 
     LOG_INFO("JVMTI Agent Loaded.\n");
+}
+
+/*
+ * Entry point
+ */
+JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
+{
+    UNUSED(reserved);
+    
+    agent_context_t *ctx = cooper_init(options);
+    if (!ctx)
+        return JNI_ERR;
+
+    /* Get JVMTI environment */
+    jint result = (*vm)->GetEnv(vm, (void **)&ctx->jvmti_env, JVMTI_VERSION_1_2);
+    if (result != JNI_OK || !ctx->jvmti_env) {
+        cooper_cleanup(ctx);
+        return JNI_ERR;
+    }
+    
+    ctx->jvm = vm;
+    
+
     return JNI_OK;
 }
 
