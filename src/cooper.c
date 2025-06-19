@@ -128,17 +128,17 @@ static cache_t *get_method_cache(void)
     if (!arena) return NULL;
 
     cache_config_t config = {
-        .max_entries = 128,  /* Cache up to 128 methods per thread */
+        .max_entries = METHOD_CACHE_MAX_ENTRIES,
         .key_size = sizeof(method_cache_key_t),
         .value_size = sizeof(method_cache_value_t),
         .key_compare = method_cache_key_compare,
         .key_copy = NULL,    /* Will use default memcpy */
         .value_copy = NULL,  /* Will use default memcpy */
         .entry_init = NULL,
-        .name = "method_cache"
+        .name = METHOD_CACHE_NAME
     };
 
-    return cache_tls_get("method_cache", arena, &config);
+    return cache_tls_get(METHOD_CACHE_NAME, arena, &config);
 }
 
 /**

@@ -76,6 +76,10 @@
 #define COOPER_OK 0
 #define COOPER_ERR 1
 
+/* Method cache */
+#define METHOD_CACHE_NAME "method_cache"
+#define METHOD_CACHE_MAX_ENTRIES 256
+
 
 typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
