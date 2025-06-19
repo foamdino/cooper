@@ -148,6 +148,79 @@ static cache_t *get_method_cache(void)
     return cache_tls_get(METHOD_CACHE_NAME, cached_cache_arena, &config);
 }
 
+/* Class signature cache comparison function */
+static int class_cache_key_compare(const void *key1, const void *key2)
+{
+    const struct class_cache_key *k1 = (const struct class_cache_key *)key1;
+    const struct class_cache_key *k2 = (const struct class_cache_key *)key2;
+    
+    if (k1->class_ref == k2->class_ref) return 0;
+    return (k1->class_ref < k2->class_ref) ? -1 : 1;
+}
+
+/* Get cached class signature or fetch if not cached */
+static const char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
+{
+    static arena_t *cached_cache_arena = NULL;
+    
+    if (!output_buffer || buffer_size == 0) return NULL;
+    
+    /* Cache arena lookup */
+    if (!cached_cache_arena) {
+        cached_cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
+        if (!cached_cache_arena) return NULL;
+    }
+
+    /* Get thread-local class cache */
+    cache_config_t class_config = {
+        .max_entries = 128,
+        .key_size = sizeof(struct class_cache_key),
+        .value_size = sizeof(struct class_cache_value),
+        .key_compare = class_cache_key_compare,
+        .key_copy = NULL,
+        .value_copy = NULL,
+        .entry_init = NULL,
+        .name = "class_signature_cache"
+    };
+
+    cache_t *class_cache = cache_tls_get("class_sig_cache", cached_cache_arena, &class_config);
+    if (!class_cache) return NULL;
+
+    /* Try cache lookup first */
+    struct class_cache_key cache_key = { .class_ref = klass };
+    struct class_cache_value cache_value;
+    
+    if (cache_get(class_cache, &cache_key, &cache_value) == 0 && cache_value.valid) {
+        /* Cache hit - copy to output buffer */
+        strncpy(output_buffer, cache_value.class_signature, buffer_size - 1);
+        output_buffer[buffer_size - 1] = '\0';
+        return output_buffer;
+    }
+
+    /* Cache miss - fetch from JVMTI */
+    char *class_sig = NULL;
+    jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+    if (err != JVMTI_ERROR_NONE || !class_sig) {
+        return NULL;
+    }
+
+    /* Cache the result */
+    memset(&cache_value, 0, sizeof(cache_value));
+    strncpy(cache_value.class_signature, class_sig, sizeof(cache_value.class_signature) - 1);
+    cache_value.valid = 1;
+    
+    cache_put(class_cache, &cache_key, &cache_value);
+
+    /* Copy to output buffer */
+    strncpy(output_buffer, class_sig, buffer_size - 1);
+    output_buffer[buffer_size - 1] = '\0';
+
+    /* JVMTI allocated the string, so deallocate it */
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+    
+    return output_buffer;
+}
+
 /**
  * Get a native thread id for a given java vm thread 
  * 
@@ -1985,10 +2058,12 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     UNUSED(thread);
     UNUSED(object);
     
-    /* Get the class signature for tracking all allocations */
-    char *class_sig = NULL;
-    jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-    if (err != JVMTI_ERROR_NONE)
+    /* Buffer for class signature */
+    char class_sig_buffer[MAX_SIG_SZ];
+    
+    /* Get cached class signature */
+    const char *class_sig = get_cached_class_signature(jvmti_env, klass, class_sig_buffer, sizeof(class_sig_buffer));
+    if (!class_sig) 
     {
         LOG_DEBUG("[object_alloc_callback] Unable to get class signature for object tracking\n");
         return;

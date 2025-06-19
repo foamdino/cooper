@@ -217,6 +217,15 @@ struct method_cache_value {
     int should_sample;
 };
 
+struct class_cache_key {
+    jclass class_ref;           /* Class reference as key */
+};
+
+struct class_cache_value {
+    char class_signature[MAX_SIG_SZ];
+    int valid;                  /* Validation flag */
+};
+
 struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
