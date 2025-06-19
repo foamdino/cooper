@@ -124,7 +124,7 @@ static int method_cache_key_compare(const void *key1, const void *key2)
 /* Get method cache instance */
 static cache_t *get_method_cache(void)
 {
-    arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
+    arena_t *arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
     if (!arena) return NULL;
 
     cache_config_t config = {
