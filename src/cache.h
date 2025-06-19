@@ -54,6 +54,15 @@ struct cache
 };
 
 /**
+ * Initialize the cache system with a dedicated arena
+ * Must be called before using any cache functions
+ * 
+ * @param arena     Dedicated arena for cache management structures
+ * @return          0 on success, non-zero on failure
+ */
+int cache_init_system(arena_t *arena);
+
+/**
  * Initialize a new cache instance
  * 
  * @param arena     Arena to use for allocations

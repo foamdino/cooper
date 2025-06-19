@@ -24,7 +24,8 @@ static const arena_config_t arena_configs[] = {
     {LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
     {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
-    {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS}
+    {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
+    {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS}
 };
 
 #ifdef ENABLE_DEBUG_LOGS
@@ -1565,6 +1566,10 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 
     /* Check if we should sample this method call */
     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
+
+    /* If we get a sample_index of 0 we don't sample this method, so jump to deallocate */
+    if (sample_index == 0)
+        goto deallocate;
     
     /* Cache the result */
     memset(&cache_value, 0, sizeof(cache_value));
@@ -1577,10 +1582,6 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
 
     /* We're sampling this call */
     LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
-
-    /* If we get a sample_index of 0 we don't sample this method, so jump to deallocate */
-    if (sample_index == 0)
-        goto deallocate;
 
     /* Create a new sample on our method stack */
     arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
@@ -2542,6 +2543,21 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         }
     }
 
+    /* Cache arena creation before other initializations */
+    arena_t *cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
+    if (!cache_arena) 
+    {
+        LOG_ERROR("Cache arena not found\n");
+        return JNI_ERR;
+    }
+
+    /* Initialize cache system */
+    if (cache_init_system(cache_arena) != 0) 
+    {
+        LOG_ERROR("Failed to initialize cache system\n");
+        return JNI_ERR;
+    }
+
     /* Init logging after all arenas are created */
     arena_t *log_arena = find_arena(global_ctx->arena_head, LOG_ARENA_NAME);
     if (!log_arena) 
@@ -2699,8 +2715,6 @@ void cleanup(agent_context_t *ctx)
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) 
     {
-        /* Blow away any caches */
-        cache_tls_cleanup();
 
         /* Signal export thread to stop */
         pthread_mutex_lock(&global_ctx->samples_lock);
@@ -2739,7 +2753,10 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         }
 
         cleanup(global_ctx);
-        /* Clean up thread-local storage */
+
+        /* Clean up all thread-local storage systems */
+        cache_tls_cleanup();  /* Clean up cache TLS system */
+
         if (tls_initialized) 
         {
             /* Free the current thread's TLS data */
@@ -2787,9 +2804,9 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         }
 
         /* Finally shutdown logging */
-        cleanup_log_system(global_ctx);
+        cleanup_log_system();
 
-        /* Cleanup the arenas */
+        /* Cleanup the arenas - this will free all cache managers and cache data */
         destroy_all_arenas(&global_ctx->arena_head, &global_ctx->arena_tail);
         /* Null out metrics */
         global_ctx->metrics = NULL;

@@ -31,20 +31,22 @@ static pthread_key_t tls_cache_key;
 static int tls_initialized = 0;
 static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Global cache arena - set during initialization */
+static arena_t *cache_arena = NULL;
+
+int cache_init_system(arena_t *arena)
+{
+    if (cache_arena != NULL)
+        return 0;
+
+    cache_arena = arena;
+    return cache_tls_init();
+}
+
 /* Default memory copy function */
 static void default_copy(void *dest, const void *src, size_t size)
 {
     memcpy(dest, src, size);
-}
-
-/* Cleanup function for thread-local cache manager */
-static void destroy_tls_cache_manager(void *data)
-{
-    tls_cache_manager_t *manager = (tls_cache_manager_t *)data;
-    if (manager) {
-        /* Note: Individual caches are arena-allocated, so no need to free them */
-        free(manager);
-    }
 }
 
 cache_t *cache_init(arena_t *arena, const cache_config_t *config)
@@ -222,7 +224,7 @@ int cache_tls_init(void)
     {
         pthread_mutex_lock(&tls_init_mutex);
         if (!tls_initialized) {
-            int result = pthread_key_create(&tls_cache_key, destroy_tls_cache_manager);
+            int result = pthread_key_create(&tls_cache_key, NULL);
             if (result == 0)
                 tls_initialized = 1;
 
@@ -232,9 +234,12 @@ int cache_tls_init(void)
     return tls_initialized ? 0 : 1;
 }
 
-cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_t *config)
+cache_t *cache_tls_get(const char *cache_id, arena_t *data_arena, const cache_config_t *config)
 {
     assert(cache_id != NULL);
+    assert(data_arena != NULL);
+    /* the cache arena must be initialised first */
+    assert(cache_arena != NULL);
 
     if (!cache_id) 
         return NULL;
@@ -246,14 +251,15 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_
     if (!manager) 
     {
         /* First time - create manager */
-        manager = calloc(1, sizeof(tls_cache_manager_t));
+        manager = arena_alloc(cache_arena, sizeof(tls_cache_manager_t));
         if (!manager) 
             return NULL;
 
-        if (pthread_setspecific(tls_cache_key, manager) != 0) {
-            free(manager);
+        /* Initialise the manager */
+        memset(manager, 0, sizeof(tls_cache_manager_t));
+
+        if (pthread_setspecific(tls_cache_key, manager) != 0)
             return NULL;
-        }
     }
 
     /* Look for existing cache */
@@ -264,10 +270,10 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_
     }
 
     /* Need to create new cache */
-    if (manager->count >= MAX_TLS_CACHES || !arena || !config)
+    if (manager->count >= MAX_TLS_CACHES || !config)
         return NULL;
 
-    cache_t *new_cache = cache_init(arena, config);
+    cache_t *new_cache = cache_init(data_arena, config);
     if (!new_cache) 
         return NULL;
 
@@ -283,15 +289,11 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *arena, const cache_config_
 
 void cache_tls_cleanup(void)
 {
-    if (tls_initialized) {
-        tls_cache_manager_t *manager = pthread_getspecific(tls_cache_key);
-        if (manager)
-        {
-            free(manager);
-            pthread_setspecific(tls_cache_key, NULL);
-        }
+    if (tls_initialized) 
+    {
         pthread_key_delete(tls_cache_key);
         tls_initialized = 0;
         pthread_mutex_destroy(&tls_init_mutex);
+        cache_arena = NULL;
     }
 }

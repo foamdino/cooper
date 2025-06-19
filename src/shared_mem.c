@@ -22,27 +22,35 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     ctx->data_shm_size = sizeof(cooper_data_shm_t);
     ctx->status_shm_size = sizeof(cooper_status_shm_t);
     
+    /* Try to unlink any existing shared memory first */
+    shm_unlink(COOPER_DATA_SHM_NAME);
+    shm_unlink(COOPER_STATUS_SHM_NAME);
+
     /* Create data shared memory (agent writes, CLI reads) */
-    ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);
-    if (ctx->data_fd == -1) {
+    ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR, 0644);
+    if (ctx->data_fd == -1) 
+    {
         LOG_ERROR("shm_open failed for %s: %s (errno=%d)", COOPER_DATA_SHM_NAME, strerror(errno), errno);
         /* Try to unlink and recreate */
         shm_unlink(COOPER_DATA_SHM_NAME);
-        ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);
-        if (ctx->data_fd == -1) {
+        ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR, 0644);
+        if (ctx->data_fd == -1) 
+        {
             LOG_ERROR("Failed to create data shared memory: %s", strerror(errno));
             return -1;
         }
     }
     
-    if (ftruncate(ctx->data_fd, ctx->data_shm_size) == -1) {
+    if (ftruncate(ctx->data_fd, ctx->data_shm_size) == -1) 
+    {
         LOG_ERROR("Failed to set data shared memory size: %s", strerror(errno));
         goto error_cleanup;
     }
     
     ctx->data_shm = mmap(NULL, ctx->data_shm_size, PROT_READ | PROT_WRITE, 
                         MAP_SHARED, ctx->data_fd, 0);
-    if (ctx->data_shm == MAP_FAILED) {
+    if (ctx->data_shm == MAP_FAILED) 
+    {
         LOG_ERROR("Failed to map data shared memory: %s", strerror(errno));
         goto error_cleanup;
     }
@@ -55,31 +63,35 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     ctx->data_shm->next_write_index = 0;
     
     /* Create status shared memory (CLI writes, agent reads) */
-    ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);
-    if (ctx->status_fd == -1) {
+    ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR, 0644);
+    if (ctx->status_fd == -1) 
+    {
         shm_unlink(COOPER_STATUS_SHM_NAME);
-        ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR | O_EXCL, 0644);
+        ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR, 0644);
         if (ctx->status_fd == -1) {
             LOG_ERROR("Failed to create status shared memory: %s", strerror(errno));
             goto error_cleanup;
         }
     }
     
-    if (ftruncate(ctx->status_fd, ctx->status_shm_size) == -1) {
+    if (ftruncate(ctx->status_fd, ctx->status_shm_size) == -1) 
+    {
         LOG_ERROR("Failed to set status shared memory size: %s", strerror(errno));
         goto error_cleanup;
     }
     
     ctx->status_shm = mmap(NULL, ctx->status_shm_size, PROT_READ | PROT_WRITE, 
                           MAP_SHARED, ctx->status_fd, 0);
-    if (ctx->status_shm == MAP_FAILED) {
+    if (ctx->status_shm == MAP_FAILED) 
+    {
         LOG_ERROR("Failed to map status shared memory: %s", strerror(errno));
         goto error_cleanup;
     }
     
     /* Initialize status shared memory */
     memset(ctx->status_shm, 0, ctx->status_shm_size);
-    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) 
+    {
         ctx->status_shm->status[i] = ENTRY_EMPTY;
     }
     
