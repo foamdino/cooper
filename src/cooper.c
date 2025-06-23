@@ -2453,6 +2453,30 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
 
     LOG_INFO("Successfully initialized Thread class and getId method\n");
 
+    /* Start export thread now that JVM is initialized */
+    global_ctx->export_running = 1;
+    if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
+    {
+        LOG_ERROR("Failed to start export thread - unable to continue\n");
+        exit(1);
+    }
+
+    /* Initialize and start shared memory export if available */
+    if (global_ctx->shm_ctx != NULL && cooper_shm_init_agent(global_ctx->shm_ctx) == 0) 
+    {
+        global_ctx->shm_export_running = 1;
+        if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
+        {
+            LOG_ERROR("Failed to start shared memory export thread");
+            cooper_shm_cleanup_agent(global_ctx->shm_ctx);
+            free(global_ctx->shm_ctx);
+            global_ctx->shm_ctx = NULL;
+            global_ctx->shm_export_running = 0;
+        } else {
+            LOG_INFO("Shared memory export thread started");
+        }
+    }
+
     /* Init the memory sampling */
     global_ctx->mem_sampling_running = 1;
     if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
@@ -2732,39 +2756,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     {
         LOG_ERROR("Unknown export method: [%s]", global_ctx->config.export_method);
         return JNI_ERR;
-    }
-
-    /* Set export_running to true before starting the thread */
-    global_ctx->export_running = 1;
-
-    /* Init the event/sample handling */
-    if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
-    {
-        cleanup(global_ctx);
-        cleanup_log_system();
-        return JNI_ERR;
-    }
-
-    if (cooper_shm_init_agent(global_ctx->shm_ctx) != 0) 
-    {
-        LOG_WARN("Failed to initialize shared memory - continuing without it");
-        free(global_ctx->shm_ctx);
-        global_ctx->shm_ctx = NULL;
-    } 
-    else 
-    {
-        /* Start shared memory export thread */
-        global_ctx->shm_export_running = 1;
-        if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
-        {
-            LOG_INFO("Failed to start shared memory export thread");
-            cooper_shm_cleanup_agent(global_ctx->shm_ctx);
-            free(global_ctx->shm_ctx);
-            global_ctx->shm_ctx = NULL;
-            global_ctx->shm_export_running = 0;
-        } else {
-            LOG_INFO("Shared memory export enabled");
-        }
     }
 
     if (init_jvm_capabilities(global_ctx) != COOPER_OK)
