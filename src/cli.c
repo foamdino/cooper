@@ -160,31 +160,23 @@ void cleanup_cli_shm()
 /* Data reading and processing functions */
 void read_shared_memory_data() 
 {
-    if (!shm_ctx.data_shm || !shm_ctx.status_shm) 
-        return;
-    
     time_t current_time = time(NULL);
     
-    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) 
-    {
-        /* Ignore entries that are not in the READY state */
-        if (shm_ctx.status_shm->status[i] != ENTRY_READY)
-            continue;
+    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) {
+        if (shm_ctx.status_shm->status[i] != ENTRY_READY) continue;
         
-        cooper_method_metric_data_t *entry = &shm_ctx.data_shm->metrics[i];
+        cooper_sample_entry_t *entry = &shm_ctx.data_shm->entries[i];
         
-        /* Skip empty entries (check if there's actual data) */
-        if (entry->data_type == 0)
-            continue;
-        
-        switch (entry->data_type)
-        {
-            case COOPER_DATA_METHOD_METRIC:
-                /* Find or add method */
+        switch (entry->type) {
+            case COOPER_DATA_METHOD_METRIC: {
+                /* Clean, semantic access to method data */
+                cooper_method_data_t *method = &entry->data.method;
+                
+                /* Find or create method entry */
                 int method_idx = -1;
                 for (int j = 0; j < method_count; j++) 
                 {
-                    if (strcmp(methods[j].signature, entry->signature) == 0) 
+                    if (strcmp(methods[j].signature, method->signature) == 0) 
                     {
                         method_idx = j;
                         break;
@@ -193,51 +185,51 @@ void read_shared_memory_data()
                 
                 if (method_idx == -1 && method_count < UI_MAX_DISPLAY_ITEMS)
                     method_idx = method_count++;
-                
+
                 if (method_idx >= 0) 
                 {
-                    strncpy(methods[method_idx].signature, entry->signature, sizeof(methods[method_idx].signature) - 1);
-                    methods[method_idx].call_count = entry->call_count;
-                    methods[method_idx].total_time_ns = entry->total_time_ns;
-                    methods[method_idx].avg_time_ns = entry->sample_count > 0 ? 
-                        entry->total_time_ns / entry->sample_count : 0;
-                    methods[method_idx].alloc_bytes = entry->alloc_bytes;
+                    /* Copy signature */
+                    strncpy(methods[method_idx].signature, method->signature, 
+                           sizeof(methods[method_idx].signature) - 1);
+                    methods[method_idx].signature[sizeof(methods[method_idx].signature) - 1] = '\0';
+                    /* Direct field access */
+                    methods[method_idx].call_count = method->call_count;
+                    methods[method_idx].sample_count = method->sample_count;
+                    methods[method_idx].total_time_ns = method->total_time_ns;
+                    methods[method_idx].min_time_ns = method->min_time_ns;
+                    methods[method_idx].max_time_ns = method->max_time_ns;
+                    methods[method_idx].alloc_bytes = method->alloc_bytes;
+                    methods[method_idx].peak_memory = method->peak_memory;
+                    methods[method_idx].cpu_cycles = method->cpu_cycles;
                     methods[method_idx].last_updated = current_time;
                 }
                 break;
-
-            case COOPER_DATA_MEMORY_SAMPLE:
-                /* Memory sample fields are mapped to cooper_method_metric_data_t:
-                * process_memory -> alloc_bytes
-                * thread_id -> call_count  
-                * thread_memory -> peak_memory
-                */
-                uint64_t thread_id = entry->call_count;
-                uint64_t process_memory = entry->alloc_bytes;
-                uint64_t thread_memory = entry->peak_memory;
+            }
+            
+            case COOPER_DATA_MEMORY_SAMPLE: {
+                /* Clean access to memory data */
+                cooper_memory_data_t *memory = &entry->data.memory;
                 
-                if (thread_id == 0) 
-                {
-                    /* Process memory */
-                    memory_data.process_memory = process_memory;
-                    
+                memory_data.last_updated = current_time;
+
+                if (memory->thread_id == 0) {
+                    /* Process-wide memory */
+                    memory_data.process_memory = memory->process_memory;
                     /* Add to history */
                     if (memory_data.history_count < UI_MAX_HISTORY_POINTS) {
-                        memory_data.memory_history[memory_data.history_count++] = process_memory;
+                        memory_data.memory_history[memory_data.history_count++] = memory->process_memory;
                     } else {
                         /* Shift history */
                         for (int j = 0; j < UI_MAX_HISTORY_POINTS - 1; j++) {
                             memory_data.memory_history[j] = memory_data.memory_history[j + 1];
                         }
-                        memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = process_memory;
+                        memory_data.memory_history[UI_MAX_HISTORY_POINTS - 1] = memory->process_memory;
                     }
-                } 
-                else 
-                {
-                    /* Thread memory */
+                } else {
+                    /* Thread-specific memory */
                     int thread_idx = -1;
                     for (int j = 0; j < memory_data.active_threads; j++) {
-                        if (memory_data.thread_ids[j] == thread_id) {
+                        if (memory_data.thread_ids[j] == memory->thread_id) {
                             thread_idx = j;
                             break;
                         }
@@ -245,31 +237,23 @@ void read_shared_memory_data()
                     
                     if (thread_idx == -1 && memory_data.active_threads < 10) {
                         thread_idx = memory_data.active_threads++;
-                        memory_data.thread_ids[thread_idx] = thread_id;
+                        memory_data.thread_ids[thread_idx] = memory->thread_id;
                     }
-                    
-                    if (thread_idx >= 0)
-                        memory_data.thread_memory[thread_idx] = thread_memory;
-                }
-                memory_data.last_updated = current_time;
-                break;
 
-            case COOPER_DATA_OBJECT_ALLOC:
-                /* Object allocation fields are mapped to cooper_method_metric_data_t:
-                * class_signature -> signature
-                * allocation_count -> call_count
-                * total_bytes -> alloc_bytes
-                * current_instances -> sample_count
-                * min_size -> total_time_ns
-                * max_size -> min_time_ns  
-                * avg_size -> max_time_ns
-                * peak_instances -> peak_memory
-                */
+                    if (thread_idx >= 0) 
+                        memory_data.thread_memory[thread_idx] = memory->thread_memory;
+                }
+                break;
+            }
+            
+            case COOPER_DATA_OBJECT_ALLOC: {
+                /* Clean access to object allocation data */
+                struct cooper_object_alloc_data *alloc = &entry->data.object_alloc;
                 
                 /* Find or add object type */
                 int obj_idx = -1;
                 for (int j = 0; j < object_count; j++) {
-                    if (strcmp(objects[j].class_name, entry->signature) == 0) {
+                    if (strcmp(objects[j].class_name, alloc->class_signature) == 0) {
                         obj_idx = j;
                         break;
                     }
@@ -278,19 +262,28 @@ void read_shared_memory_data()
                 if (obj_idx == -1 && object_count < UI_MAX_DISPLAY_ITEMS)
                     obj_idx = object_count++;
                 
-                if (obj_idx >= 0) {
-                    strncpy(objects[obj_idx].class_name, entry->signature, 
-                        sizeof(objects[obj_idx].class_name) - 1);
-                    objects[obj_idx].allocation_count = entry->call_count;
-                    objects[obj_idx].total_bytes = entry->alloc_bytes;
-                    objects[obj_idx].current_instances = entry->sample_count;
-                    objects[obj_idx].avg_size = entry->max_time_ns;
+                if (obj_idx >= 0) 
+                {
+                    /* Copy class signature to local CLI structure */
+                    strncpy(objects[obj_idx].class_name, alloc->class_signature, 
+                           sizeof(objects[obj_idx].class_name) - 1);
+                    objects[obj_idx].class_name[sizeof(objects[obj_idx].class_name) - 1] = '\0';
+
+                    /* Semantic field names */
+                    objects[obj_idx].allocation_count = alloc->allocation_count;
+                    objects[obj_idx].current_instances = alloc->current_instances;
+                    objects[obj_idx].total_bytes = alloc->total_bytes;
+                    objects[obj_idx].peak_instances = alloc->peak_instances;
+                    objects[obj_idx].min_size = alloc->min_size;
+                    objects[obj_idx].max_size = alloc->max_size;
+                    objects[obj_idx].avg_size = alloc->avg_size;
                     objects[obj_idx].last_updated = current_time;
                 }
                 break;
+            }
         }
 
-        /* IMPORTANT: Mark entry as read so agent can reuse this slot */
+        /* Mark entry as read */
         shm_ctx.status_shm->status[i] = ENTRY_READ;
     }
 }
@@ -318,15 +311,6 @@ void debug_shared_memory()
     
     printf("DEBUG: Status counts - Empty: %d, Ready: %d, Read: %d\n", 
            empty_count, ready_count, read_count);
-    
-    /* Show first few ready entries */
-    for (uint32_t i = 0; i < 5 && i < COOPER_MAX_ENTRIES; i++) {
-        if (shm_ctx.status_shm->status[i] == ENTRY_READY) {
-            cooper_method_metric_data_t *entry = &shm_ctx.data_shm->metrics[i];
-            printf("DEBUG: Ready entry[%u]: type=%d, sig='%s'\n", 
-                   i, entry->data_type, entry->signature);
-        }
-    }
 }
 
 int main() 

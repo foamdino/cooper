@@ -699,39 +699,32 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
     pthread_mutex_unlock(&ctx->samples_lock);
 }
 
-/**
- * Convert internal metrics to shared memory format and export
- */
-static void export_metrics_to_shm(agent_context_t *ctx) 
-{
+static void export_method_to_shm(agent_context_t *ctx) {
     if (!ctx->shm_ctx || !ctx->metrics) 
         return;
     
     pthread_mutex_lock(&ctx->samples_lock);
     
-    for (size_t i = 0; i < ctx->metrics->count; i++) 
-    {
-        if (ctx->metrics->signatures[i] && ctx->metrics->sample_counts[i] > 0) 
-        {
-            cooper_method_metric_data_t metric_data = {0};
+    for (size_t i = 0; i < ctx->metrics->capacity; i++) {
+        if (ctx->metrics->signatures[i] && ctx->metrics->sample_counts[i] > 0) {
+            /* Create clean method data structure */
+            cooper_method_data_t method_data = {0};
             
-            strncpy(metric_data.signature, ctx->metrics->signatures[i], 
-                   COOPER_MAX_SIGNATURE_LEN - 1);
-            metric_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+            strncpy(method_data.signature, ctx->metrics->signatures[i], COOPER_MAX_SIGNATURE_LEN - 1);
+            method_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
             
-            metric_data.call_count = ctx->metrics->call_counts[i];
-            metric_data.sample_count = ctx->metrics->sample_counts[i];
-            metric_data.total_time_ns = ctx->metrics->total_time_ns[i];
-            metric_data.min_time_ns = ctx->metrics->min_time_ns[i];
-            metric_data.max_time_ns = ctx->metrics->max_time_ns[i];
-            metric_data.alloc_bytes = ctx->metrics->alloc_bytes[i];
-            metric_data.peak_memory = ctx->metrics->peak_memory[i];
-            metric_data.cpu_cycles = ctx->metrics->cpu_cycles[i];
-            metric_data.metric_flags = ctx->metrics->metric_flags[i];
-            metric_data.timestamp = time(NULL) - ctx->shm_ctx->data_shm->start_time;
-            metric_data.data_type = COOPER_DATA_METHOD_METRIC;
+            /* Direct field assignment */
+            method_data.call_count = ctx->metrics->call_counts[i];
+            method_data.sample_count = ctx->metrics->sample_counts[i];
+            method_data.total_time_ns = ctx->metrics->total_time_ns[i];
+            method_data.min_time_ns = ctx->metrics->min_time_ns[i];
+            method_data.max_time_ns = ctx->metrics->max_time_ns[i];
+            method_data.alloc_bytes = ctx->metrics->alloc_bytes[i];
+            method_data.peak_memory = ctx->metrics->peak_memory[i];
+            method_data.cpu_cycles = ctx->metrics->cpu_cycles[i];
+            method_data.metric_flags = ctx->metrics->metric_flags[i];
             
-            cooper_shm_write_method_metric(ctx->shm_ctx, &metric_data);
+            cooper_shm_write_method_data(ctx->shm_ctx, &method_data);
         }
     }
     
@@ -741,48 +734,41 @@ static void export_metrics_to_shm(agent_context_t *ctx)
 /**
  * Export memory samples to shared memory
  */
-static void export_memory_to_shm(agent_context_t *ctx) 
-{
+static void export_memory_to_shm(agent_context_t *ctx) {
     if (!ctx->shm_ctx || !ctx->app_memory_metrics) 
         return;
     
     pthread_mutex_lock(&ctx->app_memory_metrics->lock);
     
     /* Export latest process memory sample */
-    if (ctx->app_memory_metrics->sample_count > 0) 
-    {
+    if (ctx->app_memory_metrics->sample_count > 0) {
         size_t latest_idx = (ctx->app_memory_metrics->sample_count - 1) % MAX_MEMORY_SAMPLES;
         
-        cooper_memory_sample_data_t sample = {0};
-        sample.process_memory = ctx->app_memory_metrics->process_memory_sample[latest_idx];
-        sample.thread_id = 0; /* Process-wide */
-        sample.thread_memory = 0;
-        sample.timestamp = ctx->app_memory_metrics->timestamps[latest_idx];
-        sample.data_type = COOPER_DATA_MEMORY_SAMPLE;
+        /* Clean memory data structure */
+        cooper_memory_data_t memory_data = {
+            .process_memory = ctx->app_memory_metrics->process_memory_sample[latest_idx],
+            .thread_id = 0, /* Process-wide */
+            .thread_memory = 0
+        };
         
-        cooper_shm_write_memory_sample(ctx->shm_ctx, &sample);
+        cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
     }
 
-    if (ctx->thread_mem_head != NULL)
-    {
+    /* Export thread memory samples */
+    if (ctx->thread_mem_head != NULL) {
         thread_memory_metrics_t *tm = ctx->thread_mem_head;
-        while(tm)
-        {
-            if (tm->sample_count > 0)
-            {
+        while(tm) {
+            if (tm->sample_count > 0) {
                 size_t latest_idx = (tm->sample_count - 1) % MAX_MEMORY_SAMPLES;
-            
-                cooper_memory_sample_data_t sample = {0};
-                sample.process_memory = 0; /* Not applicable for thread-specific samples */
-                sample.thread_id = tm->thread_id;
-                sample.thread_memory = tm->memory_samples[latest_idx];
-                sample.timestamp = tm->timestamps[latest_idx];
-                sample.data_type = COOPER_DATA_MEMORY_SAMPLE;
                 
-                cooper_shm_write_memory_sample(ctx->shm_ctx, &sample);
+                cooper_memory_data_t memory_data = {
+                    .process_memory = 0, /* Not applicable for thread-specific */
+                    .thread_id = tm->thread_id,
+                    .thread_memory = tm->memory_samples[latest_idx]
+                };
+                
+                cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
             }
-
-            /* advance through linked list */
             tm = tm->next;
         }
     }
@@ -793,40 +779,32 @@ static void export_memory_to_shm(agent_context_t *ctx)
 /**
  * Export object allocation metrics to shared memory
  */
-static void export_object_alloc_to_shm(agent_context_t *ctx) 
-{
+static void export_object_alloc_to_shm(agent_context_t *ctx) {
     if (!ctx->shm_ctx || !ctx->object_metrics) 
         return;
     
     pthread_mutex_lock(&ctx->samples_lock);
     
-    /* Export each object type's allocation metrics */
-    for (size_t i = 0; i < ctx->object_metrics->count; i++) 
-    {
+    for (size_t i = 0; i < ctx->object_metrics->count; i++) {
         if (ctx->object_metrics->class_signatures[i] && 
             ctx->object_metrics->allocation_counts[i] > 0) {
             
-            cooper_method_metric_data_t alloc_data = {0};
+            /* Clean object allocation data */
+            cooper_object_alloc_data_t alloc_data = {0};
             
-            /* Use signature field for class signature */
-            strncpy(alloc_data.signature, ctx->object_metrics->class_signatures[i], 
-                   COOPER_MAX_SIGNATURE_LEN - 1);
-            alloc_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+            strncpy(alloc_data.class_signature, ctx->object_metrics->class_signatures[i], COOPER_MAX_SIGNATURE_LEN - 1);
+            alloc_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
             
-            /* Map object allocation fields to metric structure */
-            alloc_data.call_count = ctx->object_metrics->allocation_counts[i];
-            alloc_data.sample_count = ctx->object_metrics->current_instances[i];
-            alloc_data.total_time_ns = ctx->object_metrics->min_size[i];
-            alloc_data.min_time_ns = ctx->object_metrics->max_size[i];
-            alloc_data.max_time_ns = ctx->object_metrics->avg_size[i];
-            alloc_data.alloc_bytes = ctx->object_metrics->total_bytes[i];
-            alloc_data.peak_memory = ctx->object_metrics->peak_instances[i];
-            alloc_data.cpu_cycles = 0; /* Not applicable for object allocations */
-            alloc_data.metric_flags = 0; /* Not applicable */
-            alloc_data.timestamp = time(NULL) - ctx->shm_ctx->data_shm->start_time;
-            alloc_data.data_type = COOPER_DATA_OBJECT_ALLOC;
+            /* Semantic field names */
+            alloc_data.allocation_count = ctx->object_metrics->allocation_counts[i];
+            alloc_data.current_instances = ctx->object_metrics->current_instances[i];
+            alloc_data.total_bytes = ctx->object_metrics->total_bytes[i];
+            alloc_data.peak_instances = ctx->object_metrics->peak_instances[i];
+            alloc_data.min_size = ctx->object_metrics->min_size[i];
+            alloc_data.max_size = ctx->object_metrics->max_size[i];
+            alloc_data.avg_size = ctx->object_metrics->avg_size[i];
             
-            cooper_shm_write_method_metric(ctx->shm_ctx, &alloc_data);
+            cooper_shm_write_object_alloc_data(ctx->shm_ctx, &alloc_data);
         }
     }
     
@@ -854,7 +832,7 @@ void *shm_export_thread_func(void *arg) {
         cooper_shm_cleanup_read_entries(ctx->shm_ctx);
         
         /* Export current metrics */
-        export_metrics_to_shm(ctx);
+        export_method_to_shm(ctx);
         
         /* Export memory samples */
         export_memory_to_shm(ctx);

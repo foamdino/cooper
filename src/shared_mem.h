@@ -21,6 +21,18 @@
 #define COOPER_MAX_ENTRIES 1024
 #define COOPER_MAX_SIGNATURE_LEN 512
 
+/* Calculate maximum data size for fixed union sizing */
+#define COOPER_METHOD_DATA_SZ sizeof(struct cooper_method_data)
+#define COOPER_MEMORY_DATA_SZ sizeof(struct cooper_memory_data)
+#define COOPER_OBJECT_ALLOC_DATA_SZ sizeof(struct cooper_object_alloc_data)
+
+#define COOPER_MAX_DATA_SZ \
+    ((COOPER_METHOD_DATA_SZ > COOPER_MEMORY_DATA_SZ) ? \
+     ((COOPER_METHOD_DATA_SZ > COOPER_OBJECT_ALLOC_DATA_SZ) ? \
+      COOPER_METHOD_DATA_SZ : COOPER_OBJECT_ALLOC_DATA_SZ) : \
+     ((COOPER_MEMORY_DATA_SZ > COOPER_OBJECT_ALLOC_DATA_SZ) ? \
+      COOPER_MEMORY_DATA_SZ : COOPER_OBJECT_ALLOC_DATA_SZ))
+
 typedef enum 
 {
     ENTRY_EMPTY = 0,
@@ -35,14 +47,16 @@ typedef enum
     COOPER_DATA_OBJECT_ALLOC = 3
 } cooper_data_type_e;
 
-typedef struct cooper_method_metric_data cooper_method_metric_data_t;
-typedef struct cooper_memory_sample_data cooper_memory_sample_data_t;
+
+typedef struct cooper_method_data cooper_method_data_t;
+typedef struct cooper_object_alloc_data cooper_object_alloc_data_t;
+typedef struct cooper_memory_data cooper_memory_data_t;
+typedef struct cooper_sample_entry cooper_sample_entry_t;
 typedef struct cooper_data_shm cooper_data_shm_t;
 typedef struct cooper_status_shm cooper_status_shm_t;
 typedef struct cooper_shm_context cooper_shm_context_t;
 
-/* Method metrics data for shared memory */
-struct cooper_method_metric_data 
+struct cooper_method_data 
 {
     char signature[COOPER_MAX_SIGNATURE_LEN];
     uint64_t call_count;
@@ -54,18 +68,39 @@ struct cooper_method_metric_data
     uint64_t peak_memory;
     uint64_t cpu_cycles;
     uint32_t metric_flags;
-    uint64_t timestamp;
-    cooper_data_type_e data_type;
 };
 
-/* Memory sample data */
-struct cooper_memory_sample_data 
+struct cooper_object_alloc_data 
+{
+    char class_signature[COOPER_MAX_SIGNATURE_LEN];
+    uint64_t allocation_count;
+    uint64_t current_instances;
+    uint64_t total_bytes;
+    uint64_t peak_instances;
+    uint64_t min_size;
+    uint64_t max_size;
+    uint64_t avg_size;
+};
+
+struct cooper_memory_data 
 {
     uint64_t process_memory;
     uint64_t thread_id;
     uint64_t thread_memory;
+};
+
+struct cooper_sample_entry
+{
+    cooper_data_type_e type;
     uint64_t timestamp;
-    cooper_data_type_e data_type;
+    union
+    {
+        cooper_method_data_t method;
+        cooper_memory_data_t memory;
+        cooper_object_alloc_data_t object_alloc;
+        char padding[COOPER_MAX_DATA_SZ];
+    } data;
+    
 };
 
 /* Agent writes here, CLI reads here */
@@ -75,7 +110,7 @@ struct cooper_data_shm
     uint32_t max_entries;
     uint64_t start_time;
     uint32_t next_write_index;  /* Agent maintains this */
-    cooper_method_metric_data_t metrics[COOPER_MAX_ENTRIES];
+    cooper_sample_entry_t entries[COOPER_MAX_ENTRIES];
 };
 
 /* CLI writes here, Agent reads here */
@@ -98,8 +133,10 @@ struct cooper_shm_context
 /* Function declarations */
 int cooper_shm_init_agent(cooper_shm_context_t *ctx);
 int cooper_shm_cleanup_agent(cooper_shm_context_t *ctx);
-int cooper_shm_write_method_metric(cooper_shm_context_t *ctx, const cooper_method_metric_data_t *metric);
-int cooper_shm_write_memory_sample(cooper_shm_context_t *ctx, const cooper_memory_sample_data_t *sample);
+int cooper_shm_write_method_data(cooper_shm_context_t *ctx, const cooper_method_data_t *data);
+int cooper_shm_write_memory_data(cooper_shm_context_t *ctx, const cooper_memory_data_t *data);
+int cooper_shm_write_object_alloc_data(cooper_shm_context_t *ctx, const cooper_object_alloc_data_t *data);
+
 void cooper_shm_cleanup_read_entries(cooper_shm_context_t *ctx);
 
 #endif /* SHARED_MEM_H */

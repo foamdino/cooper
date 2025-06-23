@@ -35,9 +35,14 @@ struct tui_method_display
 {
     char signature[UI_MAX_SIGNATURE_LEN];
     uint64_t call_count;
+    uint64_t sample_count;
     uint64_t total_time_ns;
+    uint64_t min_time_ns;
+    uint64_t max_time_ns;
     uint64_t avg_time_ns;
     uint64_t alloc_bytes;
+    uint64_t peak_memory;
+    uint64_t cpu_cycles;
     time_t last_updated;
 };
 
@@ -47,6 +52,9 @@ struct tui_object_display
     uint64_t allocation_count;
     uint64_t total_bytes;
     uint64_t current_instances;
+    uint64_t peak_instances;
+    uint64_t min_size;
+    uint64_t max_size;
     uint64_t avg_size;
     time_t last_updated;
 };
