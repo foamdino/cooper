@@ -115,9 +115,6 @@ void *log_thread_func(void *arg)
     log_q_t *queue = params->queue;
     FILE *log_file = params->log_file;
 
-    /* We don't need the params structure anymore */
-    free(params);
-
     while (1)
     {
         pthread_mutex_lock(&queue->lock);
@@ -195,7 +192,7 @@ int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file)
         log_file = stdout;
     
     /* Create thread parameters */
-    log_thread_params_t *params = malloc(sizeof(log_thread_params_t));
+    log_thread_params_t *params = arena_alloc(arena, sizeof(log_thread_params_t));
     if (!params) 
     {
         fprintf(stderr, "ERROR: Failed to allocate memory for log thread parameters\n");
@@ -224,7 +221,6 @@ int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file)
     return 0;
 
 error:
-    if (params) free(params);
     if (log_file != stdout && log_file != stderr)
         fclose(log_file);
 
