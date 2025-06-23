@@ -160,9 +160,7 @@ static int class_cache_key_compare(const void *key1, const void *key2)
 
 /* Get cached class signature or fetch if not cached */
 static const char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
-{
-    static arena_t *cached_cache_arena = NULL;
-    
+{   
     if (!output_buffer || buffer_size == 0 || !jvmti_env || !klass) 
         return NULL;
     
@@ -302,7 +300,7 @@ static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
         }
 
         jboolean is_same_thread = (*jni)->IsSameObject(jni, thread, current_thread);
-
+        (*jni)->DeleteLocalRef(jni, current_thread);
         if (is_same_thread)
         {
             result = syscall(SYS_gettid);
