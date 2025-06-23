@@ -286,6 +286,9 @@ struct agent_context
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
 };
 
+agent_context_t *init_cooper(char *options);
+int cooper_set_callbacks(agent_context_t *ctx);
+
 /* jmvti callback functions */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
