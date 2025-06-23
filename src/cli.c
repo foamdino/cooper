@@ -32,34 +32,6 @@ typedef struct {
     int status_fd;
 } cli_shm_context_t;
 
-typedef struct {
-    char signature[COOPER_MAX_SIGNATURE_LEN];
-    uint64_t call_count;
-    uint64_t total_time_ns;
-    uint64_t avg_time_ns;
-    uint64_t alloc_bytes;
-    time_t last_updated;
-} method_display_t;
-
-typedef struct {
-    char class_name[COOPER_MAX_SIGNATURE_LEN];
-    uint64_t allocation_count;
-    uint64_t total_bytes;
-    uint64_t current_instances;
-    uint64_t avg_size;
-    time_t last_updated;
-} object_display_t;
-
-typedef struct {
-    uint64_t process_memory;
-    uint64_t thread_memory[10]; /* Track up to 10 threads */
-    uint64_t thread_ids[10];
-    int active_threads;
-    uint64_t memory_history[UI_MAX_HISTORY_POINTS];
-    int history_count;
-    time_t last_updated;
-} memory_display_t;
-
 static struct termios orig_termios;
 static int term_width = 80;
 static int term_height = 24;

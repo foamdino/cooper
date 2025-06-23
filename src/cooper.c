@@ -163,38 +163,41 @@ static const char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass,
 {
     static arena_t *cached_cache_arena = NULL;
     
-    if (!output_buffer || buffer_size == 0) return NULL;
+    if (!output_buffer || buffer_size == 0 || !jvmti_env || !klass) 
+        return NULL;
     
     /* Cache arena lookup */
     if (!cached_cache_arena) {
-        cached_cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
-        if (!cached_cache_arena) return NULL;
+        if (global_ctx && global_ctx->arena_head)
+            cached_cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
     }
 
-    /* Get thread-local class cache */
-    cache_config_t class_config = {
-        .max_entries = 128,
-        .key_size = sizeof(struct class_cache_key),
-        .value_size = sizeof(struct class_cache_value),
-        .key_compare = class_cache_key_compare,
-        .key_copy = NULL,
-        .value_copy = NULL,
-        .entry_init = NULL,
-        .name = "class_signature_cache"
-    };
-
-    cache_t *class_cache = cache_tls_get("class_sig_cache", cached_cache_arena, &class_config);
-    if (!class_cache) return NULL;
-
-    /* Try cache lookup first */
+    cache_t *class_cache = NULL;
     struct class_cache_key cache_key = { .class_ref = klass };
     struct class_cache_value cache_value;
-    
-    if (cache_get(class_cache, &cache_key, &cache_value) == 0 && cache_value.valid) {
-        /* Cache hit - copy to output buffer */
-        strncpy(output_buffer, cache_value.class_signature, buffer_size - 1);
-        output_buffer[buffer_size - 1] = '\0';
-        return output_buffer;
+
+    if (cached_cache_arena)
+    {
+        /* Get thread-local class cache */
+        cache_config_t class_config = {
+            .max_entries = 128,
+            .key_size = sizeof(struct class_cache_key),
+            .value_size = sizeof(struct class_cache_value),
+            .key_compare = class_cache_key_compare,
+            .key_copy = NULL,
+            .value_copy = NULL,
+            .entry_init = NULL,
+            .name = "class_signature_cache"
+        };
+
+        class_cache = cache_tls_get("class_sig_cache", cached_cache_arena, &class_config);
+        
+        if (cache_get(class_cache, &cache_key, &cache_value) == 0 && cache_value.valid) {
+            /* Cache hit - copy to output buffer */
+            strncpy(output_buffer, cache_value.class_signature, buffer_size - 1);
+            output_buffer[buffer_size - 1] = '\0';
+            return output_buffer;
+        }
     }
 
     /* Cache miss - fetch from JVMTI */
@@ -204,12 +207,15 @@ static const char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass,
         return NULL;
     }
 
-    /* Cache the result */
-    memset(&cache_value, 0, sizeof(cache_value));
-    strncpy(cache_value.class_signature, class_sig, sizeof(cache_value.class_signature) - 1);
-    cache_value.valid = 1;
-    
-    cache_put(class_cache, &cache_key, &cache_value);
+    /* Cache the result  if a cache is available */
+    if (class_cache)
+    {
+        memset(&cache_value, 0, sizeof(cache_value));
+        strncpy(cache_value.class_signature, class_sig, sizeof(cache_value.class_signature) - 1);
+        cache_value.valid = 1;
+        
+        cache_put(class_cache, &cache_key, &cache_value);
+    }
 
     /* Copy to output buffer */
     strncpy(output_buffer, class_sig, buffer_size - 1);
