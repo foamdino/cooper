@@ -2468,13 +2468,9 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
         if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
         {
             LOG_ERROR("Failed to start shared memory export thread");
-            cooper_shm_cleanup_agent(global_ctx->shm_ctx);
-            free(global_ctx->shm_ctx);
-            global_ctx->shm_ctx = NULL;
-            global_ctx->shm_export_running = 0;
-        } else {
-            LOG_INFO("Shared memory export thread started");
+            exit(1);
         }
+        LOG_INFO("Shared memory export thread started");
     }
 
     /* Init the memory sampling */
