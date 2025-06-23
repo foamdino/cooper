@@ -2696,7 +2696,14 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
     /* Initialize shared memory */
-    global_ctx->shm_ctx = malloc(sizeof(cooper_shm_context_t));
+    arena_t *config_arena = find_arena(global_ctx->arena_head, CONFIG_ARENA_NAME);
+    if (!config_arena) 
+    {
+        LOG_ERROR("Config arena not found\n");
+        return JNI_ERR;
+    }
+
+    global_ctx->shm_ctx = arena_alloc(config_arena, sizeof(cooper_shm_context_t));
     if (!global_ctx->shm_ctx) 
     {
         LOG_ERROR("Failed to allocate shared memory context");
@@ -2850,7 +2857,6 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
                 LOG_WARN("Shared memory export thread did not terminate cleanly");
             
             cooper_shm_cleanup_agent(global_ctx->shm_ctx);
-            free(global_ctx->shm_ctx);
             global_ctx->shm_ctx = NULL;
         }
 
