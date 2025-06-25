@@ -186,7 +186,6 @@ void tui_draw_header(tui_context_t *ctx)
 
 void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     append_formatted("%s\n", title);
     append_to_buffer("\n");
     int max_name_len = 25;
@@ -210,8 +209,6 @@ void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], ui
 
 void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width)
 {
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-    char line[256];
     append_to_buffer("Process Memory History (MB)\n");
     if (memory_data->history_count < 2) 
     {
@@ -268,7 +265,6 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
 
 void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width)
 {
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     append_formatted("%s\n", title);
     append_to_buffer("\n");
     if (count == 0) 
@@ -352,10 +348,7 @@ void tui_draw_overview(tui_context_t *ctx)
 }
 
 void tui_draw_methods_view(tui_context_t *ctx)
-{    
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-    char line[256];
-    
+{   
     if (ctx->method_count == 0) 
     {
         append_to_buffer("No method data available\n");
@@ -381,9 +374,7 @@ void tui_draw_methods_view(tui_context_t *ctx)
 
 void tui_draw_memory_view(tui_context_t *ctx)
 {
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
     tui_draw_memory_history(ctx, ctx->memory_data, ctx->terminal.width);
-    char line[256];
     append_to_buffer("\n");
 
     if (ctx->memory_data->active_threads > 0) 
@@ -392,7 +383,7 @@ void tui_draw_memory_view(tui_context_t *ctx)
         for (int i = 0; i < ctx->memory_data->active_threads; i++) 
         {
             
-            append_formatted(line, sizeof(line), term->width, "Thread %lu: %lu MB\n", 
+            append_formatted("Thread %lu: %lu MB\n", 
                 (unsigned long)ctx->memory_data->thread_ids[i],
                 (unsigned long)(ctx->memory_data->thread_memory[i] / 1024 / 1024));
         }
@@ -401,8 +392,6 @@ void tui_draw_memory_view(tui_context_t *ctx)
 
 void tui_draw_objects_view(tui_context_t *ctx)
 {
-    tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-    char line[256];
     if (ctx->object_count == 0) 
     {
         append_to_buffer("No object allocation data available\n");
