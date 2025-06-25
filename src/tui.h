@@ -178,14 +178,14 @@ void tui_build_line(char *buffer, size_t buffer_size, int width, const char *for
  * @param max_val Maximum value for scaling
  * @param term_width Terminal width
  */
-void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+void tui_draw_bar_chart(char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width);
 
 /**
  * Draw memory history chart
  * @param memory_data Memory data structure
  * @param term_width Terminal width
  */
-void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width);
+void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width);
 
 /**
  * Draw a histogram
@@ -194,6 +194,6 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
  * @param count Number of values
  * @param term_width Terminal width
  */
-void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width);
+void tui_draw_histogram(char *title, uint64_t values[], int count, int term_width);
 
 #endif /* TUI_H */

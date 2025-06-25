@@ -55,57 +55,6 @@ static void flush_frame_buffer(void)
     }
 }
 
-// /* Modify the printf functions to track lines */
-// void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...) 
-// {
-//     if (terminal->lines_drawn >= terminal->height - 1) 
-//         return; /* Don't exceed terminal height */
-    
-//     char line_buffer[1024]; /* Adjust size as needed */
-//     va_list args;
-//     va_start(args, format);
-//     vsnprintf(line_buffer, sizeof(line_buffer), format, args);
-//     va_end(args);
-    
-//     printf("%s", line_buffer);
-    
-//     /* Count newlines in the format string */
-//     for (const char *p = format; *p; p++) {
-//         if (*p == '\n') 
-//             terminal->lines_drawn++;
-//     }
-// }
-
-// void tui_build_line(char *buffer, size_t buffer_size, int width, const char *format, ...)
-// {
-//     char content[512]; /* Temporary buffer for formatted content */
-//     va_list args;
-//     int content_len;
-//     int padding_needed;
-    
-//     /* Format the content string */
-//     va_start(args, format);
-//     content_len = vsnprintf(content, sizeof(content), format, args);
-//     va_end(args);
-    
-//     /* Handle formatting errors or truncation */
-//     if (content_len < 0) 
-//     {
-//         content[0] = '\0';
-//         content_len = 0;
-//     } 
-//     else if (content_len >= (int)sizeof(content)) 
-//     {
-//         content_len = sizeof(content) - 1;
-//     }
-    
-//     padding_needed = width - content_len - 2; /* Account for │ + │ */
-//     if (padding_needed < 0) 
-//         padding_needed = 0;
-    
-//     snprintf(buffer, buffer_size, "│%s%*s│\n", content, padding_needed, "");
-// }
-
 int tui_init(void)
 {
     /* Initialize any UI library state if needed */
@@ -128,46 +77,6 @@ void tui_clear_screen(void)
     append_to_buffer("\033[2J\033[H");
 }
 
-// /* Function to clear screen and reset line counter */
-// void tui_clear_screen_safe(tui_terminal_info_t *terminal)
-// {
-//     printf("\033[2J\033[H");
-//     terminal->lines_drawn = 0; /* Reset line counter */
-// }
-
-// void tui_draw_header(tui_context_t *ctx)
-// {
-//     tui_terminal_info_t *term = (tui_terminal_info_t*)&ctx->terminal;
-//     char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
-//     char title[256];
-//     char line[256];
-//     snprintf(title, sizeof(title), " Cooper Monitor - %s ", view_names[ctx->current_view]);
-//     int title_len = strlen(title);
-//     int padding = (ctx->terminal.width - title_len) / 2;
-
-//     tui_safe_print(term, "┌");
-//     for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
-//     tui_safe_print(term, "┐\n");
-
-//     tui_safe_print(term, "│");
-//     for (int i = 0; i < padding; i++) tui_safe_print(term," ");
-//     tui_safe_print(term, "%s", title);
-//     for (int i = padding + title_len; i < ctx->terminal.width -2; i++) tui_safe_print(term, " ");
-//     tui_safe_print(term, "│\n");
-
-//     tui_safe_print(term, "├");
-//     for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
-//     tui_safe_print(term, "┤\n");
-
-//     tui_build_line(line, sizeof(line), ctx->terminal.width, " Keys: [1-4] Switch views  [q] Quit");
-
-//     tui_safe_print(term, "%s", line);
-
-//     tui_safe_print(term, "├");
-//     for (int i = 0; i < ctx->terminal.width - 2; i++) tui_safe_print(term, "─");
-//     tui_safe_print(term, "┤\n");
-// }
-
 void tui_draw_header(tui_context_t *ctx) 
 {
     char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
@@ -184,7 +93,7 @@ void tui_draw_header(tui_context_t *ctx)
     append_to_buffer("Keys: [1-4] Switch views  [q] Quit\n\n");
 }
 
-void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width)
+void tui_draw_bar_chart(char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
     append_formatted("%s\n", title);
     append_to_buffer("\n");
@@ -207,7 +116,7 @@ void tui_draw_bar_chart(tui_context_t *ctx, char *title, const char *items[], ui
     }
 }
 
-void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *memory_data, int term_width)
+void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width)
 {
     append_to_buffer("Process Memory History (MB)\n");
     if (memory_data->history_count < 2) 
@@ -263,7 +172,7 @@ void tui_draw_memory_history(tui_context_t *ctx, const tui_memory_display_t *mem
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void tui_draw_histogram(tui_context_t *ctx, char *title, uint64_t values[], int count, int term_width)
+void tui_draw_histogram(char *title, uint64_t values[], int count, int term_width)
 {
     append_formatted("%s\n", title);
     append_to_buffer("\n");
@@ -368,13 +277,13 @@ void tui_draw_methods_view(tui_context_t *ctx)
             max_time = avg_times[i];
     }
 
-    tui_draw_bar_chart(ctx, "Method Execution Times (μs)", method_names, avg_times, 
+    tui_draw_bar_chart("Method Execution Times (μs)", method_names, avg_times, 
                     ctx->method_count, max_time, ctx->terminal.width);
 }
 
 void tui_draw_memory_view(tui_context_t *ctx)
 {
-    tui_draw_memory_history(ctx, ctx->memory_data, ctx->terminal.width);
+    tui_draw_memory_history(ctx->memory_data, ctx->terminal.width);
     append_to_buffer("\n");
 
     if (ctx->memory_data->active_threads > 0) 
@@ -411,7 +320,7 @@ void tui_draw_objects_view(tui_context_t *ctx)
         if (bytes_allocated[i] > max_bytes) max_bytes = bytes_allocated[i];
     }
 
-    tui_draw_bar_chart(ctx, "Object Allocations (bytes)", object_names, bytes_allocated, 
+    tui_draw_bar_chart("Object Allocations (bytes)", object_names, bytes_allocated, 
                     ctx->object_count, max_bytes, ctx->terminal.width);
 }
 
