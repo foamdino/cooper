@@ -22,20 +22,22 @@
 
 #define REFRESH_INTERVAL 250000  /* 250ms */
 
+typedef struct cli_shm_context cli_shm_context_t;
+
 /* Global UI loader */
 static tui_loader_t *loader = NULL;
 
-typedef struct {
+struct cli_shm_context
+{
     cooper_data_shm_t *data_shm;
     cooper_status_shm_t *status_shm;
     int data_fd;
     int status_fd;
-} cli_shm_context_t;
+};
 
 static struct termios orig_termios;
 static int term_width = 80;
 static int term_height = 24;
-static int lines_drawn = 0;
 static tui_view_mode_e current_view = UI_VIEW_OVERVIEW;
 static cli_shm_context_t shm_ctx = {0};
 
@@ -86,11 +88,6 @@ void handle_sigint(int sig)
     disable_raw_mode();
     printf("\033[2J\033[H");
     exit(0);
-}
-
-void clear_screen() 
-{
-    printf("\033[2J\033[H");
 }
 
 int kbhit() {
@@ -373,7 +370,7 @@ int main()
             .method_count = method_count,
             .object_count = object_count,
             .current_view = current_view,
-            .terminal = { .width = term_width, .height = term_height, lines_drawn = 0 }
+            .terminal = { .width = term_width, .height = term_height, .lines_drawn = 0 }
         };
         
         /* Draw using the loaded UI library */
@@ -388,6 +385,5 @@ cleanup_exit:
         tui_loader_cleanup(loader);
 
     cleanup_cli_shm();
-    clear_screen();
     return 0;
 }
