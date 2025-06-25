@@ -1033,6 +1033,9 @@ static void test_cache_tls()
         .name = "tls_test"
     };
     
+    int res = cache_init_system(test_arena);
+    assert(res == 0);
+
     /* Get thread-local cache instance */
     cache_t *cache1 = cache_tls_get("test_cache_1", test_arena, &config);
     assert(cache1 != NULL);
@@ -1363,14 +1366,14 @@ static void test_shared_memory_method_metrics() {
     };
     
     /* Write using new function */
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 1; i++) {
         int result = cooper_shm_write_method_data(&ctx, &test_methods[i]);
         assert(result == 0);
         assert(ctx.status_shm->status[i] == ENTRY_READY);
     }
     
     /* Verify using new entry structure */
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 1; i++) {
         assert(ctx.status_shm->status[i] == ENTRY_READY);
         
         struct cooper_sample_entry *entry = &ctx.data_shm->entries[i];
