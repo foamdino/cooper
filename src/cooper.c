@@ -706,7 +706,7 @@ static void export_method_to_shm(agent_context_t *ctx) {
     pthread_mutex_lock(&ctx->samples_lock);
     
     for (size_t i = 0; i < ctx->metrics->capacity; i++) {
-        if (ctx->metrics->signatures[i] && ctx->metrics->sample_counts[i] > 0) {
+        if (ctx->metrics->signatures[i]) {
             /* Create clean method data structure */
             cooper_method_data_t method_data = {0};
             

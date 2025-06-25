@@ -14,13 +14,13 @@
 static char frame_buffer[4096];
 static size_t buffer_pos = 0;
 
-static void reset_frame_buffer(void)
+static void tui_reset_frame_buffer(void)
 {
     buffer_pos = 0;
 }
 
 /* Flush buffer to terminal in single write */
-static void flush_frame_buffer(void) 
+static void tui_flush_frame_buffer(void) 
 {
     if (buffer_pos > 0) 
     {
@@ -46,7 +46,7 @@ char* tui_get_version(void)
 }
 
 /* Append string to frame buffer with bounds checking */
-static void append_to_buffer(const char* str) 
+static void tui_append_to_buffer(const char* str) 
 {
     size_t len = strlen(str);
     size_t remaining = sizeof(frame_buffer) - buffer_pos - 1; /* Reserve null terminator */
@@ -59,7 +59,7 @@ static void append_to_buffer(const char* str)
 }
 
 /* Append formatted string to buffer */
-static void append_formatted(const char* format, ...) 
+static void tui_append_formatted(const char* format, ...) 
 {
     char temp_buffer[512];
     va_list args;
@@ -68,23 +68,23 @@ static void append_formatted(const char* format, ...)
     va_end(args);
     
     if (len > 0 && len < (int)sizeof(temp_buffer))
-        append_to_buffer(temp_buffer);
+        tui_append_to_buffer(temp_buffer);
 }
 
 /* Center text and append to buffer with padding */
-static void append_centered(const char* text, int width) 
+static void tui_append_centered(const char* text, int width) 
 {
     int text_len = strlen(text);
     int padding_left = (width - text_len) / 2;
     int padding_right = width - text_len - padding_left;
     
-    append_formatted("%*s%s%*s", padding_left, "", text, padding_right, "");
+    tui_append_formatted("%*s%s%*s", padding_left, "", text, padding_right, "");
 }
 
 void tui_clear_screen(void)
 {
-    reset_frame_buffer();
-    append_to_buffer("\033[2J\033[H");
+    tui_reset_frame_buffer();
+    tui_append_to_buffer("\033[2J\033[H");
 }
 
 void tui_draw_header(tui_context_t *ctx) 
@@ -94,23 +94,23 @@ void tui_draw_header(tui_context_t *ctx)
     
     /* Build the title string */
     snprintf(title, sizeof(title), "Cooper Monitor - %s", view_names[ctx->current_view]);
-    append_centered(title, ctx->terminal.width);
-    append_to_buffer("\n");
+    tui_append_centered(title, ctx->terminal.width);
+    tui_append_to_buffer("\n");
     
     /* Separator line */
     for (int i = 0; i < ctx->terminal.width; i++) 
     {
-        append_to_buffer("─");
+        tui_append_to_buffer("─");
     }
-    append_to_buffer("\n");
+    tui_append_to_buffer("\n");
     
-    append_to_buffer("Keys: [1-4] Switch views  [q] Quit\n\n");
+    tui_append_to_buffer("Keys: [1-4] Switch views  [q] Quit\n\n");
 }
 
 void tui_draw_bar_chart(char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width)
 {
-    append_formatted("%s\n", title);
-    append_to_buffer("\n");
+    tui_append_formatted("%s\n", title);
+    tui_append_to_buffer("\n");
     int max_name_len = 25;
     int bar_width = term_width - max_name_len - 15; /* Leave space for value and borders */
 
@@ -118,24 +118,24 @@ void tui_draw_bar_chart(char *title, const char *items[], uint64_t values[], int
 
     for (int i = 0; i < count && i < term_width - 10; i++) 
     {
-        append_formatted("%-*.*s", max_name_len, max_name_len, items[i]);
+        tui_append_formatted("%-*.*s", max_name_len, max_name_len, items[i]);
         
         int bar_len = max_val > 0 ? (values[i] * bar_width) / max_val : 0;
         if (bar_len > bar_width) bar_len = bar_width;
         
-        append_to_buffer("[");
-        for (int j = 0; j < bar_len; j++) append_to_buffer("█");
-        for (int j = bar_len; j < bar_width; j++) append_to_buffer(" ");
-        append_formatted("] %8lu\n", (unsigned long)values[i]);
+        tui_append_to_buffer("[");
+        for (int j = 0; j < bar_len; j++) tui_append_to_buffer("█");
+        for (int j = bar_len; j < bar_width; j++) tui_append_to_buffer(" ");
+        tui_append_formatted("] %8lu\n", (unsigned long)values[i]);
     }
 }
 
 void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width)
 {
-    append_to_buffer("Process Memory History (MB)\n");
+    tui_append_to_buffer("Process Memory History (MB)\n");
     if (memory_data->history_count < 2) 
     {
-        append_to_buffer("Collecting data...\n");
+        tui_append_to_buffer("Collecting data...\n");
         return;
     }
 
@@ -154,33 +154,20 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
 
     /* Draw the chart from top to bottom */
     for (int row = 0; row < chart_height; row++) 
-    {
-        char chart_line[256];
-    
-        /* Initialize with just a space */
-        chart_line[0] = '\0';  /* Null terminate for strcat */
-        strcat(chart_line, " ");
-        
+    {   
         uint64_t threshold = max_mem - ((max_mem - min_mem) * row) / chart_height;
         
-        for (int col = 0; col < chart_width; col++) {
-            if (col < memory_data->history_count) {
-                if (memory_data->memory_history[col] >= threshold) {
-                    strcat(chart_line, "█");
-                } else {
-                    strcat(chart_line, " ");
-                }
+        for (int col = 0; col < memory_data->history_count && col < chart_width; col++) {
+            if (memory_data->memory_history[col] >= threshold) {
+                tui_append_to_buffer("█");
             } else {
-                /* Fill remaining space with spaces */
-                strcat(chart_line, " ");
+                tui_append_to_buffer(" ");
             }
         }
-        
-        /* Use "%s" format and pass chart_line as argument */
-        append_formatted("%s", chart_line);
+        tui_append_to_buffer("\n");
     }
 
-    append_formatted("Min: %lu MB  Max: %lu MB  Current: %lu MB\n", 
+    tui_append_formatted("\nMin: %lu MB  Max: %lu MB  Current: %lu MB\n", 
         (unsigned long)(min_mem / 1024 / 1024),
         (unsigned long)(max_mem / 1024 / 1024),
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
@@ -188,11 +175,11 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
 
 void tui_draw_histogram(char *title, uint64_t values[], int count, int term_width)
 {
-    append_formatted("%s\n", title);
-    append_to_buffer("\n");
+    tui_append_formatted("%s\n", title);
+    tui_append_to_buffer("\n");
     if (count == 0) 
     {
-        append_to_buffer("No data available\n");
+        tui_append_to_buffer("No data available\n");
         return;
     }
 
@@ -207,7 +194,7 @@ void tui_draw_histogram(char *title, uint64_t values[], int count, int term_widt
 
     if (max_val == min_val) 
     {
-        append_formatted("All values are identical: %lu\n", (unsigned long)min_val);
+        tui_append_formatted("All values are identical: %lu\n", (unsigned long)min_val);
         return;
     }
 
@@ -237,34 +224,34 @@ void tui_draw_histogram(char *title, uint64_t values[], int count, int term_widt
         for (int col = 0; col < num_buckets; col++) {
             int height = max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
             if (height >= row) {
-                append_to_buffer("█");
+                tui_append_to_buffer("█");
             } else {
-                append_to_buffer(" ");
+                tui_append_to_buffer(" ");
             }
         }
-        append_to_buffer("\n");
+        tui_append_to_buffer("\n");
     }
 }
 
 void tui_draw_overview(tui_context_t *ctx)
 {
-    append_to_buffer("System Overview\n\n");
+    tui_append_to_buffer("System Overview\n\n");
     
-    append_formatted("Process Memory: %lu MB\n", 
+    tui_append_formatted("Process Memory: %lu MB\n", 
         (unsigned long)(ctx->memory_data->process_memory / 1024 / 1024));
-    append_formatted("Active Threads: %d\n", ctx->memory_data->active_threads);
-    append_formatted("Tracked Methods: %d\n", ctx->method_count);
-    append_formatted("Object Types: %d\n\n", ctx->object_count);
+    tui_append_formatted("Active Threads: %d\n", ctx->memory_data->active_threads);
+    tui_append_formatted("Tracked Methods: %d\n", ctx->method_count);
+    tui_append_formatted("Object Types: %d\n\n", ctx->object_count);
     
     if (ctx->method_count > 0) 
     {
-        append_to_buffer("Top Methods by Calls:\n");
+        tui_append_to_buffer("Top Methods by Calls:\n");
         for (int i = 0; i < ctx->method_count && i < 5; i++) 
         {
             const char* last_slash = strrchr(ctx->methods[i].signature, '/');
             const char* display_name = last_slash ? last_slash + 1 : ctx->methods[i].signature;
             
-            append_formatted("  %.45s %8lu calls\n", 
+            tui_append_formatted("  %.45s %8lu calls\n", 
                 display_name, (unsigned long)ctx->methods[i].call_count);
         }
     }
@@ -274,7 +261,7 @@ void tui_draw_methods_view(tui_context_t *ctx)
 {   
     if (ctx->method_count == 0) 
     {
-        append_to_buffer("No method data available\n");
+        tui_append_to_buffer("No method data available\n");
         return;
     }
     /* Show methods by average execution time */
@@ -298,15 +285,15 @@ void tui_draw_methods_view(tui_context_t *ctx)
 void tui_draw_memory_view(tui_context_t *ctx)
 {
     tui_draw_memory_history(ctx->memory_data, ctx->terminal.width);
-    append_to_buffer("\n");
+    tui_append_to_buffer("\n");
 
     if (ctx->memory_data->active_threads > 0) 
     {
-        append_to_buffer("Thread Memory Usage (MB):\n");
+        tui_append_to_buffer("Thread Memory Usage (MB):\n");
         for (int i = 0; i < ctx->memory_data->active_threads; i++) 
         {
             
-            append_formatted("Thread %lu: %lu MB\n", 
+            tui_append_formatted("Thread %lu: %lu MB\n", 
                 (unsigned long)ctx->memory_data->thread_ids[i],
                 (unsigned long)(ctx->memory_data->thread_memory[i] / 1024 / 1024));
         }
@@ -317,7 +304,7 @@ void tui_draw_objects_view(tui_context_t *ctx)
 {
     if (ctx->object_count == 0) 
     {
-        append_to_buffer("No object allocation data available\n");
+        tui_append_to_buffer("No object allocation data available\n");
         return;
     }
 
@@ -343,10 +330,10 @@ void tui_draw_footer(tui_context_t *ctx)
     /* Separator line */
     for (int i = 0; i < ctx->terminal.width; i++) 
     {
-        append_to_buffer("─");
+        tui_append_to_buffer("─");
     }
-    append_to_buffer("\n");
-    append_centered("Press 'q' to quit", ctx->terminal.width);
+    tui_append_to_buffer("\n");
+    tui_append_centered("Press 'q' to quit", ctx->terminal.width);
 }
 
 void tui_draw(tui_context_t *ctx)
@@ -372,5 +359,5 @@ void tui_draw(tui_context_t *ctx)
     }
     
     tui_draw_footer(ctx);
-    flush_frame_buffer();
+    tui_flush_frame_buffer();
 }
