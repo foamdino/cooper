@@ -288,6 +288,7 @@ void read_shared_memory_data()
     }
 }
 
+#ifdef ENABLE_DEBUG_LOGS
 void debug_shared_memory() 
 {
     if (!shm_ctx.data_shm || !shm_ctx.status_shm) {
@@ -312,6 +313,7 @@ void debug_shared_memory()
     printf("DEBUG: Status counts - Empty: %d, Ready: %d, Read: %d\n", 
            empty_count, ready_count, read_count);
 }
+#endif
 
 int main() 
 {

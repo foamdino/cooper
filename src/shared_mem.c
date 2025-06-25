@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-/* src/shared_mem.c */
 #include "shared_mem.h"
 #include "log.h"
 

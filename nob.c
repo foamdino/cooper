@@ -79,7 +79,7 @@ int main(int argc, char **argv)
         nob_cmd_append(&cc_cmd, "-DENABLE_INFO_LOGS", "-O2");
 
     nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so", 
-        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cooper.c", SRC_FOLDER"cli.c", "-pthread", "-lrt");
+        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cooper.c", "-pthread", "-lrt");
 
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
@@ -100,8 +100,9 @@ int main(int argc, char **argv)
     if (!nob_cmd_run_sync(tui_cmd)) return 1;
 
     /* compile cli */
-    nob_cmd_append(&cli_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"cli", 
-        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"tui_loader.c", SRC_FOLDER"cli.c", "-pthread", "-lrt", "-ldl");
+    nob_cmd_append(&cli_cmd, "cc", "-Wall", "-Wextra", "-fPIC", LINUX_INC, "-I.", "-Isrc", "-g", 
+        "-o", BUILD_FOLDER"cli", 
+        SRC_FOLDER"tui_loader.c", SRC_FOLDER"cli.c", "-lrt", "-ldl");
 
     if (!nob_cmd_run_sync(cli_cmd)) return 1;
 
