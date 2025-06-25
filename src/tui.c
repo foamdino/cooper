@@ -19,32 +19,6 @@ static void reset_frame_buffer(void)
     buffer_pos = 0;
 }
 
-/* Append string to frame buffer with bounds checking */
-static void append_to_buffer(const char* str) 
-{
-    size_t len = strlen(str);
-    size_t remaining = sizeof(frame_buffer) - buffer_pos - 1; /* Reserve null terminator */
-    
-    if (len > remaining)
-        len = remaining;
-    
-    memcpy(frame_buffer + buffer_pos, str, len);
-    buffer_pos += len;
-}
-
-/* Append formatted string to buffer */
-static void append_formatted(const char* format, ...) 
-{
-    char temp_buffer[512];
-    va_list args;
-    va_start(args, format);
-    int len = vsnprintf(temp_buffer, sizeof(temp_buffer), format, args);
-    va_end(args);
-    
-    if (len > 0 && len < (int)sizeof(temp_buffer))
-        append_to_buffer(temp_buffer);
-}
-
 /* Flush buffer to terminal in single write */
 static void flush_frame_buffer(void) 
 {
@@ -71,6 +45,42 @@ char* tui_get_version(void)
     return UI_VERSION;
 }
 
+/* Append string to frame buffer with bounds checking */
+static void append_to_buffer(const char* str) 
+{
+    size_t len = strlen(str);
+    size_t remaining = sizeof(frame_buffer) - buffer_pos - 1; /* Reserve null terminator */
+    
+    if (len > remaining)
+        len = remaining;
+    
+    memcpy(frame_buffer + buffer_pos, str, len);
+    buffer_pos += len;
+}
+
+/* Append formatted string to buffer */
+static void append_formatted(const char* format, ...) 
+{
+    char temp_buffer[512];
+    va_list args;
+    va_start(args, format);
+    int len = vsnprintf(temp_buffer, sizeof(temp_buffer), format, args);
+    va_end(args);
+    
+    if (len > 0 && len < (int)sizeof(temp_buffer))
+        append_to_buffer(temp_buffer);
+}
+
+/* Center text and append to buffer with padding */
+static void append_centered(const char* text, int width) 
+{
+    int text_len = strlen(text);
+    int padding_left = (width - text_len) / 2;
+    int padding_right = width - text_len - padding_left;
+    
+    append_formatted("%*s%s%*s", padding_left, "", text, padding_right, "");
+}
+
 void tui_clear_screen(void)
 {
     reset_frame_buffer();
@@ -80,8 +90,12 @@ void tui_clear_screen(void)
 void tui_draw_header(tui_context_t *ctx) 
 {
     char* view_names[] = {"Overview", "Methods", "Memory", "Objects"};
+    char title[256];
     
-    append_formatted("Cooper Monitor - %s\n", view_names[ctx->current_view]);
+    /* Build the title string */
+    snprintf(title, sizeof(title), "Cooper Monitor - %s", view_names[ctx->current_view]);
+    append_centered(title, ctx->terminal.width);
+    append_to_buffer("\n");
     
     /* Separator line */
     for (int i = 0; i < ctx->terminal.width; i++) 
@@ -332,7 +346,7 @@ void tui_draw_footer(tui_context_t *ctx)
         append_to_buffer("─");
     }
     append_to_buffer("\n");
-    append_to_buffer("\nPress 'q' to quit\n");
+    append_centered("Press 'q' to quit", ctx->terminal.width);
 }
 
 void tui_draw(tui_context_t *ctx)
