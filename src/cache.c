@@ -28,8 +28,10 @@ struct tls_cache_manager
 
 /* Thread-local storage */
 static pthread_key_t tls_cache_key;
-static int tls_initialized = 0;
-static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
+
+/* Have we called the cleanup function? */
+static int tls_cleaned_up = 0;
 
 /* Global cache arena - set during initialization */
 static arena_t *cache_arena = NULL;
@@ -217,21 +219,19 @@ void cache_stats(cache_t *cache, size_t *hits, size_t *misses, size_t *entries)
 }
 
 /* Thread-local cache management */
+static void cache_tls_init_once(void)
+{
+    pthread_key_create(&tls_cache_key, NULL);
+}
 
 int cache_tls_init(void)
 {
-    if (!tls_initialized) 
-    {
-        pthread_mutex_lock(&tls_init_mutex);
-        if (!tls_initialized) {
-            int result = pthread_key_create(&tls_cache_key, NULL);
-            if (result == 0)
-                tls_initialized = 1;
-
-        }
-        pthread_mutex_unlock(&tls_init_mutex);
+    if (tls_cleaned_up) {
+        return 1; /* Cannot reinitialize after cleanup */
     }
-    return tls_initialized ? 0 : 1;
+
+    int result = pthread_once(&tls_init_once, cache_tls_init_once);
+    return (result == 0) ? 0 : 1;
 }
 
 cache_t *cache_tls_get(const char *cache_id, arena_t *data_arena, const cache_config_t *config)
@@ -289,11 +289,10 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *data_arena, const cache_co
 
 void cache_tls_cleanup(void)
 {
-    if (tls_initialized) 
+    if (!tls_cleaned_up) 
     {
         pthread_key_delete(tls_cache_key);
-        tls_initialized = 0;
-        pthread_mutex_destroy(&tls_init_mutex);
+        tls_cleaned_up = 1;
         cache_arena = NULL;
     }
 }

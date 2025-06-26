@@ -11,8 +11,7 @@ static agent_context_t *global_ctx = NULL; /* Single global context */
 
 /* Thread-local storage key and initialization mutex */
 static pthread_key_t context_key;
-static int tls_initialized = 0;
-static pthread_mutex_t tls_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Method cache key and value structures */
 typedef struct method_cache_key method_cache_key_t;
@@ -81,24 +80,20 @@ static void destroy_thread_context(void *data)
     }
 }
 
+static void init_thread_local_storage_once(void)
+{
+    pthread_key_create(&context_key, destroy_thread_context);
+}
+
 /* Initialize thread-local storage */
 static void init_thread_local_storage() {
-    /* Double-checked locking pattern */
-    if (!tls_initialized) {
-        pthread_mutex_lock(&tls_init_mutex);
-        if (!tls_initialized) {
-            /* The 'free' function will be automatically called when a thread exits */
-            pthread_key_create(&context_key, destroy_thread_context);
-            tls_initialized = 1;
-        }
-        pthread_mutex_unlock(&tls_init_mutex);
-    }
+    pthread_once(&tls_init_once, init_thread_local_storage_once);
 }
 
 /* Get the thread-local sample structure */
 static thread_context_t *get_thread_local_context() {
-    if (!tls_initialized)
-        init_thread_local_storage();
+
+    init_thread_local_storage();
     
     thread_context_t *context = pthread_getspecific(context_key);
     if (!context) {
@@ -1797,7 +1792,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     jvmtiError err;
 
     /* Get method details for logging */
-    if (tls_initialized && flags != 0) 
+    if (flags != 0)
     {
         /* Get method name */
         err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
@@ -2815,30 +2810,24 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         /* Clean up all thread-local storage systems */
         cache_tls_cleanup();  /* Clean up cache TLS system */
 
-        if (tls_initialized) 
+        /* Free the current thread's TLS data */
+        thread_context_t *context = pthread_getspecific(context_key);
+        if (context) 
         {
-            /* Free the current thread's TLS data */
-            thread_context_t *context = pthread_getspecific(context_key);
-            if (context) {
-                free(context);
-                pthread_setspecific(context_key, NULL);
-            }
-            
-            /* Unfortunately, with pthreads there's no direct way to iterate and free 
-               thread-local storage from all threads. It relies on thread exit handlers.
-               We can at least delete the key to prevent further allocations. */
-            /* Clean up TLS resources */
-            pthread_key_delete(context_key);
-            tls_initialized = 0;
-            
-            /* Destroy the initialization mutex */
-            pthread_mutex_destroy(&tls_init_mutex);
-            
-            /* Note: Any other thread that was using TLS will have its destructor called
-               when that thread exits. If the JVM creates a lot of threads that don't exit,
-               there could still be leaks. This is a limitation of the pthreads API. */
-            LOG_WARN("Thread-local storage cleanup may be incomplete for threads that don't exit\n");
+            free(context);
+            pthread_setspecific(context_key, NULL);
         }
+        
+        /* Unfortunately, with pthreads there's no direct way to iterate and free 
+        thread-local storage from all threads. It relies on thread exit handlers.
+        We can at least delete the key to prevent further allocations. */
+        /* Clean up TLS resources */
+        pthread_key_delete(context_key);
+        
+        /* Note: Any other thread that was using TLS will have its destructor called
+        when that thread exits. If the JVM creates a lot of threads that don't exit,
+        there could still be leaks. This is a limitation of the pthreads API. */
+        LOG_WARN("Thread-local storage cleanup may be incomplete for threads that don't exit\n");
 
         if (global_ctx->app_memory_metrics)
         {
