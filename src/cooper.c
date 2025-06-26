@@ -2122,6 +2122,137 @@ static void JNICALL thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread th
     pthread_mutex_unlock(&global_ctx->samples_lock);
 }
 
+/* Comparison function for class stats (by total_size) */
+static int class_stats_compare(const void* a, const void* b) 
+{
+    const class_stats_t* stats_a = (const class_stats_t*)a;
+    const class_stats_t* stats_b = (const class_stats_t*)b;
+    
+    if (stats_a->total_size < stats_b->total_size) return -1;
+    if (stats_a->total_size > stats_b->total_size) return 1;
+    return 0;
+}
+
+/* Callback for each object during heap iteration */
+static jint JNICALL
+heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, void* user_data) {
+    heap_iteration_context_t* ctx = (heap_iteration_context_t*)user_data;
+    
+    /* Skip if no class tag */
+    if (class_tag == 0) {
+        return JVMTI_VISIT_OBJECTS;
+    }
+    
+    /* Find or create stats entry for this class */
+    jclass klass = (jclass)class_tag;
+    class_stats_t* stats = NULL;
+    
+    for (size_t i = 0; i < ctx->stats_count; i++) {
+        if (ctx->env->IsSameObject(ctx->stats[i].klass, klass)) {
+            stats = &ctx->stats[i];
+            break;
+        }
+    }
+
+    if (!stats && ctx->stats_count < ctx->stats_capacity) {
+        stats = &ctx->stats[ctx->stats_count++];
+        stats->klass = ctx->env->NewGlobalRef(klass);
+        stats->instance_count = 0;
+        stats->total_size = 0;
+        
+        /* Get class name using existing cache pattern */
+        char* cached_name = (char*)cache_get(ctx->class_cache, klass);
+        if (!cached_name) {
+            char* sig;
+            ctx->jvmti->GetClassSignature(klass, &sig, NULL);
+            cached_name = arena_strdup(ctx->arena, sig);
+            cache_put(ctx->class_cache, klass, cached_name);
+            ctx->jvmti->Deallocate((unsigned char*)sig);
+        }
+        stats->class_name = cached_name;
+    }
+    
+    if (stats) {
+        stats->instance_count++;
+        stats->total_size += size;
+    }
+    
+    return JVMTI_VISIT_OBJECTS;
+}
+
+/* Background task to collect heap statistics */
+static void
+collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache) {
+    arena_t* temp_arena = arena_create(1024 * 1024);
+    
+    /* Temporary storage for all classes during iteration */
+    heap_iteration_context_t ctx = {
+        .env = env,
+        .jvmti = jvmti,
+        .arena = temp_arena,
+        .stats = arena_alloc(temp_arena, sizeof(class_stats_t) * 10000),
+        .stats_capacity = 10000,
+        .stats_count = 0,
+        .class_cache = cache
+    };
+    
+    /* Create generic min heap for top N */
+    min_heap_t* heap = min_heap_create(temp_arena, top_n, sizeof(class_stats_t), class_stats_compare);
+    
+    /* Tag classes and iterate heap (same as before) */
+    jint class_count;
+    jclass* classes;
+    jvmti->GetLoadedClasses(&class_count, &classes);
+    
+    for (jint i = 0; i < class_count; i++)
+        jvmti->SetTag(classes[i], (jlong)classes[i]);
+    
+    jvmtiHeapCallbacks callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.heap_iteration_callback = heap_object_callback;
+    
+    jvmti->IterateThroughHeap(0, NULL, &callbacks, &ctx);
+    
+    /* Process collected stats into heap */
+    for (size_t i = 0; i < ctx.stats_count; i++) {
+        if (ctx.stats[i].instance_count > 0) {
+            ctx.stats[i].avg_size = ctx.stats[i].total_size / ctx.stats[i].instance_count;
+            
+            /* Allocate permanent copy if it makes top N */
+            class_stats_t* heap_entry = arena_alloc(temp_arena, sizeof(class_stats_t));
+            *heap_entry = ctx.stats[i];
+            
+            if (min_heap_insert_or_replace(heap, heap_entry)) {
+                /* Only resolve class name if it made it into heap */
+                jclass klass = heap_entry->klass;
+                char* cached_name = (char*)cache_get(ctx.class_cache, klass);
+                if (!cached_name) {
+                    char* sig;
+                    jvmti->GetClassSignature(klass, &sig, NULL);
+                    cached_name = arena_strdup(temp_arena, sig);
+                    cache_put(ctx.class_cache, klass, cached_name);
+                    jvmti->Deallocate((unsigned char*)sig);
+                }
+                heap_entry->class_name = cached_name;
+                heap_entry->klass = env->NewGlobalRef(klass);
+            }
+        }
+    }
+    
+    /* Update cache with results */
+    cache_put(cache, "heap_stats", heap);
+    cache_put(cache, "heap_stats_count", (void*)(uintptr_t)heap->size);
+    
+    /* Clean up */
+    for (jint i = 0; i < class_count; i++)
+        jvmti->SetTag(classes[i], 0);
+
+    jvmti->Deallocate((unsigned char*)classes);
+    
+    arena_destroy(temp_arena);
+}
+
+
 /**
  * Load agent configuration from a file
  * 

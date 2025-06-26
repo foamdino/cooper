@@ -84,6 +84,7 @@ typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct class_stats class_stats_t;
 typedef struct method_cache_key method_cache_key_t;
 typedef struct method_cache_value method_cache_value_t;
 typedef struct thread_context thread_context_t;
@@ -95,6 +96,7 @@ typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
 typedef struct memory_metrics_mgr memory_metrics_mgr_t;
 typedef struct object_allocation_metrics object_allocation_metrics_t;
+typedef struct heap_iteration_context heap_iteration_context_t;
 typedef void *thread_fn(void *args);
 
 /**
@@ -103,7 +105,8 @@ typedef void *thread_fn(void *args);
  * This structure organizes metrics in a columnar format for better
  * cache locality and more efficient data processing.
  */
-struct method_metrics_soa {
+struct method_metrics_soa 
+{
     size_t capacity;          /**< Total capacity allocated */
     size_t count;             /**< Current number of methods being tracked */
     
@@ -206,8 +209,30 @@ struct method_sample
     method_sample_t *parent; /**< Parent (or calling) method */
 };
 
-struct method_cache_key {
+struct method_cache_key 
+{
     jmethodID method_id;
+};
+
+struct class_stats 
+{
+    jclass klass;
+    char* class_name;
+    jlong instance_count;
+    jlong total_size;
+    jlong avg_size;
+};
+
+struct heap_iteration_context 
+{
+    JNIEnv* env;
+    jvmtiEnv* jvmti;
+    arena_t* arena;
+    class_stats_t* stats;
+    size_t stats_capacity;
+    size_t stats_count;
+    /* Reuse existing cache for class signature lookups */
+    cache_t* class_cache;
 };
 
 struct method_cache_value {
