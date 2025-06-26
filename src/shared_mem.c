@@ -5,7 +5,6 @@
  */
 
 #include "shared_mem.h"
-#include "log.h"
 
 /**
  * Initialize shared memory for the agent

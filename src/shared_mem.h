@@ -15,6 +15,8 @@
 #include <string.h>
 #include <errno.h>
 
+#include "log.h"
+
 #define COOPER_DATA_SHM_NAME "/cooper_data"
 #define COOPER_STATUS_SHM_NAME "/cooper_status"
 #define COOPER_SHM_VERSION 1
