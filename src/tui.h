@@ -194,6 +194,6 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
  * @param count Number of values
  * @param term_width Terminal width
  */
-void tui_draw_histogram(char *title, uint64_t values[], int count, int term_width);
+void tui_draw_histogram(char *title, uint64_t values[], int count);
 
 #endif /* TUI_H */

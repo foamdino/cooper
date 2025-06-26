@@ -173,7 +173,7 @@ void tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_w
         (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void tui_draw_histogram(char *title, uint64_t values[], int count, int term_width)
+void tui_draw_histogram(char *title, uint64_t values[], int count)
 {
     tui_append_formatted("%s\n", title);
     tui_append_to_buffer("\n");
