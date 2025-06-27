@@ -7,7 +7,7 @@
 #ifndef HEAP_H
 #define HEAP_H
 
-#include <unistd.h>
+#include <stddef.h>
 
 #include "arena.h"
 
