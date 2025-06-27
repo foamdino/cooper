@@ -31,6 +31,7 @@
 #include "config.h"
 #include "shared_mem.h"
 #include "thread_util.h"
+#include "heap.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)
@@ -48,6 +49,7 @@
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
 #define CACHE_ARENA_SZ 256 * 1024
+#define SCRATCH_ARENA_SZ 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS 1024
@@ -57,6 +59,7 @@
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
 #define CACHE_ARENA_BLOCKS 1024
+#define SCRATCH_ARENA_BLOCKS 1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME "exception_arena"
@@ -65,6 +68,7 @@
 #define CONFIG_ARENA_NAME "config_arena"
 #define METRICS_ARENA_NAME "metrics_arena"
 #define CACHE_ARENA_NAME "cache_arena"
+#define SCRATCH_ARENA_NAME "scratch_arena"
 
 /* Metric flags for method sampling */
 #define METRIC_FLAG_TIME    0x0001
@@ -235,18 +239,21 @@ struct heap_iteration_context
     cache_t* class_cache;
 };
 
-struct method_cache_value {
+struct method_cache_value 
+{
     char class_signature[MAX_SIG_SZ];
     char method_name[64];
     char method_signature[256];
     int should_sample;
 };
 
-struct class_cache_key {
+struct class_cache_key 
+{
     jclass class_ref;           /* Class reference as key */
 };
 
-struct class_cache_value {
+struct class_cache_value 
+{
     char class_signature[MAX_SIG_SZ];
     int valid;                  /* Validation flag */
 };

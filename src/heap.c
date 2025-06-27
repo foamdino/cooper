@@ -7,7 +7,7 @@
 #include "heap.h"
 
 /* Initialize heap with arena allocation */
-static min_heap_t *min_heap_create(arena_t *arena, size_t capacity, size_t element_size, heap_compare_fn compare) 
+min_heap_t *min_heap_create(arena_t *arena, size_t capacity, size_t element_size, heap_compare_fn compare) 
 {
     min_heap_t *heap = arena_alloc(arena, sizeof(min_heap_t));
     heap->elements = arena_alloc(arena, sizeof(void*) *capacity);
@@ -18,23 +18,9 @@ static min_heap_t *min_heap_create(arena_t *arena, size_t capacity, size_t eleme
     return heap;
 }
 
-/* Generic heap operations */
-static inline size_t heap_parent(size_t i) { return (i - 1) / 2; }
-static inline size_t heap_left(size_t i) { return 2 * i + 1; }
-static inline size_t heap_right(size_t i) { return 2 * i + 2; }
-
-/* Swap two elements */
-static inline void
-heap_swap(min_heap_t *heap, size_t i, size_t j) 
-{
-    void* temp = heap->elements[i];
-    heap->elements[i] = heap->elements[j];
-    heap->elements[j] = temp;
-}
 
 /* Bubble up element at index */
-static void
-min_heap_bubble_up(min_heap_t *heap, size_t idx) 
+void min_heap_bubble_up(min_heap_t *heap, size_t idx) 
 {
     while (idx > 0) 
     {
@@ -48,8 +34,8 @@ min_heap_bubble_up(min_heap_t *heap, size_t idx)
 }
 
 /* Bubble down element at index */
-static void
-min_heap_bubble_down(min_heap_t *heap, size_t idx) {
+void min_heap_bubble_down(min_heap_t *heap, size_t idx) 
+{
     while (heap_left(idx) < heap->size) 
     {
         size_t min_child = heap_left(idx);
@@ -67,8 +53,8 @@ min_heap_bubble_down(min_heap_t *heap, size_t idx) {
 }
 
 /* Insert element or replace minimum if heap is full */
-static int
-min_heap_insert_or_replace(min_heap_t *heap, void *element) {
+int min_heap_insert_or_replace(min_heap_t *heap, void *element) 
+{
     if (heap->size < heap->capacity) 
     {
         /* Heap not full, add element */

@@ -24,7 +24,8 @@ static const arena_config_t arena_configs[] = {
     {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS}
+    {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS},
+    {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS}
 };
 
 /* Cache the arena pointer globally to avoid repeated lookups */
@@ -154,7 +155,7 @@ static int class_cache_key_compare(const void *key1, const void *key2)
 }
 
 /* Get cached class signature or fetch if not cached */
-static const char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
+static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
 {   
     if (!output_buffer || buffer_size == 0 || !jvmti_env || !klass) 
         return NULL;
@@ -2134,45 +2135,56 @@ static int class_stats_compare(const void* a, const void* b)
 }
 
 /* Callback for each object during heap iteration */
-static jint JNICALL
-heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, void* user_data) {
+static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, void* user_data) 
+{
+    UNUSED(tag_ptr);
+    UNUSED(length);
+
+    /* Skip if no class tag */
+    if (class_tag == 0)
+        return JVMTI_VISIT_OBJECTS;
+
     heap_iteration_context_t* ctx = (heap_iteration_context_t*)user_data;
     
-    /* Skip if no class tag */
-    if (class_tag == 0) {
-        return JVMTI_VISIT_OBJECTS;
-    }
-    
+    JNIEnv *env = ctx->env;
+    jvmtiEnv *jvmti = ctx->jvmti;
+
     /* Find or create stats entry for this class */
     jclass klass = (jclass)class_tag;
     class_stats_t* stats = NULL;
+    /* Buffer for class signature */
+    char class_sig_buffer[MAX_SIG_SZ];
     
-    for (size_t i = 0; i < ctx->stats_count; i++) {
-        if (ctx->env->IsSameObject(ctx->stats[i].klass, klass)) {
+    for (size_t i = 0; i < ctx->stats_count; i++) 
+    {
+        if ((*env)->IsSameObject(env, ctx->stats[i].klass, klass)) {
             stats = &ctx->stats[i];
             break;
         }
     }
 
-    if (!stats && ctx->stats_count < ctx->stats_capacity) {
+    if (!stats && ctx->stats_count < ctx->stats_capacity) 
+    {
         stats = &ctx->stats[ctx->stats_count++];
-        stats->klass = ctx->env->NewGlobalRef(klass);
+        stats->klass = (*env)->NewGlobalRef(env, klass);
         stats->instance_count = 0;
         stats->total_size = 0;
-        
+
         /* Get class name using existing cache pattern */
-        char* cached_name = (char*)cache_get(ctx->class_cache, klass);
-        if (!cached_name) {
+        char* class_sig = get_cached_class_signature(jvmti, klass, class_sig_buffer, sizeof(class_sig_buffer));
+        if (!class_sig) 
+        {
             char* sig;
-            ctx->jvmti->GetClassSignature(klass, &sig, NULL);
-            cached_name = arena_strdup(ctx->arena, sig);
-            cache_put(ctx->class_cache, klass, cached_name);
-            ctx->jvmti->Deallocate((unsigned char*)sig);
+            (*jvmti)->GetClassSignature(jvmti, klass, &sig, NULL);
+            class_sig = arena_strdup(ctx->arena, sig);
+            cache_put(ctx->class_cache, klass, class_sig);
+            (*jvmti)->Deallocate(jvmti, (unsigned char*)sig);
         }
-        stats->class_name = cached_name;
+        stats->class_name = class_sig;
     }
     
-    if (stats) {
+    if (stats)
+    {
         stats->instance_count++;
         stats->total_size += size;
     }
@@ -2181,60 +2193,67 @@ heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, v
 }
 
 /* Background task to collect heap statistics */
-static void
-collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache) {
-    arena_t* temp_arena = arena_create(1024 * 1024);
-    
+static void collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache) 
+{
+    arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
+
+    // TODO need to make this a config value
+    size_t top_n = 20;
+
+    /* Buffer for class signature */
+    char class_sig_buffer[MAX_SIG_SZ];
+
     /* Temporary storage for all classes during iteration */
     heap_iteration_context_t ctx = {
         .env = env,
         .jvmti = jvmti,
-        .arena = temp_arena,
-        .stats = arena_alloc(temp_arena, sizeof(class_stats_t) * 10000),
+        .arena = scratch_arena,
+        .stats = arena_alloc(scratch_arena, sizeof(class_stats_t) * 10000),
         .stats_capacity = 10000,
         .stats_count = 0,
         .class_cache = cache
     };
     
     /* Create generic min heap for top N */
-    min_heap_t* heap = min_heap_create(temp_arena, top_n, sizeof(class_stats_t), class_stats_compare);
+    min_heap_t* heap = min_heap_create(scratch_arena, top_n, sizeof(class_stats_t), class_stats_compare);
     
     /* Tag classes and iterate heap (same as before) */
     jint class_count;
     jclass* classes;
-    jvmti->GetLoadedClasses(&class_count, &classes);
+    (*jvmti)->GetLoadedClasses(jvmti, &class_count, &classes);
     
     for (jint i = 0; i < class_count; i++)
-        jvmti->SetTag(classes[i], (jlong)classes[i]);
+        (*jvmti)->SetTag(jvmti, classes[i], (jlong)classes[i]);
     
     jvmtiHeapCallbacks callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.heap_iteration_callback = heap_object_callback;
     
-    jvmti->IterateThroughHeap(0, NULL, &callbacks, &ctx);
+    (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
     
     /* Process collected stats into heap */
-    for (size_t i = 0; i < ctx.stats_count; i++) {
+    for (size_t i = 0; i < ctx.stats_count; i++) 
+    {
         if (ctx.stats[i].instance_count > 0) {
             ctx.stats[i].avg_size = ctx.stats[i].total_size / ctx.stats[i].instance_count;
             
             /* Allocate permanent copy if it makes top N */
-            class_stats_t* heap_entry = arena_alloc(temp_arena, sizeof(class_stats_t));
+            class_stats_t* heap_entry = arena_alloc(scratch_arena, sizeof(class_stats_t));
             *heap_entry = ctx.stats[i];
             
             if (min_heap_insert_or_replace(heap, heap_entry)) {
                 /* Only resolve class name if it made it into heap */
                 jclass klass = heap_entry->klass;
-                char* cached_name = (char*)cache_get(ctx.class_cache, klass);
-                if (!cached_name) {
+                char *class_sig = get_cached_class_signature(jvmti, klass, class_sig_buffer, sizeof(class_sig_buffer));
+                if (!class_sig) {
                     char* sig;
-                    jvmti->GetClassSignature(klass, &sig, NULL);
-                    cached_name = arena_strdup(temp_arena, sig);
-                    cache_put(ctx.class_cache, klass, cached_name);
-                    jvmti->Deallocate((unsigned char*)sig);
+                    (*jvmti)->GetClassSignature(jvmti, klass, &sig, NULL);
+                    class_sig = arena_strdup(scratch_arena, sig);
+                    cache_put(ctx.class_cache, klass, class_sig);
+                    (*jvmti)->Deallocate(jvmti, (unsigned char*)sig);
                 }
-                heap_entry->class_name = cached_name;
-                heap_entry->klass = env->NewGlobalRef(klass);
+                heap_entry->class_name = class_sig;
+                heap_entry->klass = (*env)->NewGlobalRef(env, klass);
             }
         }
     }
@@ -2245,11 +2264,9 @@ collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache) {
     
     /* Clean up */
     for (jint i = 0; i < class_count; i++)
-        jvmti->SetTag(classes[i], 0);
+        (*jvmti)->SetTag(jvmti, classes[i], 0);
 
-    jvmti->Deallocate((unsigned char*)classes);
-    
-    arena_destroy(temp_arena);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)classes);
 }
 
 
