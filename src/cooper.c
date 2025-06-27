@@ -2124,10 +2124,10 @@ static void JNICALL thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread th
 }
 
 /* Comparison function for class stats (by total_size) */
-static int class_stats_compare(const void* a, const void* b) 
+static int class_stats_compare(const void *a, const void *b) 
 {
-    const class_stats_t* stats_a = (const class_stats_t*)a;
-    const class_stats_t* stats_b = (const class_stats_t*)b;
+    const class_stats_t *stats_a = (const class_stats_t*)a;
+    const class_stats_t *stats_b = (const class_stats_t*)b;
     
     if (stats_a->total_size < stats_b->total_size) return -1;
     if (stats_a->total_size > stats_b->total_size) return 1;
@@ -2135,7 +2135,7 @@ static int class_stats_compare(const void* a, const void* b)
 }
 
 /* Callback for each object during heap iteration */
-static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, void* user_data) 
+static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag_ptr, jint length, void *user_data) 
 {
     UNUSED(tag_ptr);
     UNUSED(length);
@@ -2144,7 +2144,7 @@ static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag
     if (class_tag == 0)
         return JVMTI_VISIT_OBJECTS;
 
-    heap_iteration_context_t* ctx = (heap_iteration_context_t*)user_data;
+    heap_iteration_context_t *ctx = (heap_iteration_context_t*)user_data;
     
     JNIEnv *env = ctx->env;
     jvmtiEnv *jvmti = ctx->jvmti;
@@ -2193,7 +2193,7 @@ static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag
 }
 
 /* Background task to collect heap statistics */
-static void collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache) 
+static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache) 
 {
     arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
 
@@ -2215,7 +2215,7 @@ static void collect_heap_statistics(jvmtiEnv* jvmti, JNIEnv* env, cache_t* cache
     };
     
     /* Create generic min heap for top N */
-    min_heap_t* heap = min_heap_create(scratch_arena, top_n, sizeof(class_stats_t), class_stats_compare);
+    min_heap_t* heap = min_heap_create(scratch_arena, top_n, class_stats_compare);
     
     /* Tag classes and iterate heap (same as before) */
     jint class_count;

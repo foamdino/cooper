@@ -7,11 +7,10 @@
 #include "heap.h"
 
 /* Initialize heap with arena allocation */
-min_heap_t *min_heap_create(arena_t *arena, size_t capacity, size_t element_size, heap_compare_fn compare) 
+min_heap_t *min_heap_create(arena_t *arena, size_t capacity, heap_compare_fn compare) 
 {
     min_heap_t *heap = arena_alloc(arena, sizeof(min_heap_t));
     heap->elements = arena_alloc(arena, sizeof(void*) *capacity);
-    heap->element_size = element_size;
     heap->capacity = capacity;
     heap->size = 0;
     heap->compare = compare;
