@@ -29,10 +29,6 @@ struct min_heap
 min_heap_t *min_heap_create(arena_t *arena, size_t capacity, heap_compare_fn compare);
 int min_heap_insert_or_replace(min_heap_t *heap, void *element);
 
-/* Internal functions/housekeeping */
-void min_heap_bubble_up(min_heap_t *heap, size_t idx);
-void min_heap_bubble_down(min_heap_t *heap, size_t idx);
-
 /* Generic heap operations */
 static inline size_t heap_parent(size_t i) { return (i - 1) / 2; }
 static inline size_t heap_left(size_t i) { return 2 * i + 1; }
@@ -41,7 +37,7 @@ static inline size_t heap_right(size_t i) { return 2 * i + 2; }
 /* Swap two elements */
 static inline void heap_swap(min_heap_t *heap, size_t i, size_t j) 
 {
-    void* temp = heap->elements[i];
+    void *temp = heap->elements[i];
     heap->elements[i] = heap->elements[j];
     heap->elements[j] = temp;
 }

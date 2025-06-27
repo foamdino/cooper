@@ -2238,7 +2238,7 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
             ctx.stats[i].avg_size = ctx.stats[i].total_size / ctx.stats[i].instance_count;
             
             /* Allocate permanent copy if it makes top N */
-            class_stats_t* heap_entry = arena_alloc(scratch_arena, sizeof(class_stats_t));
+            class_stats_t *heap_entry = arena_alloc(scratch_arena, sizeof(class_stats_t));
             *heap_entry = ctx.stats[i];
             
             if (min_heap_insert_or_replace(heap, heap_entry)) {
@@ -2246,7 +2246,7 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
                 jclass klass = heap_entry->klass;
                 char *class_sig = get_cached_class_signature(jvmti, klass, class_sig_buffer, sizeof(class_sig_buffer));
                 if (!class_sig) {
-                    char* sig;
+                    char *sig;
                     (*jvmti)->GetClassSignature(jvmti, klass, &sig, NULL);
                     class_sig = arena_strdup(scratch_arena, sig);
                     cache_put(ctx.class_cache, klass, class_sig);

@@ -9,17 +9,26 @@
 /* Initialize heap with arena allocation */
 min_heap_t *min_heap_create(arena_t *arena, size_t capacity, heap_compare_fn compare) 
 {
+    if (arena == NULL)
+        return NULL;
+    
     min_heap_t *heap = arena_alloc(arena, sizeof(min_heap_t));
+    if (heap == NULL)
+        return NULL;
+    
     heap->elements = arena_alloc(arena, sizeof(void*) *capacity);
+    if (heap->elements == NULL)
+        return NULL;
+    
+    /* At this point we have a valid heap to work with */
     heap->capacity = capacity;
     heap->size = 0;
     heap->compare = compare;
     return heap;
 }
 
-
 /* Bubble up element at index */
-void min_heap_bubble_up(min_heap_t *heap, size_t idx) 
+static void min_heap_bubble_up(min_heap_t *heap, size_t idx) 
 {
     while (idx > 0) 
     {
@@ -33,7 +42,7 @@ void min_heap_bubble_up(min_heap_t *heap, size_t idx)
 }
 
 /* Bubble down element at index */
-void min_heap_bubble_down(min_heap_t *heap, size_t idx) 
+static void min_heap_bubble_down(min_heap_t *heap, size_t idx) 
 {
     while (heap_left(idx) < heap->size) 
     {
@@ -51,7 +60,13 @@ void min_heap_bubble_down(min_heap_t *heap, size_t idx)
     }
 }
 
-/* Insert element or replace minimum if heap is full */
+/**
+ * Insert element or replace minimum if heap is full 
+ * @param heap Pointer to min_heap_t we're adding to
+ * @param element void pointer of element to add to heap
+ * 
+ * @return 1 if element added, 0 if heap is unchanged
+ */ 
 int min_heap_insert_or_replace(min_heap_t *heap, void *element) 
 {
     if (heap->size < heap->capacity) 
