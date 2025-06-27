@@ -147,8 +147,8 @@ static cache_t *get_method_cache(void)
 /* Class signature cache comparison function */
 static int class_cache_key_compare(const void *key1, const void *key2)
 {
-    const struct class_cache_key *k1 = (const struct class_cache_key *)key1;
-    const struct class_cache_key *k2 = (const struct class_cache_key *)key2;
+    const class_cache_key_t *k1 = (const class_cache_key_t *)key1;
+    const class_cache_key_t *k2 = (const class_cache_key_t *)key2;
     
     if (k1->class_ref == k2->class_ref) return 0;
     return (k1->class_ref < k2->class_ref) ? -1 : 1;
@@ -167,16 +167,16 @@ static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char 
     }
 
     cache_t *class_cache = NULL;
-    struct class_cache_key cache_key = { .class_ref = klass };
-    struct class_cache_value cache_value;
+    class_cache_key_t cache_key = { .class_ref = klass };
+    class_cache_value_t cache_value;
 
     if (cached_cache_arena)
     {
         /* Get thread-local class cache */
         cache_config_t class_config = {
             .max_entries = 128,
-            .key_size = sizeof(struct class_cache_key),
-            .value_size = sizeof(struct class_cache_value),
+            .key_size = sizeof(class_cache_key_t),
+            .value_size = sizeof(class_cache_value_t),
             .key_compare = class_cache_key_compare,
             .key_copy = NULL,
             .value_copy = NULL,

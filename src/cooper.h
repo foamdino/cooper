@@ -101,6 +101,10 @@ typedef struct thread_id_mapping thread_id_mapping_t;
 typedef struct memory_metrics_mgr memory_metrics_mgr_t;
 typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
+
+typedef struct class_cache_key class_cache_key_t;
+typedef struct class_cache_value class_cache_value_t; 
+
 typedef void *thread_fn(void *args);
 
 /**
