@@ -25,7 +25,8 @@ static const arena_config_t arena_configs[] = {
     {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS},
-    {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS}
+    {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
+    {HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ, HEAP_STATS_ARENA_BLOCKS}
 };
 
 /* Cache the arena pointer globally to avoid repeated lookups */
@@ -2229,8 +2230,10 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.heap_iteration_callback = heap_object_callback;
     
+    LOG_INFO("Before iterating heap");
     (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
-    
+    LOG_INFO("After iterating heap");
+
     /* Process collected stats into heap */
     for (size_t i = 0; i < ctx.stats_count; i++) 
     {
@@ -2295,8 +2298,8 @@ void *heap_stats_thread_func(void *arg)
     LOG_INFO("Heap statistics thread successfully attached to JVM");
     
     /* Get class cache for heap statistics */
-    arena_t *cache_arena = find_arena(ctx->arena_head, CACHE_ARENA_NAME);
-    if (!cache_arena)
+    arena_t *heap_arena = find_arena(ctx->arena_head, HEAP_STATS_ARENA_NAME);
+    if (!heap_arena)
     {
         LOG_ERROR("Could not find cache arena for heap statistics");
         goto cleanup;
@@ -2313,7 +2316,7 @@ void *heap_stats_thread_func(void *arg)
         .name = "heap_class_cache"
     };
     
-    cache_t *class_cache = cache_init(cache_arena, &config);
+    cache_t *class_cache = cache_init(heap_arena, &config);
     if (!class_cache)
     {
         LOG_ERROR("Could not create class cache for heap statistics");
@@ -2327,17 +2330,20 @@ void *heap_stats_thread_func(void *arg)
         if (err != JVMTI_ERROR_NONE)
         {
             LOG_ERROR("Error getting JVM phase in heap stats thread: %d", err);
-            goto cleanup;
+            // goto cleanup;
+            sleep(10);
+            continue;
         }
-        
+
         if (jvm_phase != JVMTI_PHASE_LIVE)
         {
             LOG_INFO("JVM not in live phase, skipping heap statistics collection");
-            sleep(60);
+            sleep(10);
             continue;
         }
         
         /* Collect heap statistics */
+        LOG_INFO("Heap statistics collection starting...");
         collect_heap_statistics(ctx->jvmti_env, jni, class_cache);
         
         /* Sleep for 60 seconds between collections */
@@ -2655,7 +2661,6 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     
     /* Release local reference */
     (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-
     LOG_INFO("Successfully initialized Thread class and getId method\n");
 
     /* Start export thread now that JVM is initialized */
@@ -3013,6 +3018,11 @@ void cleanup(agent_context_t *ctx)
 JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
     if (global_ctx) 
     {
+        /* Signal ALL threads to stop BEFORE waiting */
+        global_ctx->export_running = 0;
+        global_ctx->mem_sampling_running = 0;
+        global_ctx->heap_stats_running = 0;
+        global_ctx->shm_export_running = 0;
 
         /* Signal export thread to stop */
         pthread_mutex_lock(&global_ctx->samples_lock);
@@ -3034,11 +3044,6 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         if (res != 0)
             LOG_WARN("Export thread did not terminate cleanly: %d\n", res);
     
-        /* Signal heap statistics thread to stop */
-        pthread_mutex_lock(&global_ctx->samples_lock);
-        global_ctx->heap_stats_running = 0;
-        pthread_mutex_unlock(&global_ctx->samples_lock);
-
         LOG_INFO("Waiting for heap statistics thread to terminate\n");
         res = safe_thread_join(global_ctx->heap_stats_thread, 3);
         if (res != 0)
@@ -3093,9 +3098,7 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
 
         /* Cleanup shared memory */
         if (global_ctx->shm_ctx) 
-        {
-            global_ctx->shm_export_running = 0;
-            
+        {   
             int res = safe_thread_join(global_ctx->shm_export_thread, 2);
             if (res != 0)
                 LOG_WARN("Shared memory export thread did not terminate cleanly");

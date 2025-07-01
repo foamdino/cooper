@@ -5,6 +5,7 @@
  */
 
 #include "cache.h"
+#include <stdio.h>
 
 #define MAX_TLS_CACHES 8  /**< Maximum number of different cache types per thread */
 
@@ -62,22 +63,37 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config)
     }
 
     cache_t *cache = arena_alloc(arena, sizeof(cache_t));
-    if (!cache) return NULL;
-
+    if (!cache) 
+    {
+        printf("Unable to alloc cache in arena for arena: %s\n", arena->name);
+        return NULL;
+    }
     /* Allocate entries array */
     cache->entries = arena_alloc(arena, config->max_entries * sizeof(cache_entry_t));
-    if (!cache->entries) return NULL;
+    if (!cache->entries) 
+    {
+        printf("Unable to alloc cache->entries in arena for arena: %s\n", arena->name);
+        return NULL;
+    }
+    
 
     /* Allocate memory for all keys and values in one block for better locality */
     size_t total_key_memory = config->max_entries * config->key_size;
     size_t total_value_memory = config->max_entries * config->value_size;
     
     void *key_memory = arena_alloc(arena, total_key_memory);
-    if (!key_memory) return NULL;
-    
-    void *value_memory = arena_alloc(arena, total_value_memory);
-    if (!value_memory) return NULL;
+    if (!key_memory) 
+    {
+        printf("Unable to alloc key mem in arena for arena: %s\n", arena->name);
+        return NULL;
+    }
 
+    void *value_memory = arena_alloc(arena, total_value_memory);
+    if (!value_memory) 
+    {
+        printf("Unable to alloc value mem in arena for arena: %s\n", arena->name);
+        return NULL;
+    }
     /* Initialize cache */
     cache->capacity = config->max_entries;
     cache->count = 0;

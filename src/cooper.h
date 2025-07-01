@@ -48,8 +48,9 @@
 #define SAMPLE_ARENA_SZ 2048 * 1024
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
-#define CACHE_ARENA_SZ 1024 * 1024
+#define CACHE_ARENA_SZ 2048 * 1024
 #define SCRATCH_ARENA_SZ 1024 * 1024
+#define HEAP_STATS_ARENA_SZ 512 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS 1024
@@ -58,7 +59,8 @@
 #define SAMPLE_ARENA_BLOCKS 1024
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
-#define CACHE_ARENA_BLOCKS 4096
+#define CACHE_ARENA_BLOCKS 1024
+#define HEAP_STATS_ARENA_BLOCKS 1024
 #define SCRATCH_ARENA_BLOCKS 1024
 
 /* Arena Names */
@@ -68,7 +70,9 @@
 #define CONFIG_ARENA_NAME "config_arena"
 #define METRICS_ARENA_NAME "metrics_arena"
 #define CACHE_ARENA_NAME "cache_arena"
+#define HEAP_STATS_ARENA_NAME "heap_stats_arena"
 #define SCRATCH_ARENA_NAME "scratch_arena"
+
 
 /* Metric flags for method sampling */
 #define METRIC_FLAG_TIME    0x0001
