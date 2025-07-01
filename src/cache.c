@@ -226,9 +226,8 @@ static void cache_tls_init_once(void)
 
 int cache_tls_init(void)
 {
-    if (tls_cleaned_up) {
+    if (tls_cleaned_up)
         return 1; /* Cannot reinitialize after cleanup */
-    }
 
     int result = pthread_once(&tls_init_once, cache_tls_init_once);
     return (result == 0) ? 0 : 1;

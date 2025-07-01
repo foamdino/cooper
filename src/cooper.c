@@ -2192,7 +2192,7 @@ static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag
     return JVMTI_VISIT_OBJECTS;
 }
 
-/* Background task to collect heap statistics */
+/* Collect heap statistics */
 static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache) 
 {
     arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
@@ -2234,7 +2234,8 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
     /* Process collected stats into heap */
     for (size_t i = 0; i < ctx.stats_count; i++) 
     {
-        if (ctx.stats[i].instance_count > 0) {
+        if (ctx.stats[i].instance_count > 0) 
+        {
             ctx.stats[i].avg_size = ctx.stats[i].total_size / ctx.stats[i].instance_count;
             
             /* Allocate permanent copy if it makes top N */
@@ -2269,6 +2270,91 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
     (*jvmti)->Deallocate(jvmti, (unsigned char*)classes);
 }
 
+/* Heap stats collection thread func */
+void *heap_stats_thread_func(void *arg)
+{
+    assert(arg != NULL);
+
+    agent_context_t *ctx = (agent_context_t *)arg;
+    LOG_INFO("Heap statistics thread started, interval=60 seconds\n");
+    
+    JNIEnv *jni = NULL;
+    jvmtiError err;
+    jvmtiPhase jvm_phase;
+    int heap_thread_attached = 0;
+    
+    /* Attach this thread to the JVM to get a JNIEnv */
+    jint res = (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void**)&jni, NULL);
+    if (res != JNI_OK || jni == NULL)
+    {
+        LOG_ERROR("Failed to attach heap statistics thread to JVM, error: %d\n", res);
+        return NULL;
+    }
+    
+    heap_thread_attached = 1;
+    LOG_INFO("Heap statistics thread successfully attached to JVM");
+    
+    /* Get class cache for heap statistics */
+    arena_t *cache_arena = find_arena(ctx->arena_head, CACHE_ARENA_NAME);
+    if (!cache_arena)
+    {
+        LOG_ERROR("Could not find cache arena for heap statistics");
+        goto cleanup;
+    }
+    
+    cache_config_t config = {
+        .max_entries = 128,
+        .key_size = sizeof(class_cache_key_t),
+        .value_size = sizeof(class_cache_value_t),
+        .key_compare = class_cache_key_compare,
+        .key_copy = NULL,
+        .value_copy = NULL, 
+        .entry_init = NULL,
+        .name = "heap_class_cache"
+    };
+    
+    cache_t *class_cache = cache_init(cache_arena, &config);
+    if (!class_cache)
+    {
+        LOG_ERROR("Could not create class cache for heap statistics");
+        goto cleanup;
+    }
+    
+    //TODO extract sleep interval to config
+    while (ctx->heap_stats_running)
+    {
+        err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+        if (err != JVMTI_ERROR_NONE)
+        {
+            LOG_ERROR("Error getting JVM phase in heap stats thread: %d", err);
+            goto cleanup;
+        }
+        
+        if (jvm_phase != JVMTI_PHASE_LIVE)
+        {
+            LOG_INFO("JVM not in live phase, skipping heap statistics collection");
+            sleep(60);
+            continue;
+        }
+        
+        /* Collect heap statistics */
+        collect_heap_statistics(ctx->jvmti_env, jni, class_cache);
+        
+        /* Sleep for 60 seconds between collections */
+        sleep(60);
+    }
+    
+cleanup:
+    /* Detach from JVM if we were attached and JVM is still live */
+    if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+    {
+        if (heap_thread_attached)
+            (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+    }
+    
+    LOG_INFO("Heap statistics thread terminated\n");
+    return NULL;
+}
 
 /**
  * Load agent configuration from a file
@@ -2599,6 +2685,13 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
         LOG_ERROR("Failed to start memory sampling thread - unable to continue\n");
         exit(1);
     }
+
+    global_ctx->heap_stats_running = 1;
+    if (start_thread(&global_ctx->heap_stats_thread, &heap_stats_thread_func, "heap-stats", global_ctx) != 0)
+    {
+        LOG_ERROR("Failed to start heap statistics thread - unable to continue\n");
+        exit(1);
+    }
 }
 
 static int init_jvm_capabilities(agent_context_t *ctx)
@@ -2727,6 +2820,10 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->arena_tail = NULL;
     global_ctx->thread_mem_head = NULL;
     global_ctx->shm_ctx = NULL;
+    global_ctx->export_running = 0;
+    global_ctx->mem_sampling_running = 0;
+    global_ctx->shm_export_running = 0;
+    global_ctx->heap_stats_running = 0;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
     memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 
@@ -2937,6 +3034,16 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         if (res != 0)
             LOG_WARN("Export thread did not terminate cleanly: %d\n", res);
     
+        /* Signal heap statistics thread to stop */
+        pthread_mutex_lock(&global_ctx->samples_lock);
+        global_ctx->heap_stats_running = 0;
+        pthread_mutex_unlock(&global_ctx->samples_lock);
+
+        LOG_INFO("Waiting for heap statistics thread to terminate\n");
+        res = safe_thread_join(global_ctx->heap_stats_thread, 3);
+        if (res != 0)
+            LOG_WARN("Heap statistics thread did not terminate cleanly: %d\n", res);
+
         if (global_ctx)
         {
             /* Only if we have a valid JNI environment */

@@ -48,7 +48,7 @@
 #define SAMPLE_ARENA_SZ 2048 * 1024
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
-#define CACHE_ARENA_SZ 256 * 1024
+#define CACHE_ARENA_SZ 1024 * 1024
 #define SCRATCH_ARENA_SZ 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
@@ -58,7 +58,7 @@
 #define SAMPLE_ARENA_BLOCKS 1024
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
-#define CACHE_ARENA_BLOCKS 1024
+#define CACHE_ARENA_BLOCKS 4096
 #define SCRATCH_ARENA_BLOCKS 1024
 
 /* Arena Names */
@@ -307,10 +307,12 @@ struct agent_context
     pthread_t export_thread;        /**< Export thread */
     pthread_t mem_sampling_thread;  /**< Mem sampling background thread */
     pthread_t shm_export_thread;    /**< Export via shared mem thread */
+    pthread_t heap_stats_thread;    /**< Heap stats background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     int export_running;             /**< Flag to signal if export thread should continue */
     int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
     int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
+    int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
