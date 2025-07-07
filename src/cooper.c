@@ -2193,6 +2193,91 @@ static jint JNICALL heap_object_callback(jlong class_tag, jlong size, jlong* tag
     return JVMTI_VISIT_OBJECTS;
 }
 
+/* Hash function for class tags */
+static size_t hash_class_tag_safe(jlong tag, size_t capacity)
+{
+    /* Use simple modulo hash with capacity bounds checking */
+    return (capacity > 0) ? (size_t)(tag % capacity) : 0;
+}
+
+
+/* Find or create a stats entry in hash table - O(1) average case */
+static class_stats_t *find_or_create_stats_safe(heap_iteration_context_t *ctx, jlong class_tag)
+{
+    class_hash_table_t *table = ctx->class_table;
+    
+    /* Bounds checking */
+    if (!table || !table->entries || table->capacity == 0) {
+        LOG_ERROR("Invalid hash table state");
+        return NULL;
+    }
+    
+    size_t hash = hash_class_tag_safe(class_tag, table->capacity);
+    
+    /* Linear probing with bounds checking */
+    for (size_t i = 0; i < table->capacity; i++) 
+    {
+        size_t idx = (hash + i) % table->capacity;
+        class_entry_t *entry = &table->entries[idx];
+        
+        if (entry->class_tag == 0) {
+            /* Empty slot - create new entry */
+            if (table->count >= table->capacity * 0.75) {
+                LOG_WARN("Hash table load factor exceeded");
+                return NULL; 
+            }
+            
+            entry->class_tag = class_tag;
+            entry->stats.klass = (jclass)class_tag;
+            entry->stats.instance_count = 0;
+            entry->stats.total_size = 0;
+            entry->stats.class_name = NULL; /* Resolve later */
+            table->count++;
+            
+            LOG_DEBUG("Created new hash entry for class_tag %ld at index %zu", 
+                     class_tag, idx);
+            return &entry->stats;
+        } 
+        else if (entry->class_tag == class_tag) 
+        {
+            /* Found existing entry */
+            return &entry->stats;
+        }
+        /* Continue probing for collisions */
+    }
+    
+    LOG_WARN("Hash table full, cannot add class_tag %ld", class_tag);
+    return NULL; /* Table full */
+}
+
+/* Updated heap object callback using hashtable */
+static jint JNICALL heap_object_callback_optimized(jlong class_tag, jlong size, 
+                                                   jlong* tag_ptr, jint length, void *user_data) 
+{
+    UNUSED(tag_ptr);
+    UNUSED(length);
+
+    /* Skip if no class tag */
+    if (class_tag == 0)
+        return JVMTI_VISIT_OBJECTS;
+
+    heap_iteration_context_t *ctx = (heap_iteration_context_t*)user_data;
+    
+    /* Use hashtable for O(1) lookup instead of O(n) linear search */
+    class_stats_t *stats = find_or_create_stats_safe(ctx, class_tag);
+    
+    if (stats) 
+    {
+        stats->instance_count++;
+        stats->total_size += size;
+        
+        /* Calculate average on the fly */
+        stats->avg_size = stats->total_size / stats->instance_count;
+    }
+    
+    return JVMTI_VISIT_OBJECTS;
+}
+
 /* Collect heap statistics */
 static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache) 
 {
@@ -2273,6 +2358,218 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache
     (*jvmti)->Deallocate(jvmti, (unsigned char*)classes);
 }
 
+/* Safe class signature resolution with error handling */
+static char* resolve_class_signature_robust(jvmtiEnv *jvmti, jlong class_tag, 
+                                           arena_t *arena, char *temp_buffer, size_t buffer_size) 
+{
+    if (!jvmti || !arena || !temp_buffer || buffer_size == 0) 
+    {
+        return arena_strdup(arena, "<invalid-args>");
+    }
+    
+    jclass klass = (jclass)class_tag;
+    char *jvmti_sig = NULL;
+    jvmtiError error = (*jvmti)->GetClassSignature(jvmti, klass, &jvmti_sig, NULL);
+    
+    if (error != JVMTI_ERROR_NONE || !jvmti_sig) 
+    {
+        LOG_DEBUG("Failed to get class signature for tag %ld, error: %d", class_tag, error);
+        return arena_strdup(arena, "<unknown>");
+    }
+    
+    /* Make arena copy before deallocating JVMTI memory */
+    char *result = arena_strdup(arena, jvmti_sig);
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)jvmti_sig);
+    
+    return result ? result : arena_strdup(arena, "<alloc-failed>");
+}
+
+/* Robust heap statistics collection with hashtable integration */
+static void collect_heap_statistics_robust(jvmtiEnv *jvmti, JNIEnv *env, cache_t *cache) 
+{
+    arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
+    if (!scratch_arena) 
+    {
+        LOG_ERROR("Failed to find scratch arena");
+        return;
+    }
+
+    const size_t TOP_N = 20;
+    const size_t MAX_HASH_SIZE = 5000; /* Conservative upper limit */
+    
+    /* Get class count with error handling */
+    jint class_count;
+    jclass* classes;
+    jvmtiError err = (*jvmti)->GetLoadedClasses(jvmti, &class_count, &classes);
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("GetLoadedClasses failed: %d", err);
+        return;
+    }
+    
+    LOG_INFO("Found %d loaded classes for heap statistics", class_count);
+    
+    /* Defensive size calculation with bounds checking */
+    size_t estimated_classes = (size_t)class_count * 2;
+    if (estimated_classes > MAX_HASH_SIZE) 
+    {
+        LOG_WARN("Capping hash table size from %zu to %zu for safety", 
+                 estimated_classes, MAX_HASH_SIZE);
+        estimated_classes = MAX_HASH_SIZE;
+    }
+    
+    /* Check available arena space before allocation */
+    size_t hash_table_size = sizeof(class_hash_table_t) + 
+                            (estimated_classes * sizeof(class_entry_t));
+    size_t heap_size = TOP_N * sizeof(class_stats_t);
+    size_t required_space = hash_table_size + heap_size + 1024; /* Safety margin */
+    
+    if (scratch_arena->used + required_space > scratch_arena->total_sz) 
+    {
+        LOG_ERROR("Insufficient arena space: need %zu, have %zu available", 
+                  required_space, scratch_arena->total_sz - scratch_arena->used);
+        goto cleanup_classes;
+    }
+    
+    /* Safe hash table allocation */
+    class_hash_table_t *table = arena_alloc(scratch_arena, sizeof(class_hash_table_t));
+    if (!table) 
+    {
+        LOG_ERROR("Failed to allocate hash table structure");
+        goto cleanup_classes;
+    }
+    
+    table->entries = arena_alloc(scratch_arena, sizeof(class_entry_t) * estimated_classes);
+    if (!table->entries) 
+    {
+        LOG_ERROR("Failed to allocate hash table entries");
+        goto cleanup_classes;
+    }
+    
+    table->capacity = estimated_classes;
+    table->count = 0;
+    
+    /* Safe initialization - explicit loop instead of memset */
+    for (size_t i = 0; i < estimated_classes; i++) 
+    {
+        table->entries[i].class_tag = 0;
+        table->entries[i].stats.instance_count = 0;
+        table->entries[i].stats.total_size = 0;
+        table->entries[i].stats.avg_size = 0;
+        table->entries[i].stats.klass = NULL;
+        table->entries[i].stats.class_name = NULL;
+    }
+    
+    LOG_DEBUG("Hash table initialized: capacity=%zu, entry_size=%zu", 
+              table->capacity, sizeof(class_entry_t));
+    
+    /* Create min heap for top-N results */
+    min_heap_t* heap = min_heap_create(scratch_arena, TOP_N, class_stats_compare);
+    if (!heap) 
+    {
+        LOG_ERROR("Failed to create min heap");
+        goto cleanup_classes;
+    }
+    
+    /* Set up iteration context with hashtable */
+    heap_iteration_context_t ctx = {
+        .env = env,
+        .jvmti = jvmti,
+        .arena = scratch_arena,
+        .class_table = table,
+        .class_cache = cache,
+        .stats = NULL,        /* Not used with hashtable approach */
+        .stats_capacity = 0,  /* Not used with hashtable approach */
+        .stats_count = 0      /* Not used with hashtable approach */
+    };
+    
+    /* Tag all classes for heap iteration */
+    for (jint i = 0; i < class_count; i++) {
+        (*jvmti)->SetTag(jvmti, classes[i], (jlong)classes[i]);
+    }
+    
+    /* Set up heap iteration callbacks */
+    jvmtiHeapCallbacks callbacks;
+    memset(&callbacks, 0, sizeof(callbacks));
+    callbacks.heap_iteration_callback = heap_object_callback_optimized;
+    
+    LOG_INFO("Starting heap iteration with hashtable optimization");
+    err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
+    if (err != JVMTI_ERROR_NONE) {
+        LOG_ERROR("Heap iteration failed: %d", err);
+        goto cleanup_tags;
+    }
+    LOG_INFO("Heap iteration completed, found %zu unique classes", table->count);
+    
+    /* Extract results from hashtable and build top-N */
+    char class_sig_buffer[MAX_SIG_SZ];
+    size_t processed = 0;
+    
+    for (size_t i = 0; i < table->capacity && processed < table->count; i++) 
+    {
+        class_entry_t *entry = &table->entries[i];
+        if (entry->class_tag != 0 && entry->stats.instance_count > 0) 
+        {
+            processed++;
+            
+            /* Only resolve class name if it might make top-N */
+            if (heap->size < TOP_N || 
+                entry->stats.total_size > ((class_stats_t*)heap->elements[0])->total_size) 
+            {
+                /* Allocate permanent copy for heap */
+                class_stats_t *heap_entry = arena_alloc(scratch_arena, sizeof(class_stats_t));
+                if (!heap_entry) {
+                    LOG_WARN("Failed to allocate heap entry %zu", i);
+                    continue;
+                }
+                
+                *heap_entry = entry->stats;
+                
+                /* Resolve class name */
+                heap_entry->class_name = resolve_class_signature_robust(jvmti, 
+                    entry->class_tag, scratch_arena, class_sig_buffer, 
+                    sizeof(class_sig_buffer));
+                
+                /* Create global ref */
+                jclass klass = (jclass)entry->class_tag;
+                heap_entry->klass = (*env)->NewGlobalRef(env, klass);
+                
+                if (!heap_entry->klass) {
+                    LOG_WARN("Failed to create global ref for class_tag %ld", entry->class_tag);
+                    continue;
+                }
+                
+                /* Insert into min heap */
+                min_heap_insert_or_replace(heap, heap_entry);
+                
+                LOG_DEBUG("Added to heap: %s (%ld instances, %ld bytes)", 
+                         heap_entry->class_name, heap_entry->instance_count, heap_entry->total_size);
+            }
+        }
+    }
+    
+    LOG_INFO("Processed %zu classes, top heap size: %zu", processed, heap->size);
+    
+    /* Store results in global context for access by other components */
+    if (global_ctx) 
+    {
+        global_ctx->last_heap_stats = heap;
+        global_ctx->last_heap_stats_count = heap->size;
+        global_ctx->last_heap_stats_time = get_current_time_ns();
+        LOG_DEBUG("Stored heap statistics: %zu classes at time %llu", 
+                  heap->size, (unsigned long long)global_ctx->last_heap_stats_time);
+    }
+    
+cleanup_tags:
+    /* Clean up class tags */
+    for (jint i = 0; i < class_count; i++) {
+        (*jvmti)->SetTag(jvmti, classes[i], 0);
+    }
+    
+cleanup_classes:
+    (*jvmti)->Deallocate(jvmti, (unsigned char*)classes);
+}
+
 /* Heap stats collection thread func */
 void *heap_stats_thread_func(void *arg)
 {
@@ -2344,7 +2641,8 @@ void *heap_stats_thread_func(void *arg)
         
         /* Collect heap statistics */
         LOG_INFO("Heap statistics collection starting...");
-        collect_heap_statistics(ctx->jvmti_env, jni, class_cache);
+        // collect_heap_statistics(ctx->jvmti_env, jni, class_cache);
+        collect_heap_statistics_robust(ctx->jvmti_env, jni, class_cache);
         
         /* Sleep for 60 seconds between collections */
         sleep(60);
@@ -2829,6 +3127,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     global_ctx->mem_sampling_running = 0;
     global_ctx->shm_export_running = 0;
     global_ctx->heap_stats_running = 0;
+    global_ctx->last_heap_stats = NULL;
+    global_ctx->last_heap_stats_count = 0;
+    global_ctx->last_heap_stats_time = 0;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
     memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 

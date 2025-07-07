@@ -107,7 +107,9 @@ typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
 
 typedef struct class_cache_key class_cache_key_t;
-typedef struct class_cache_value class_cache_value_t; 
+typedef struct class_cache_value class_cache_value_t;
+typedef struct class_entry class_entry_t;
+typedef struct class_hash_table class_hash_table_t;
 
 typedef void *thread_fn(void *args);
 
@@ -240,7 +242,9 @@ struct heap_iteration_context
     JNIEnv* env;
     jvmtiEnv* jvmti;
     arena_t* arena;
-    class_stats_t* stats;
+    class_hash_table_t *class_table;
+    /* Legacy for compatibility */
+    class_stats_t *stats; 
     size_t stats_capacity;
     size_t stats_count;
     /* Reuse existing cache for class signature lookups */
@@ -270,6 +274,20 @@ struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
     method_sample_t *sample; /**< Current top of method sample stack - most recent call */
+};
+
+/* Pre-allocate hash table for class stats during setup */
+struct class_entry
+{
+    jlong class_tag;
+    class_stats_t stats;
+};
+
+struct class_hash_table 
+{
+    class_entry_t *entries;
+    size_t capacity;
+    size_t count;
 };
 
 struct thread_alloc
@@ -326,6 +344,10 @@ struct agent_context
     thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
     object_allocation_metrics_t *object_metrics; /**< Object allocation metrics in SoA format */
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
+    /* Heap statistics results */
+    min_heap_t *last_heap_stats;
+    size_t last_heap_stats_count;
+    uint64_t last_heap_stats_time;
 };
 
 /* jmvti callback functions */
