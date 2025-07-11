@@ -2291,6 +2291,7 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
         return JVMTI_VISIT_ABORT;
     }
     
+    uint64_t safe_size = (uint64_t)size;  /* Convert after validation */
     class_stats_t *stats = find_or_create_stats_robust(ctx, class_tag);
     
     if (stats) 
@@ -2302,14 +2303,14 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
             return JVMTI_VISIT_OBJECTS;
         }
         
-        if (stats->total_size > UINT64_MAX - size) 
+        if (stats->total_size > UINT64_MAX - safe_size) 
         {
             LOG_WARN("Total size overflow for class_tag %ld", class_tag);
             return JVMTI_VISIT_OBJECTS;
         }
         
         stats->instance_count++;
-        stats->total_size += size;
+        stats->total_size += safe_size;
         
         /* Safe average calculation */
         if (stats->instance_count > 0)
@@ -2661,7 +2662,9 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
                 }
                 
                 LOG_DEBUG("Added to heap: %s (%llu instances, %llu bytes)", 
-                         heap_entry->class_name, heap_entry->instance_count, heap_entry->total_size);
+                         heap_entry->class_name, 
+                         (unsigned long long)heap_entry->instance_count, 
+                         (unsigned long long)heap_entry->total_size);
             }
         }
     }
