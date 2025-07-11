@@ -232,9 +232,9 @@ struct class_stats
 {
     jclass klass;
     char* class_name;
-    jlong instance_count;
-    jlong total_size;
-    jlong avg_size;
+    uint64_t instance_count;
+    uint64_t total_size;
+    uint64_t avg_size;
 };
 
 struct heap_iteration_context 

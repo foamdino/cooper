@@ -2660,7 +2660,7 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
                     (*env)->DeleteGlobalRef(env, heap_entry->klass);
                 }
                 
-                LOG_DEBUG("Added to heap: %s (%ld instances, %ld bytes)", 
+                LOG_DEBUG("Added to heap: %s (%llu instances, %llu bytes)", 
                          heap_entry->class_name, heap_entry->instance_count, heap_entry->total_size);
             }
         }
