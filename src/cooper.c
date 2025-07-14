@@ -155,11 +155,14 @@ static int class_cache_key_compare(const void *key1, const void *key2)
     return (k1->class_ref < k2->class_ref) ? -1 : 1;
 }
 
-/* Get cached class signature or fetch if not cached */
-static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
+/** Get cached class signature or fetch if not cached 
+ * @return COOPER_OK on success, COOPER_ERR on failure
+ * output_buffer contains class signature
+ */
+static int get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char *output_buffer, size_t buffer_size)
 {   
-    if (!output_buffer || buffer_size == 0 || !jvmti_env || !klass) 
-        return NULL;
+    if (!output_buffer || buffer_size == 0 || !jvmti_env || !klass)
+        return COOPER_ERR;
     
     /* Cache arena lookup */
     if (!cached_cache_arena) {
@@ -191,16 +194,15 @@ static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char 
             /* Cache hit - copy to output buffer */
             strncpy(output_buffer, cache_value.class_signature, buffer_size - 1);
             output_buffer[buffer_size - 1] = '\0';
-            return output_buffer;
+            return COOPER_OK;
         }
     }
 
     /* Cache miss - fetch from JVMTI */
     char *class_sig = NULL;
     jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-    if (err != JVMTI_ERROR_NONE || !class_sig) {
-        return NULL;
-    }
+    if (err != JVMTI_ERROR_NONE || !class_sig)
+        return COOPER_ERR;
 
     /* Cache the result  if a cache is available */
     if (class_cache)
@@ -219,7 +221,7 @@ static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char 
     /* JVMTI allocated the string, so deallocate it */
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
     
-    return output_buffer;
+    return COOPER_OK;
 }
 
 /**
@@ -2031,8 +2033,7 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     char class_sig_buffer[MAX_SIG_SZ];
     
     /* Get cached class signature */
-    const char *class_sig = get_cached_class_signature(jvmti_env, klass, class_sig_buffer, sizeof(class_sig_buffer));
-    if (!class_sig) 
+    if (get_cached_class_signature(jvmti_env, klass, class_sig_buffer, sizeof(class_sig_buffer)) != COOPER_OK) 
     {
         LOG_DEBUG("[object_alloc_callback] Unable to get class signature for object tracking\n");
         return;
@@ -2041,7 +2042,7 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     /* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
     uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
     /* Update the global allocation stats */
-    update_object_allocation_stats(global_ctx, class_sig, safe_sz);
+    update_object_allocation_stats(global_ctx, class_sig_buffer, safe_sz);
 
     /* Get thread-local context to prevent re-entrancy */
     thread_context_t *context = get_thread_local_context();
@@ -2067,12 +2068,8 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     /* Add allocation to the current method being sampled */
     sample->current_alloc_bytes += safe_sz;
 
-    LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld", 
-         safe_sz, sample->method_index, (long long)sample->current_alloc_bytes);
-    
-    LOG_DEBUG("Allocated object of class: %s, size: %lld\n", 
-        class_sig, safe_sz);
-    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+    LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld, allocated object of class: %s, size: %lld", 
+        safe_sz, sample->method_index, (long long)sample->current_alloc_bytes, class_sig_buffer, safe_sz);
 }
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
