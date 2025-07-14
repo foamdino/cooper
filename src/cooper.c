@@ -457,7 +457,6 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
         return NULL;
 
     /* Initialise sample */
-    memset(sample, 0, sizeof(method_sample_t));
     sample->method_index = method_index;
     sample->method_id = method_id;
     sample->parent = NULL;
@@ -579,14 +578,6 @@ static object_allocation_metrics_t *init_object_allocation_metrics(arena_t *aren
     metrics->avg_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     if (!metrics->avg_size)
         return NULL;
-    
-    /* Initialize arrays with zeros */
-    memset(metrics->allocation_counts, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->total_bytes, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->peak_instances, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->current_instances, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->max_size, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->avg_size, 0, initial_capacity * sizeof(uint64_t));
     
     /* Set min_size to maximum value initially */
     for (size_t i = 0; i < initial_capacity; i++)
@@ -1252,7 +1243,6 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
                     thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
                     if (thread_metrics) 
                     {
-                        memset(thread_metrics, 0, sizeof(thread_memory_metrics_t));
                         thread_metrics->thread_id = thread_id;
                         thread_metrics->next = ctx->thread_mem_head;
                         ctx->thread_mem_head = thread_metrics;
@@ -2418,16 +2408,6 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     table->capacity = hash_size;
     table->count = 0;
     
-    /* Safe initialization - explicit loop instead of memset for safety */
-    for (size_t i = 0; i < hash_size; i++) 
-    {
-        table->entries[i].class_tag = 0;
-        table->entries[i].stats.instance_count = 0;
-        table->entries[i].stats.total_size = 0;
-        table->entries[i].stats.avg_size = 0;
-        table->entries[i].stats.class_name = NULL;
-    }
-    
     LOG_DEBUG("Hash table initialized: capacity=%zu, entry_size=%zu", 
               table->capacity, sizeof(class_entry_t));
     
@@ -2750,18 +2730,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
         !metrics->cpu_cycles || !metrics->metric_flags) {
         return NULL;
     }
-    
-    /* Initialize arrays with zeros */
-    memset(metrics->sample_rates, 0, initial_capacity * sizeof(int));
-    memset(metrics->call_counts, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->sample_counts, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->total_time_ns, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->min_time_ns, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->max_time_ns, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->alloc_bytes, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->peak_memory, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->cpu_cycles, 0, initial_capacity * sizeof(uint64_t));
-    memset(metrics->metric_flags, 0, initial_capacity * sizeof(unsigned int));
     
     /* Set min_time_ns to maximum value initially */
     for (size_t i = 0; i < initial_capacity; i++)
@@ -3094,42 +3062,16 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     UNUSED(reserved);
     
     /* Allocate and initialize the agent context */
-    global_ctx = malloc(sizeof(agent_context_t));
+    global_ctx = calloc(1, sizeof(agent_context_t));
     if (!global_ctx) 
     {
         printf("Failed to allocate agent context\n");
         return JNI_ERR;
     }
-    memset(global_ctx, 0, sizeof(agent_context_t));
-    global_ctx->jvmti_env = NULL;
-    global_ctx->jvm = NULL;
-    global_ctx->java_thread_class = NULL;
-    global_ctx->getId_method = NULL;
-    global_ctx->method_filters = NULL;
-    global_ctx->num_filters = 0;
-    global_ctx->log_file = NULL;
     global_ctx->config.rate = 1;
-    global_ctx->config.filters = NULL;
-    global_ctx->config.num_filters = 0;
-    global_ctx->config.sample_file_path = NULL;
-    global_ctx->config.export_method = NULL;
     global_ctx->config.export_interval = 60;
     global_ctx->config.mem_sample_interval = 1;
-    global_ctx->metrics = NULL;
-    global_ctx->object_metrics = NULL;
-    global_ctx->arena_head = NULL;
-    global_ctx->arena_tail = NULL;
-    global_ctx->thread_mem_head = NULL;
-    global_ctx->shm_ctx = NULL;
-    global_ctx->export_running = 0;
-    global_ctx->mem_sampling_running = 0;
-    global_ctx->shm_export_running = 0;
-    global_ctx->heap_stats_running = 0;
-    global_ctx->last_heap_stats = NULL;
-    global_ctx->last_heap_stats_count = 0;
-    global_ctx->last_heap_stats_time = 0;
     pthread_mutex_init(&global_ctx->samples_lock, NULL);
-    memset(global_ctx->thread_mappings, 0, sizeof(global_ctx->thread_mappings));
 
     /* Redirect output */
     if (options && strncmp(options, "logfile=", 8) == 0)
@@ -3236,7 +3178,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         LOG_ERROR("Failed to allocate memory for app_memory_metrics\n");
         return JNI_ERR;
     }
-    memset(global_ctx->app_memory_metrics, 0, sizeof(app_memory_metrics_t));
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
     /* Initialize shared memory */
