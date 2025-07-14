@@ -2178,7 +2178,6 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
             
             /* Defensive initialization */
             entry->class_tag = class_tag;
-            entry->stats.klass = (jclass)class_tag;
             entry->stats.instance_count = 0;
             entry->stats.total_size = 0;
             entry->stats.avg_size = 0;
@@ -2426,7 +2425,6 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
         table->entries[i].stats.instance_count = 0;
         table->entries[i].stats.total_size = 0;
         table->entries[i].stats.avg_size = 0;
-        table->entries[i].stats.klass = NULL;
         table->entries[i].stats.class_name = NULL;
     }
     
@@ -2457,7 +2455,8 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     }
     
     /* Tag classes for heap iteration with error checking */
-    for (jint i = 0; i < class_count; i++) {
+    for (jint i = 0; i < class_count; i++) 
+    {
         err = (*jvmti)->SetTag(jvmti, classes[i], (jlong)classes[i]);
         if (err != JVMTI_ERROR_NONE) {
             LOG_WARN("Failed to set tag for class %d: error %d", i, err);
@@ -2508,19 +2507,21 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
                     sizeof(class_sig_buffer));
                 
                 /* Create global ref with error checking */
-                jclass klass = (jclass)entry->class_tag;
-                heap_entry->klass = (*env)->NewGlobalRef(env, klass);
+                // jclass temp_klass = (jclass)entry->class_tag;
                 
-                if (!heap_entry->klass) {
-                    LOG_WARN("Failed to create global ref for class_tag %ld", entry->class_tag);
-                    continue;
-                }
+
+                // heap_entry->klass = (*env)->NewGlobalRef(env, klass);
+                // heap_entry->class_name = resolve_class_signature_robust(jvmti, entry->class_tag, scratch_arena, class_sig_buffer, sizeof(class_sig_buffer));
+                // if (!heap_entry->klass) {
+                //     LOG_WARN("Failed to create global ref for class_tag %ld", entry->class_tag);
+                //     continue;
+                // }
                 
                 /* Insert into min heap */
                 if (!min_heap_insert_or_replace(heap, heap_entry)) {
                     LOG_DEBUG("Failed to insert into heap (likely not top-N)");
-                    /* Clean up the global ref we just created */
-                    (*env)->DeleteGlobalRef(env, heap_entry->klass);
+                    // /* Clean up the global ref we just created */
+                    // (*env)->DeleteGlobalRef(env, heap_entry->klass);
                 }
                 
                 LOG_DEBUG("Added to heap: %s (%llu instances, %llu bytes)", 
@@ -2920,7 +2921,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     if (local_thread_class == NULL)
     {
         LOG_ERROR("Failed to find Thread class\n");
-        exit(1);
+        goto error;
     }
 
     /* Create a global reference to keep the class from being unloaded */
@@ -2929,8 +2930,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     if (global_ctx->java_thread_class == NULL)
     {
         LOG_ERROR("Failed to create global reference for Thread class\n");
-        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-        exit(1);
+        goto error;
     }
 
     /* Cache the method ID */
@@ -2939,9 +2939,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     if (global_ctx->getId_method == NULL) 
     {
         LOG_ERROR("Failed to get Thread.getId method ID\n");
-        (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
-        (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-        exit(1);
+        goto error;
     }
     
     /* Release local reference */
@@ -2953,7 +2951,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
     {
         LOG_ERROR("Failed to start export thread - unable to continue\n");
-        exit(1);
+        goto error;
     }
 
     /* Initialize and start shared memory export if available */
@@ -2963,7 +2961,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
         if (start_thread(&global_ctx->shm_export_thread, &shm_export_thread_func, "shm-export", global_ctx) != 0) 
         {
             LOG_ERROR("Failed to start shared memory export thread");
-            exit(1);
+            goto error;
         }
         LOG_INFO("Shared memory export thread started");
     }
@@ -2973,15 +2971,28 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
     {
         LOG_ERROR("Failed to start memory sampling thread - unable to continue\n");
-        exit(1);
+        goto error;
     }
 
     global_ctx->heap_stats_running = 1;
     if (start_thread(&global_ctx->heap_stats_thread, &heap_stats_thread_func, "heap-stats", global_ctx) != 0)
     {
         LOG_ERROR("Failed to start heap statistics thread - unable to continue\n");
-        exit(1);
+        goto error;
     }
+
+    LOG_INFO("Successfully completed vm_init_callback");
+    return;
+
+error:
+    /* 
+      Safe to call these even if the jobject references are null
+      https://docs.oracle.com/en/java/javase/23/docs//specs/jni/functions.html#deleteglobalref
+    */
+    (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
+    (*jni_env)->DeleteGlobalRef(jni_env, global_ctx->java_thread_class);
+    /* In all cases if we reach here we want to exit as the environment is incorrect */
+    exit(1);
 }
 
 static int init_jvm_capabilities(agent_context_t *ctx)

@@ -230,7 +230,6 @@ struct method_cache_key
 
 struct class_stats 
 {
-    jclass klass;
     char* class_name;
     uint64_t instance_count;
     uint64_t total_size;
@@ -243,10 +242,6 @@ struct heap_iteration_context
     jvmtiEnv* jvmti;
     arena_t* arena;
     class_hash_table_t *class_table;
-    // /* Legacy for compatibility */
-    // class_stats_t *stats; 
-    // size_t stats_capacity;
-    // size_t stats_count;
     /* Reuse existing cache for class signature lookups */
     cache_t* class_cache;
 };
