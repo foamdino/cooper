@@ -48,8 +48,8 @@
 #define SAMPLE_ARENA_SZ 2048 * 1024
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
-#define CACHE_ARENA_SZ 2048 * 1024
-#define SCRATCH_ARENA_SZ 1024 * 1024
+#define CACHE_ARENA_SZ 12 * 1024 * 1024
+#define SCRATCH_ARENA_SZ 2 * 1024 * 1024
 #define HEAP_STATS_ARENA_SZ 512 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
@@ -86,6 +86,10 @@
 /* Method cache */
 #define METHOD_CACHE_NAME "method_cache"
 #define METHOD_CACHE_MAX_ENTRIES 256
+
+/* Class cache */
+#define CLASS_CACHE_NAME "class_sig_cache"
+#define CLASS_CACHE_MAX_ENTRIES 128
 
 
 typedef struct trace_event trace_event_t;

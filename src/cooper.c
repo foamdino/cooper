@@ -175,17 +175,17 @@ static char *get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char 
     {
         /* Get thread-local class cache */
         cache_config_t class_config = {
-            .max_entries = 128,
+            .max_entries = CLASS_CACHE_MAX_ENTRIES,
             .key_size = sizeof(class_cache_key_t),
             .value_size = sizeof(class_cache_value_t),
             .key_compare = class_cache_key_compare,
             .key_copy = NULL,
             .value_copy = NULL,
             .entry_init = NULL,
-            .name = "class_signature_cache"
+            .name = CLASS_CACHE_NAME
         };
 
-        class_cache = cache_tls_get("class_sig_cache", cached_cache_arena, &class_config);
+        class_cache = cache_tls_get(CLASS_CACHE_NAME, cached_cache_arena, &class_config);
         
         if (cache_get(class_cache, &cache_key, &cache_value) == 0 && cache_value.valid) {
             /* Cache hit - copy to output buffer */
