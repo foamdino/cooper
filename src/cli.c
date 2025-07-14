@@ -109,9 +109,8 @@ char getch()
 int init_cli_shm() 
 {
     shm_ctx.data_fd = shm_open(COOPER_DATA_SHM_NAME, O_RDONLY, 0);
-    if (shm_ctx.data_fd == -1) {
+    if (shm_ctx.data_fd == -1)
         return -1;
-    }
     
     shm_ctx.status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_RDWR, 0);
     if (shm_ctx.status_fd == -1) {
@@ -370,7 +369,7 @@ int main()
             .method_count = method_count,
             .object_count = object_count,
             .current_view = current_view,
-            .terminal = { .width = term_width, .height = term_height, .lines_drawn = 0 }
+            .terminal = { .width = term_width, .height = term_height }
         };
         
         /* Draw using the loaded UI library */
