@@ -1987,7 +1987,6 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     
     /* Buffer for class signature */
     char *class_sig = NULL;
-    // char *class_sig;
         
     /* Get cached class signature */
     if (get_cached_class_signature(jvmti_env, klass, &class_sig) != COOPER_OK) 
@@ -2847,6 +2846,60 @@ int should_sample_method(agent_context_t *ctx, const char *class_signature,
     return 0;  /* Don't sample this call */
 }
 
+
+static int precache_loaded_classes(jvmtiEnv *jvmti_env)
+{
+    int class_count;
+    jclass *classes;
+    jvmtiError err = (*jvmti_env)->GetLoadedClasses(jvmti_env, &class_count, &classes);
+    
+    if (err != JVMTI_ERROR_NONE) 
+    {
+        LOG_ERROR("GetLoadedClasses failed: %d", err);
+        return COOPER_ERR;
+    }
+
+    LOG_INFO("Pre-caching %d loaded classes", class_count);
+    
+    for (jint i = 0; i < class_count; i++) 
+    {
+        /* Check if already tagged */
+        jlong existing_tag = 0;
+        (*jvmti_env)->GetTag(jvmti_env, classes[i], &existing_tag);
+        
+        if (existing_tag> 0)
+            continue;
+        
+        //TODO need to consoildate this logic at some point
+        /* Call the same logic as class_load_callback */
+        char *class_sig = NULL;
+        err = (*jvmti_env)->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
+        
+        if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
+        {
+            class_info_t *info = arena_alloc(cached_cache_arena, sizeof(class_info_t));
+            if (info != NULL) 
+            {
+                size_t len = strlen(class_sig);
+                if (len >= sizeof(info->class_sig)) 
+                    len = sizeof(info->class_sig) - 1;
+
+                memcpy(info->class_sig, class_sig, len);
+                info->class_sig[len] = '\0';
+                info->in_heap_iteration = 0;
+                
+                jlong tag = (jlong)(intptr_t)info;
+                (*jvmti_env)->SetTag(jvmti_env, classes[i], tag);
+            }
+            (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+        }
+    }
+    
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)classes);
+    LOG_INFO("Completed pre-caching of loaded classes");
+    return COOPER_OK;
+}
+
 /**
  * Callback to execute any code after the JVM has completed initialisation (after Agent_OnLoad)
  */
@@ -2857,7 +2910,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     
     if (jni_env == NULL)
     {
-        LOG_ERROR("No jni environment\n");
+        LOG_ERROR("No jni environment");
         exit(1);
     }
 
@@ -2866,7 +2919,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
 
     if (local_thread_class == NULL)
     {
-        LOG_ERROR("Failed to find Thread class\n");
+        LOG_ERROR("Failed to find Thread class");
         goto error;
     }
 
@@ -2875,7 +2928,7 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
 
     if (global_ctx->java_thread_class == NULL)
     {
-        LOG_ERROR("Failed to create global reference for Thread class\n");
+        LOG_ERROR("Failed to create global reference for Thread class");
         goto error;
     }
 
@@ -2884,19 +2937,25 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
 
     if (global_ctx->getId_method == NULL) 
     {
-        LOG_ERROR("Failed to get Thread.getId method ID\n");
+        LOG_ERROR("Failed to get Thread.getId method ID");
         goto error;
     }
     
     /* Release local reference */
     (*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
-    LOG_INFO("Successfully initialized Thread class and getId method\n");
+    LOG_INFO("Successfully initialized Thread class and getId method");
+
+    if (precache_loaded_classes(jvmti_env) != COOPER_OK)
+    {
+        LOG_ERROR("Unable to precache loaded classes");
+        goto error;
+    }
 
     /* Start export thread now that JVM is initialized */
     global_ctx->export_running = 1;
     if (start_thread(&global_ctx->export_thread, &export_thread_func, "export-samples", global_ctx) != 0)
     {
-        LOG_ERROR("Failed to start export thread - unable to continue\n");
+        LOG_ERROR("Failed to start export thread - unable to continue");
         goto error;
     }
 
@@ -2916,14 +2975,14 @@ static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthre
     global_ctx->mem_sampling_running = 1;
     if (start_thread(&global_ctx->mem_sampling_thread, &mem_sampling_thread_func, "mem-sampling", global_ctx) != 0)
     {
-        LOG_ERROR("Failed to start memory sampling thread - unable to continue\n");
+        LOG_ERROR("Failed to start memory sampling thread - unable to continue");
         goto error;
     }
 
     global_ctx->heap_stats_running = 1;
     if (start_thread(&global_ctx->heap_stats_thread, &heap_stats_thread_func, "heap-stats", global_ctx) != 0)
     {
-        LOG_ERROR("Failed to start heap statistics thread - unable to continue\n");
+        LOG_ERROR("Failed to start heap statistics thread - unable to continue");
         goto error;
     }
 
