@@ -270,9 +270,6 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *data_arena, const cache_co
         if (!manager) 
             return NULL;
 
-        /* Initialise the manager */
-        memset(manager, 0, sizeof(tls_cache_manager_t));
-
         if (pthread_setspecific(tls_cache_key, manager) != 0)
             return NULL;
     }

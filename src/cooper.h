@@ -114,6 +114,7 @@ typedef struct class_cache_key class_cache_key_t;
 typedef struct class_cache_value class_cache_value_t;
 typedef struct class_entry class_entry_t;
 typedef struct class_hash_table class_hash_table_t;
+typedef struct class_info class_info_t;
 
 typedef void *thread_fn(void *args);
 
@@ -246,8 +247,6 @@ struct heap_iteration_context
     jvmtiEnv* jvmti;
     arena_t* arena;
     class_hash_table_t *class_table;
-    /* Reuse existing cache for class signature lookups */
-    cache_t* class_cache;
 };
 
 struct method_cache_value 
@@ -275,11 +274,18 @@ struct thread_context
     method_sample_t *sample; /**< Current top of method sample stack - most recent call */
 };
 
+struct class_info
+{
+    char class_sig[MAX_SIG_SZ];
+    uint8_t in_heap_iteration;
+};
+
 /* Pre-allocate hash table for class stats during setup */
 struct class_entry
 {
-    jlong class_tag;
+    char class_sig[MAX_SIG_SZ];
     class_stats_t stats;
+    uint8_t occupied; /* 0=empty, 1=occupied */
 };
 
 struct class_hash_table 
