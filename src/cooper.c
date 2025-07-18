@@ -2045,6 +2045,7 @@ static void JNICALL class_load_callback(jvmtiEnv *jvmti_env, JNIEnv* jni_env,
             size_t len = strlen(class_sig);
             if (len >= sizeof(info->class_sig)) 
                 len = sizeof(info->class_sig) - 1;
+            
             memcpy(info->class_sig, class_sig, len);
             info->class_sig[len] = '\0';
             info->in_heap_iteration = 0;
@@ -2108,7 +2109,7 @@ static int class_stats_compare(const void *a, const void *b)
     return 0;
 }
 
-static size_t hash_string_safe(const char *str, size_t capacity)
+static size_t hash_string(const char *str, size_t capacity)
 {
     if (!str || capacity == 0) return 0;
     
@@ -2140,7 +2141,7 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
         return NULL;
     }
     
-    size_t hash = hash_string_safe(class_sig, table->capacity);
+    size_t hash = hash_string(class_sig, table->capacity);
     
     /* Linear probing with enhanced bounds checking */
     for (size_t i = 0; i < table->capacity; i++) {
@@ -2160,6 +2161,7 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
             size_t sig_len = strlen(class_sig);
             if (sig_len >= sizeof(entry->class_sig)) 
                 sig_len = sizeof(entry->class_sig) - 1;
+
             memcpy(entry->class_sig, class_sig, sig_len);
             entry->class_sig[sig_len] = '\0';
             
@@ -2194,7 +2196,7 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
     UNUSED(tag_ptr);
     UNUSED(length);
 
-    /* Enhanced input validation */
+    /* No-op */
     if (class_tag == 0)
         return JVMTI_VISIT_OBJECTS;
     
@@ -2210,11 +2212,6 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
         return JVMTI_VISIT_ABORT;
     }
 
-    /* class_tag should be a pointer to class_info_t struct */
-    class_info_t *info = (class_info_t*)(intptr_t)class_tag;
-    if (!info->in_heap_iteration) 
-        return JVMTI_VISIT_OBJECTS;
-
     heap_iteration_context_t *ctx = (heap_iteration_context_t*)user_data;
     
     /* Validate context */
@@ -2223,32 +2220,37 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
         LOG_ERROR("Invalid context in heap callback");
         return JVMTI_VISIT_ABORT;
     }
-    
-    uint64_t safe_size = (uint64_t)size;  /* Convert after validation */
+
+    /* class_tag should be a pointer to class_info_t struct */
+    class_info_t *info = (class_info_t*)(intptr_t)class_tag;
+    if (!info->in_heap_iteration) 
+        return JVMTI_VISIT_OBJECTS;
+
     class_stats_t *stats = find_or_create_stats_robust(ctx, info->class_sig);
     
-    if (stats) 
+    if (!stats)
+        return JVMTI_VISIT_OBJECTS;
+
+    /* Overflow protection for counters */
+    if (stats->instance_count == UINT64_MAX) 
     {
-        /* Overflow protection for counters */
-        if (stats->instance_count == UINT64_MAX) 
-        {
-            LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
-            return JVMTI_VISIT_OBJECTS;
-        }
-        
-        if (stats->total_size > UINT64_MAX - safe_size) 
-        {
-            LOG_WARN("Total size overflow for class_tag %ld", class_tag);
-            return JVMTI_VISIT_OBJECTS;
-        }
-        
-        stats->instance_count++;
-        stats->total_size += safe_size;
-        
-        /* Safe average calculation */
-        if (stats->instance_count > 0)
-            stats->avg_size = stats->total_size / stats->instance_count;
+        LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
+        return JVMTI_VISIT_OBJECTS;
     }
+    
+    uint64_t safe_size = (uint64_t)size;  /* Convert after validation */
+    if (stats->total_size > UINT64_MAX - safe_size) 
+    {
+        LOG_WARN("Total size overflow for class_tag %ld", class_tag);
+        return JVMTI_VISIT_OBJECTS;
+    }
+    
+    stats->instance_count++;
+    stats->total_size += safe_size;
+    
+    /* Safe average calculation */
+    if (stats->instance_count > 0)
+        stats->avg_size = stats->total_size / stats->instance_count;
     
     return JVMTI_VISIT_OBJECTS;
 }
@@ -2323,7 +2325,8 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     }
     
     /* Validate class count */
-    if (class_count <= 0) {
+    if (class_count <= 0) 
+    {
         LOG_WARN("No classes found for heap statistics");
         goto cleanup_classes;
     }
@@ -2418,7 +2421,7 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     }
     
     /* Tag classes for heap iteration */
-    for (jint i = 0; i < class_count; i++) 
+    for (int i = 0; i < class_count; i++) 
     {
         jlong tag = 0;
         (*jvmti)->GetTag(jvmti, classes[i], &tag);
@@ -2445,7 +2448,6 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     LOG_INFO("Heap iteration completed, processing %zu unique classes", table->count);
     
     /* Process hashtable results into top-N heap with bounds checking */
-    // char class_sig_buffer[MAX_SIG_SZ];
     size_t processed = 0;
     
     for (size_t i = 0; i < table->capacity && processed < table->count; i++) 
@@ -2487,21 +2489,17 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     
     LOG_INFO("Processed %zu classes, top heap size: %zu", processed, heap->size);
     
-    /* Store results in global context with validation */
-    if (global_ctx) 
-    {
-        global_ctx->last_heap_stats = heap;
-        global_ctx->last_heap_stats_count = heap->size;
-        global_ctx->last_heap_stats_time = get_current_time_ns();
-        LOG_DEBUG("Stored heap statistics: %zu classes at time %llu", 
-                  heap->size, (unsigned long long)global_ctx->last_heap_stats_time);
-    } else {
-        LOG_WARN("Global context is null, cannot store heap statistics");
-    }
+    global_ctx->last_heap_stats = heap;
+    global_ctx->last_heap_stats_count = heap->size;
+    global_ctx->last_heap_stats_time = get_current_time_ns();
+    LOG_DEBUG("Stored heap statistics: %zu classes at time %llu", 
+                heap->size, (unsigned long long)global_ctx->last_heap_stats_time);
+
     
 cleanup_tags:
-    /* Clean up class tags with error handling */
-    for (jint i = 0; i < class_count; i++) {
+    /* Clean up class tags */
+    for (int i = 0; i < class_count; i++) 
+    {
         jlong tag = 0;
         (*jvmti)->GetTag(jvmti, classes[i], &tag);
         
@@ -2540,32 +2538,6 @@ void *heap_stats_thread_func(void *arg)
     heap_thread_attached = 1;
     LOG_INFO("Heap statistics thread successfully attached to JVM");
     
-    /* Get class cache for heap statistics */
-    // arena_t *heap_arena = find_arena(ctx->arena_head, HEAP_STATS_ARENA_NAME);
-    // if (!heap_arena)
-    // {
-    //     LOG_ERROR("Could not find cache arena for heap statistics");
-    //     goto cleanup;
-    // }
-    
-    // cache_config_t config = {
-    //     .max_entries = 128,
-    //     .key_size = sizeof(class_cache_key_t),
-    //     .value_size = sizeof(class_cache_value_t),
-    //     .key_compare = class_cache_key_compare,
-    //     .key_copy = NULL,
-    //     .value_copy = NULL, 
-    //     .entry_init = NULL,
-    //     .name = "heap_class_cache"
-    // };
-    
-    // cache_t *class_cache = cache_init(heap_arena, &config);
-    // if (!class_cache)
-    // {
-    //     LOG_ERROR("Could not create class cache for heap statistics");
-    //     goto cleanup;
-    // }
-    
     //TODO extract sleep interval to config
     while (ctx->heap_stats_running)
     {
@@ -2593,7 +2565,6 @@ void *heap_stats_thread_func(void *arg)
         sleep(60);
     }
     
-// cleanup:
     /* Detach from JVM if we were attached and JVM is still live */
     if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
     {
@@ -2867,10 +2838,10 @@ static int precache_loaded_classes(jvmtiEnv *jvmti_env)
         jlong existing_tag = 0;
         (*jvmti_env)->GetTag(jvmti_env, classes[i], &existing_tag);
         
-        if (existing_tag> 0)
+        if (existing_tag > 0)
             continue;
         
-        //TODO need to consoildate this logic at some point
+        //TODO need to consolidate this logic at some point
         /* Call the same logic as class_load_callback */
         char *class_sig = NULL;
         err = (*jvmti_env)->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
@@ -2905,7 +2876,6 @@ static int precache_loaded_classes(jvmtiEnv *jvmti_env)
  */
 static void JNICALL vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 {
-    UNUSED(jvmti_env);
     UNUSED(thread);
     
     if (jni_env == NULL)
