@@ -228,6 +228,26 @@ void arena_destroy(arena_t *arena)
 }
 
 /**
+ * Reset the arena
+ * 
+ * @param arena         Pointer to the arena to reset
+ */
+void arena_reset(arena_t *arena)
+{
+    assert(arena != NULL);
+
+    if (!arena)
+        return;
+
+    arena->used = 0;
+    arena->free_count = 0;
+
+    /* Clear free block tracking */
+    memset(arena->free_blocks, 0, arena->max_free_blocks * sizeof(void*));
+    memset(arena->block_sizes, 0, arena->max_free_blocks * sizeof(size_t));
+}
+
+/**
  * Create a new arena, initialize it and add it to a list
  * 
  * @param head      Pointer to the head pointer of the list (modified)

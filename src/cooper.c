@@ -26,21 +26,12 @@ static const arena_config_t arena_configs[] = {
     {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS},
     {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ, HEAP_STATS_ARENA_BLOCKS}
+    // {CLASS_ARENA_NAME, CLASS_ARENA_SZ, CLASS_ARENA_BLOCKS}
+    // {HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ, HEAP_STATS_ARENA_BLOCKS}
 };
 
 /* Cache the arena pointer globally to avoid repeated lookups */
 static arena_t *cached_cache_arena = NULL;
-
-// /* Class signature cache comparison function */
-// static int class_cache_key_compare(const void *key1, const void *key2)
-// {
-//     const class_cache_key_t *k1 = (const class_cache_key_t *)key1;
-//     const class_cache_key_t *k2 = (const class_cache_key_t *)key2;
-    
-//     if (k1->class_ref == k2->class_ref) return 0;
-//     return (k1->class_ref < k2->class_ref) ? -1 : 1;
-// }
 
 /* Key comparison function for method cache */
 static int method_cache_key_compare(const void *key1, const void *key2)
@@ -1498,7 +1489,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         return;
 
     /* Get our method cache */
-    cache_t *cache = get_method_cache();
+    cache_t *cache = cache_tls_get(METHOD_CACHE_NAME, cached_cache_arena, &method_cache_config); //get_method_cache();
     if (!cache) 
         return;
 
@@ -1634,6 +1625,10 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     UNUSED(was_popped_by_exception);
     UNUSED(return_value);
     
+#ifndef ENABLE_DEBUG_LOGS
+    UNUSED(jvmti);
+#endif
+
     /* Get thread-local context */
     thread_context_t *context = get_thread_local_context();
 
@@ -1735,6 +1730,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     /* Record the metrics */
     record_method_execution(global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
 
+#ifdef ENABLE_DEBUG_LOGS
     char *method_name = NULL;
     char *method_signature = NULL;
     char *class_signature = NULL;
@@ -1778,7 +1774,7 @@ deallocate:
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
-
+#endif
 }
 
 /**
@@ -2312,6 +2308,13 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
         return;
     }
 
+    /* Reset scratch arena to reclaim previous allocations */
+    arena_reset(scratch_arena);
+
+    /* Clear previous heap stats as these are now invalid */
+    global_ctx->last_heap_stats = NULL;
+    global_ctx->last_heap_stats_count = 0;
+
     const size_t TOP_N = 20;
     
     /* Get loaded classes with error handling */
@@ -2399,7 +2402,7 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
               table->capacity, sizeof(class_entry_t));
     
     /* Create min heap with error checking */
-    min_heap_t* heap = min_heap_create(scratch_arena, TOP_N, class_stats_compare);
+    min_heap_t *heap = min_heap_create(scratch_arena, TOP_N, class_stats_compare);
     if (!heap) 
     {
         LOG_ERROR("Failed to create min heap");
@@ -2475,7 +2478,8 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
                     continue;
                 
                 /* Insert into min heap */
-                if (!min_heap_insert_or_replace(heap, heap_entry)) {
+                if (!min_heap_insert_or_replace(heap, heap_entry)) 
+                {
                     LOG_DEBUG("Failed to insert into heap (likely not top-N)");
                 } else {
                     LOG_DEBUG("Added to heap: %s (%llu instances, %llu bytes)", 
@@ -3141,6 +3145,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         LOG_ERROR("Failed to initialize cache system\n");
         return JNI_ERR;
     }
+
+    /* Cache the cache arena so it's available globally */
+    cached_cache_arena = cache_arena;
 
     /* Init logging after all arenas are created */
     arena_t *log_arena = find_arena(global_ctx->arena_head, LOG_ARENA_NAME);
