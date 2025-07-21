@@ -91,7 +91,7 @@ cache_t *cache_init(arena_t *arena, const cache_config_t *config)
     void *value_memory = arena_alloc(arena, total_value_memory);
     if (!value_memory) 
     {
-        printf("Unable to alloc value mem in arena for arena: %s\n", arena->name);
+        printf("Unable to alloc value mem: %ld in arena for arena: %s\n", total_value_memory, arena->name);
         return NULL;
     }
     /* Initialize cache */

@@ -24,14 +24,19 @@ static const arena_config_t arena_configs[] = {
     {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {CACHE_ARENA_NAME, CACHE_ARENA_SZ, CACHE_ARENA_BLOCKS},
+    {METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS},
     {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    // {CLASS_ARENA_NAME, CLASS_ARENA_SZ, CLASS_ARENA_BLOCKS}
+    {CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS}
     // {HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ, HEAP_STATS_ARENA_BLOCKS}
 };
 
-/* Cache the arena pointer globally to avoid repeated lookups */
-static arena_t *cached_cache_arena = NULL;
+//TODO perhaps move these to ctx
+
+/* Cache arena pointers globally to avoid repeated lookups */
+static arena_t *cached_method_cache_arena = NULL;
+static arena_t *cached_class_cache_arena = NULL;
+
+//TODO perhaps inline this
 
 /* Key comparison function for method cache */
 static int method_cache_key_compare(const void *key1, const void *key2)
@@ -132,19 +137,6 @@ static thread_context_t *get_thread_local_context() {
     }
     
     return context;
-}
-
-/* Get method cache instance */
-static cache_t *get_method_cache(void)
-{
-    if (!cached_cache_arena)
-    {
-        cached_cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
-        if (!cached_cache_arena)
-            return NULL;
-    }
-
-    return cache_tls_get(METHOD_CACHE_NAME, cached_cache_arena, &method_cache_config);
 }
 
 /** 
@@ -1489,7 +1481,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         return;
 
     /* Get our method cache */
-    cache_t *cache = cache_tls_get(METHOD_CACHE_NAME, cached_cache_arena, &method_cache_config); //get_method_cache();
+    cache_t *cache = cache_tls_get(METHOD_CACHE_NAME, cached_method_cache_arena, &method_cache_config);
     if (!cache) 
         return;
 
@@ -2035,7 +2027,7 @@ static void JNICALL class_load_callback(jvmtiEnv *jvmti_env, JNIEnv* jni_env,
     
     if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
     {
-        class_info_t *info = arena_alloc(cached_cache_arena, sizeof(class_info_t));
+        class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
         if (info != NULL) {
             /* Safe copy with guaranteed null termination */
             size_t len = strlen(class_sig);
@@ -2852,7 +2844,7 @@ static int precache_loaded_classes(jvmtiEnv *jvmti_env)
         
         if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
         {
-            class_info_t *info = arena_alloc(cached_cache_arena, sizeof(class_info_t));
+            class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
             if (info != NULL) 
             {
                 size_t len = strlen(class_sig);
@@ -3132,22 +3124,30 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     }
 
     /* Cache arena creation before other initializations */
-    arena_t *cache_arena = find_arena(global_ctx->arena_head, CACHE_ARENA_NAME);
-    if (!cache_arena) 
+    arena_t *method_cache_arena = find_arena(global_ctx->arena_head, METHOD_CACHE_ARENA_NAME);
+    if (!method_cache_arena) 
+    {
+        LOG_ERROR("Cache arena not found\n");
+        return JNI_ERR;
+    }
+
+    arena_t *class_cache_arena = find_arena(global_ctx->arena_head, CLASS_CACHE_ARENA_NAME);
+    if (!class_cache_arena) 
     {
         LOG_ERROR("Cache arena not found\n");
         return JNI_ERR;
     }
 
     /* Initialize cache system */
-    if (cache_init_system(cache_arena) != 0) 
+    if (cache_init_system(method_cache_arena) != 0) 
     {
         LOG_ERROR("Failed to initialize cache system\n");
         return JNI_ERR;
     }
 
     /* Cache the cache arena so it's available globally */
-    cached_cache_arena = cache_arena;
+    cached_method_cache_arena = method_cache_arena;
+    cached_class_cache_arena = class_cache_arena;
 
     /* Init logging after all arenas are created */
     arena_t *log_arena = find_arena(global_ctx->arena_head, LOG_ARENA_NAME);
