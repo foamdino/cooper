@@ -1454,6 +1454,32 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
 }
 #endif
 
+/* Caches class signature in class_info_t using SetTag */
+static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
+{
+    char *class_sig = NULL;
+    jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+    
+    if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
+    {
+        class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
+        if (info != NULL) 
+        {
+            size_t len = strlen(class_sig);
+            if (len >= sizeof(info->class_sig)) 
+                len = sizeof(info->class_sig) - 1;
+
+            memcpy(info->class_sig, class_sig, len);
+            info->class_sig[len] = '\0';
+            info->in_heap_iteration = 0;
+
+            jlong tag = (jlong)(intptr_t)info;
+            (*jvmti_env)->SetTag(jvmti_env, klass, tag);
+        }
+        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
+    }
+}
+
 /*
  * Method entry callback
  */
@@ -2010,29 +2036,7 @@ static void JNICALL class_load_callback(jvmtiEnv *jvmti_env, JNIEnv* jni_env,
     UNUSED(jni_env);
     UNUSED(thread);
     
-    char *class_sig = NULL;
-    jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-    
-    if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
-    {
-        class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
-        if (info != NULL) {
-            /* Safe copy with guaranteed null termination */
-            size_t len = strlen(class_sig);
-            if (len >= sizeof(info->class_sig)) 
-                len = sizeof(info->class_sig) - 1;
-            
-            memcpy(info->class_sig, class_sig, len);
-            info->class_sig[len] = '\0';
-            info->in_heap_iteration = 0;
-            // LOG_INFO("Class load callback called for %s", info->class_sig);
-            
-            jlong tag = (jlong)(intptr_t)info;
-            (*jvmti_env)->SetTag(jvmti_env, klass, tag);
-        }
-        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
-    }
-
+    cache_class_info(jvmti_env, klass);
 }
 
 static void JNICALL thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
@@ -2232,7 +2236,7 @@ static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size,
 }
 
 /* Improved hashtable sizing with better limits */
-static size_t calculate_hashtable_size_safe(jint class_count) 
+static size_t calculate_hashtable_size_safe(int class_count) 
 {
     /* Defensive bounds checking - check negative first */
     if (class_count < 0) {
@@ -2298,8 +2302,8 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     const size_t TOP_N = 20;
     
     /* Get loaded classes with error handling */
-    jint class_count;
-    jclass* classes;
+    int class_count;
+    jclass *classes;
     jvmtiError err = (*jvmti)->GetLoadedClasses(jvmti, &class_count, &classes);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -2712,7 +2716,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
         return -1;
     }
     index = metrics->count;
-    
+
     /* As the values are guaranteed to be 0 by the initial allocation, no need to set every value here */
     metrics->signatures[index] = arena_strdup(arena, signature);
     metrics->sample_rates[index] = sample_rate;
@@ -2809,9 +2813,15 @@ static int precache_loaded_classes(jvmtiEnv *jvmti_env)
         return COOPER_ERR;
     }
 
+    if (classes == NULL)
+    {
+        LOG_ERROR("GetLoadedClasses returned NULL class list");
+        return COOPER_ERR;
+    }
+
     LOG_INFO("Pre-caching %d loaded classes", class_count);
     
-    for (jint i = 0; i < class_count; i++) 
+    for (int i = 0; i < class_count; i++) 
     {
         /* Check if already tagged */
         jlong existing_tag = 0;
@@ -2820,29 +2830,7 @@ static int precache_loaded_classes(jvmtiEnv *jvmti_env)
         if (existing_tag > 0)
             continue;
         
-        //TODO need to consolidate this logic at some point
-        /* Call the same logic as class_load_callback */
-        char *class_sig = NULL;
-        err = (*jvmti_env)->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
-        
-        if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
-        {
-            class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
-            if (info != NULL) 
-            {
-                size_t len = strlen(class_sig);
-                if (len >= sizeof(info->class_sig)) 
-                    len = sizeof(info->class_sig) - 1;
-
-                memcpy(info->class_sig, class_sig, len);
-                info->class_sig[len] = '\0';
-                info->in_heap_iteration = 0;
-                
-                jlong tag = (jlong)(intptr_t)info;
-                (*jvmti_env)->SetTag(jvmti_env, classes[i], tag);
-            }
-            (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
-        }
+        cache_class_info(jvmti_env, classes[i]);
     }
     
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)classes);
