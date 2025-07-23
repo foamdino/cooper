@@ -37,7 +37,7 @@ strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com
 ## Features TODO
 
 * Summary
-  * Top N objects allocated
+  * Top N objects allocated (v1 done)
   * Top N methods by time/cpu cycles/memory allocations/syscalls
 * Methods
   * Entry/exit tracking (v1 done)
