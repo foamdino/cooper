@@ -2642,7 +2642,7 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     metrics->capacity = initial_capacity;
     metrics->count = 0;
     
-    /* Allocate all arrays */
+    /* arena_alloc zeroes memory — no need for manual memset */
     metrics->signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
     metrics->sample_rates = arena_alloc(arena, initial_capacity * sizeof(int));
     metrics->call_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
@@ -2662,7 +2662,7 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
         !metrics->cpu_cycles || !metrics->metric_flags) {
         return NULL;
     }
-    
+
     /* Set min_time_ns to maximum value initially */
     for (size_t i = 0; i < initial_capacity; i++)
         metrics->min_time_ns[i] = UINT64_MAX;
@@ -2712,16 +2712,11 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
         return -1;
     }
     index = metrics->count;
+    
+    /* As the values are guaranteed to be 0 by the initial allocation, no need to set every value here */
     metrics->signatures[index] = arena_strdup(arena, signature);
     metrics->sample_rates[index] = sample_rate;
-    metrics->call_counts[index] = 0;
-    metrics->sample_counts[index] = 0;
-    metrics->total_time_ns[index] = 0;
     metrics->min_time_ns[index] = UINT64_MAX;
-    metrics->max_time_ns[index] = 0;
-    metrics->alloc_bytes[index] = 0;
-    metrics->peak_memory[index] = 0;
-    metrics->cpu_cycles[index] = 0;
     metrics->metric_flags[index] = flags;
     
     metrics->count++;
