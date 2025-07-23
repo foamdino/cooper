@@ -2177,8 +2177,6 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
 }
 
 /* Robust heap object callback with enhanced error handling */
-// static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size, 
-//                                                 jlong* tag_ptr, jint length, void *user_data) 
 static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference_kind,
                                const jvmtiHeapReferenceInfo *reference_info,
                                jlong class_tag,
@@ -2189,7 +2187,11 @@ static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference
                                jint length,
                                void *user_data)
 {
-    // UNUSED(tag_ptr);
+    UNUSED(reference_kind);
+    UNUSED(reference_info);
+    UNUSED(referrer_class_tag);
+    UNUSED(tag_ptr);
+    UNUSED(referrer_tag);
     UNUSED(length);
 
     /* No-op */
@@ -2438,11 +2440,9 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     /* Set up heap iteration callbacks */
     jvmtiHeapCallbacks callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
-    // callbacks.heap_iteration_callback = heap_object_callback_robust;
     callbacks.heap_reference_callback = heap_object_callback_robust;
     
     LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
-    // err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
     err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &ctx);
     if (err != JVMTI_ERROR_NONE) 
     {
