@@ -349,6 +349,16 @@ struct agent_context
     uint64_t last_heap_stats_time;
 };
 
+/* Key comparison function for method cache */
+static inline int method_cache_key_compare(const void *key1, const void *key2)
+{
+    const method_cache_key_t *k1 = (const method_cache_key_t *)key1;
+    const method_cache_key_t *k2 = (const method_cache_key_t *)key2;
+    
+    if (k1->method_id == k2->method_id) return 0;
+    return (k1->method_id < k2->method_id) ? -1 : 1;
+}
+
 /* jmvti callback functions */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
 void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);

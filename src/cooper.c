@@ -36,18 +36,6 @@ static const arena_config_t arena_configs[] = {
 static arena_t *cached_method_cache_arena = NULL;
 static arena_t *cached_class_cache_arena = NULL;
 
-//TODO perhaps inline this
-
-/* Key comparison function for method cache */
-static int method_cache_key_compare(const void *key1, const void *key2)
-{
-    const method_cache_key_t *k1 = (const method_cache_key_t *)key1;
-    const method_cache_key_t *k2 = (const method_cache_key_t *)key2;
-    
-    if (k1->method_id == k2->method_id) return 0;
-    return (k1->method_id < k2->method_id) ? -1 : 1;
-}
-
 static const cache_config_t method_cache_config = 
 {
     .max_entries = METHOD_CACHE_MAX_ENTRIES,
