@@ -934,6 +934,32 @@ void export_to_file(agent_context_t *ctx)
         }
     }
 
+    /* Add heap stats section before summary in export_to_file() */
+    fprintf(fp, "# Heap Statistics (Top %zu Classes by Memory Usage)\n", ctx->last_heap_stats_count);
+    fprintf(fp, "# Format: class_name, instance_count, total_size, avg_size\n");
+
+    if (ctx->last_heap_stats && ctx->last_heap_stats_count > 0) 
+    {
+        for (size_t i = 0; i < ctx->last_heap_stats_count; i++) 
+        {
+            class_stats_t *stats = (class_stats_t*)ctx->last_heap_stats->elements[i];
+            if (stats && stats->class_name) 
+            {
+                fprintf(fp, "%s,%llu,%llu,%llu\n",
+                    stats->class_name,
+                    (unsigned long long)stats->instance_count,
+                    (unsigned long long)stats->total_size,
+                    (unsigned long long)stats->avg_size);
+            }
+        }
+    }
+    else 
+    {
+        fprintf(fp, "# No heap statistics available\n");
+    }
+
+    fprintf(fp, "# ------ \n\n");
+
     /* Add summary statistics */
     fprintf(fp, "\n# Summary Statistics\n");
     fprintf(fp, "Total methods tracked: %zu\n", ctx->metrics->count);
@@ -992,32 +1018,14 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
         return;
     }
     
-    jclass threadClass = NULL;
     jobject threadsMap = NULL;
     jobject entrySet = NULL;
     jobjectArray entries = NULL;
     jclass mapClass = NULL;
     jclass setClass = NULL;
-    jmethodID getIdMethod = NULL;
-
-    /* Find the Thread class */
-    threadClass = (*jni)->FindClass(jni, "java/lang/Thread");
-    if (!threadClass) 
-    {
-        LOG_ERROR("Failed to find Thread class\n");
-        goto cleanup;
-    }
-
-    /* Get method ID for Thread.getId() */
-    getIdMethod = (*jni)->GetMethodID(jni, threadClass, "getId", "()J");
-    if (!getIdMethod) 
-    {
-        LOG_ERROR("Failed to find Thread.getId method\n");
-        goto cleanup;
-    }
 
     /* Get the getAllStackTraces method */
-    jmethodID getAllThreadsMethod = (*jni)->GetStaticMethodID(jni, threadClass, 
+    jmethodID getAllThreadsMethod = (*jni)->GetStaticMethodID(jni, ctx->java_thread_class, 
         "getAllStackTraces", "()Ljava/util/Map;");
     if (!getAllThreadsMethod) 
     {
@@ -1026,7 +1034,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
     }
     
     /* Call getAllStackTraces to get all threads */
-    threadsMap = (*jni)->CallStaticObjectMethod(jni, threadClass, getAllThreadsMethod);
+    threadsMap = (*jni)->CallStaticObjectMethod(jni, ctx->java_thread_class, getAllThreadsMethod);
     if (!threadsMap || (*jni)->ExceptionCheck(jni)) 
     {
         if ((*jni)->ExceptionCheck(jni)) 
@@ -1129,7 +1137,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
             goto local_clean;
         
         /* Get thread ID */
-        jlong thread_id = (*jni)->CallLongMethod(jni, threadObj, getIdMethod);
+        jlong thread_id = (*jni)->CallLongMethod(jni, threadObj, ctx->getId_method);
         if ((*jni)->ExceptionCheck(jni)) 
         {
             (*jni)->ExceptionClear(jni);
@@ -1208,7 +1216,6 @@ cleanup:
     if (entrySet) (*jni)->DeleteLocalRef(jni, entrySet);
     if (mapClass) (*jni)->DeleteLocalRef(jni, mapClass);
     if (threadsMap) (*jni)->DeleteLocalRef(jni, threadsMap);
-    if (threadClass) (*jni)->DeleteLocalRef(jni, threadClass);
 }
 
 /**
@@ -2093,11 +2100,11 @@ static size_t hash_string(const char *str, size_t capacity)
 {
     if (!str || capacity == 0) return 0;
     
-    size_t hash = 5381; /* djb2 hash TODO what is this??*/
+    size_t hash = 5381; /* djb2 hash starting prime */
     int c;
-    while ((c = *str++)) {
+    while ((c = *str++))
         hash = ((hash << 5) + hash) + c;
-    }
+
     return hash % capacity;
 }
 
@@ -2170,10 +2177,19 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
 }
 
 /* Robust heap object callback with enhanced error handling */
-static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size, 
-                                                jlong* tag_ptr, jint length, void *user_data) 
+// static jint JNICALL heap_object_callback_robust(jlong class_tag, jlong size, 
+//                                                 jlong* tag_ptr, jint length, void *user_data) 
+static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference_kind,
+                               const jvmtiHeapReferenceInfo *reference_info,
+                               jlong class_tag,
+                               jlong referrer_class_tag,
+                               jlong size,
+                               jlong *tag_ptr,
+                               jlong *referrer_tag,
+                               jint length,
+                               void *user_data)
 {
-    UNUSED(tag_ptr);
+    // UNUSED(tag_ptr);
     UNUSED(length);
 
     /* No-op */
@@ -2422,10 +2438,12 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     /* Set up heap iteration callbacks */
     jvmtiHeapCallbacks callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.heap_iteration_callback = heap_object_callback_robust;
+    // callbacks.heap_iteration_callback = heap_object_callback_robust;
+    callbacks.heap_reference_callback = heap_object_callback_robust;
     
     LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
-    err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
+    // err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &ctx);
+    err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &ctx);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("Heap iteration failed: %d", err);
