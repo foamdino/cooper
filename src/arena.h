@@ -116,6 +116,13 @@ int arena_free(arena_t *arena, void *ptr);
 void arena_destroy(arena_t *arena);
 
 /**
+ * Reset the arena
+ * 
+ * @param arena         Pointer to the arena to reset
+ */
+void arena_reset(arena_t *arena);
+
+/**
  * Create a new arena, initialize it and add it to a list
  * 
  * @param head      Pointer to the head pointer of the list (modified)

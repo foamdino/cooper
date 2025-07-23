@@ -86,7 +86,7 @@ error_cleanup:
  * from the remaining arena space. Each allocation includes a hidden header that stores
  * the size and a magic number for validation.
  * 
- * Memory is aligned to 8-byte boundaries to ensure proper alignment for all data types.
+ * Memory is aligned to 8-byte boundaries and always zero-initialized for safety.
  * 
  * @param arena         Pointer to the arena
  * @param size          Number of bytes to allocate
@@ -128,7 +128,9 @@ void *arena_alloc(arena_t *arena, size_t sz)
             header->magic = ARENA_BLOCK_MAGIC;
             
             /* Return pointer to user data (after the header) */
-            return (char*)block + header_size;
+            void *user_ptr = (char*)block + header_size;
+            memset(user_ptr, 0, sz);
+            return user_ptr;
         }
     }
     
@@ -146,7 +148,9 @@ void *arena_alloc(arena_t *arena, size_t sz)
     header->magic = ARENA_BLOCK_MAGIC;
     
     /* Return pointer to user data (after the header) */
-    return (char*)block + header_size;
+    void *user_ptr = (char*)block + header_size;
+    memset(user_ptr, 0, sz);
+    return user_ptr;
 }
 
 /**
@@ -221,6 +225,26 @@ void arena_destroy(arena_t *arena)
     
     /* Free the arena struct itself */
     free(arena);
+}
+
+/**
+ * Reset the arena
+ * 
+ * @param arena         Pointer to the arena to reset
+ */
+void arena_reset(arena_t *arena)
+{
+    assert(arena != NULL);
+
+    if (!arena)
+        return;
+
+    arena->used = 0;
+    arena->free_count = 0;
+
+    /* Clear free block tracking */
+    memset(arena->free_blocks, 0, arena->max_free_blocks * sizeof(void*));
+    memset(arena->block_sizes, 0, arena->max_free_blocks * sizeof(size_t));
 }
 
 /**

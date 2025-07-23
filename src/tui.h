@@ -74,7 +74,6 @@ struct tui_terminal_info
 {
     int width;
     int height;
-    int lines_drawn;
 };
 
 struct tui_context 
@@ -151,23 +150,6 @@ void tui_draw_objects_view(tui_context_t *ctx);
  * Clear the screen
  */
 void tui_clear_screen(void);
-
-/**
- * Safe print that respects terminal boundaries
- * @param terminal Terminal info with line tracking
- * @param format Printf-style format string
- */
-void tui_safe_print(tui_terminal_info_t *terminal, const char *format, ...);
-
-/**
- * Build a formatted line with proper padding and borders
- * @param buffer Output buffer
- * @param buffer_size Size of output buffer
- * @param width Terminal width
- * @param format Printf-style format string
- * @param ... Format arguments
- */
-void tui_build_line(char *buffer, size_t buffer_size, int width, const char *format, ...);
 
 /**
  * Draw a bar chart

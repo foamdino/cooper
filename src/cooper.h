@@ -31,6 +31,7 @@
 #include "config.h"
 #include "shared_mem.h"
 #include "thread_util.h"
+#include "heap.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)
@@ -47,7 +48,9 @@
 #define SAMPLE_ARENA_SZ 2048 * 1024
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
-#define CACHE_ARENA_SZ 256 * 1024
+#define METHOD_CACHE_ARENA_SZ 12 * 1024 * 1024
+#define SCRATCH_ARENA_SZ 16 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS 1024
@@ -56,7 +59,9 @@
 #define SAMPLE_ARENA_BLOCKS 1024
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
-#define CACHE_ARENA_BLOCKS 1024
+#define METHOD_CACHE_ARENA_BLOCKS 1024
+#define CLASS_CACHE_ARENA_BLOCKS 1024
+#define SCRATCH_ARENA_BLOCKS 1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME "exception_arena"
@@ -64,7 +69,9 @@
 #define SAMPLE_ARENA_NAME "sample_arena"
 #define CONFIG_ARENA_NAME "config_arena"
 #define METRICS_ARENA_NAME "metrics_arena"
-#define CACHE_ARENA_NAME "cache_arena"
+#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
+#define CLASS_CACHE_ARENA_NAME "class_cache_arena"
+#define SCRATCH_ARENA_NAME "scratch_arena"
 
 /* Metric flags for method sampling */
 #define METRIC_FLAG_TIME    0x0001
@@ -77,13 +84,13 @@
 
 /* Method cache */
 #define METHOD_CACHE_NAME "method_cache"
-#define METHOD_CACHE_MAX_ENTRIES 256
-
+#define METHOD_CACHE_MAX_ENTRIES 16
 
 typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct class_stats class_stats_t;
 typedef struct method_cache_key method_cache_key_t;
 typedef struct method_cache_value method_cache_value_t;
 typedef struct thread_context thread_context_t;
@@ -95,6 +102,14 @@ typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
 typedef struct memory_metrics_mgr memory_metrics_mgr_t;
 typedef struct object_allocation_metrics object_allocation_metrics_t;
+typedef struct heap_iteration_context heap_iteration_context_t;
+
+typedef struct class_cache_key class_cache_key_t;
+typedef struct class_cache_value class_cache_value_t;
+typedef struct class_entry class_entry_t;
+typedef struct class_hash_table class_hash_table_t;
+typedef struct class_info class_info_t;
+
 typedef void *thread_fn(void *args);
 
 /**
@@ -103,7 +118,8 @@ typedef void *thread_fn(void *args);
  * This structure organizes metrics in a columnar format for better
  * cache locality and more efficient data processing.
  */
-struct method_metrics_soa {
+struct method_metrics_soa 
+{
     size_t capacity;          /**< Total capacity allocated */
     size_t count;             /**< Current number of methods being tracked */
     
@@ -206,22 +222,42 @@ struct method_sample
     method_sample_t *parent; /**< Parent (or calling) method */
 };
 
-struct method_cache_key {
+struct method_cache_key 
+{
     jmethodID method_id;
 };
 
-struct method_cache_value {
+struct class_stats 
+{
+    char* class_name;
+    uint64_t instance_count;
+    uint64_t total_size;
+    uint64_t avg_size;
+};
+
+struct heap_iteration_context 
+{
+    JNIEnv* env;
+    jvmtiEnv* jvmti;
+    arena_t* arena;
+    class_hash_table_t *class_table;
+};
+
+struct method_cache_value 
+{
     char class_signature[MAX_SIG_SZ];
     char method_name[64];
     char method_signature[256];
     int should_sample;
 };
 
-struct class_cache_key {
+struct class_cache_key 
+{
     jclass class_ref;           /* Class reference as key */
 };
 
-struct class_cache_value {
+struct class_cache_value 
+{
     char class_signature[MAX_SIG_SZ];
     int valid;                  /* Validation flag */
 };
@@ -230,6 +266,27 @@ struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
     method_sample_t *sample; /**< Current top of method sample stack - most recent call */
+};
+
+struct class_info
+{
+    char class_sig[MAX_SIG_SZ];
+    uint8_t in_heap_iteration;
+};
+
+/* Pre-allocate hash table for class stats during setup */
+struct class_entry
+{
+    char class_sig[MAX_SIG_SZ];
+    class_stats_t stats;
+    uint8_t occupied; /* 0=empty, 1=occupied */
+};
+
+struct class_hash_table 
+{
+    class_entry_t *entries;
+    size_t capacity;
+    size_t count;
 };
 
 struct thread_alloc
@@ -271,10 +328,12 @@ struct agent_context
     pthread_t export_thread;        /**< Export thread */
     pthread_t mem_sampling_thread;  /**< Mem sampling background thread */
     pthread_t shm_export_thread;    /**< Export via shared mem thread */
+    pthread_t heap_stats_thread;    /**< Heap stats background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
     int export_running;             /**< Flag to signal if export thread should continue */
     int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
     int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
+    int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
@@ -284,7 +343,21 @@ struct agent_context
     thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
     object_allocation_metrics_t *object_metrics; /**< Object allocation metrics in SoA format */
     thread_id_mapping_t thread_mappings[MAX_THREAD_MAPPINGS]; /**< Map between java thread and native thread */
+    /* Heap statistics results */
+    min_heap_t *last_heap_stats;
+    size_t last_heap_stats_count;
+    uint64_t last_heap_stats_time;
 };
+
+/* Key comparison function for method cache */
+static inline int method_cache_key_compare(const void *key1, const void *key2)
+{
+    const method_cache_key_t *k1 = (const method_cache_key_t *)key1;
+    const method_cache_key_t *k2 = (const method_cache_key_t *)key2;
+    
+    if (k1->method_id == k2->method_id) return 0;
+    return (k1->method_id < k2->method_id) ? -1 : 1;
+}
 
 /* jmvti callback functions */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);

@@ -79,7 +79,7 @@ int main(int argc, char **argv)
         nob_cmd_append(&cc_cmd, "-DENABLE_INFO_LOGS", "-O2");
 
     nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so", 
-        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cooper.c", "-pthread", "-lrt");
+        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"heap.c", SRC_FOLDER"cooper.c", "-pthread", "-lrt");
 
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
@@ -90,7 +90,7 @@ int main(int argc, char **argv)
     /* compile tests */
     
     nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"test_cooper", 
-        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread", "-lrt");
+        SRC_FOLDER"arena.c", SRC_FOLDER"arena_str.c", SRC_FOLDER"log.c", SRC_FOLDER"cache.c", SRC_FOLDER"config.c", SRC_FOLDER"shared_mem.c", SRC_FOLDER"thread_util.c", SRC_FOLDER"heap.c", SRC_FOLDER"cooper.c", SRC_FOLDER"test_cooper.c", "-pthread", "-lrt");
     
     if (!nob_cmd_run_sync(test_cmd)) return 1;
 
