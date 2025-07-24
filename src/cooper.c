@@ -473,7 +473,6 @@ static object_allocation_metrics_t *init_object_allocation_metrics(arena_t *aren
         return NULL;
 
     metrics->capacity = initial_capacity;
-    metrics->count = 0;
 
     /* Allocate arrays in SoA structure */
     metrics->class_signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
@@ -934,7 +933,9 @@ void export_to_file(agent_context_t *ctx)
         }
     }
 
-    /* Add heap stats section before summary in export_to_file() */
+    /* Add heap stats section before summary */
+    fprintf(fp, "# ------ \n\n");
+
     fprintf(fp, "# Heap Statistics (Top %zu Classes by Memory Usage)\n", ctx->last_heap_stats_count);
     fprintf(fp, "# Format: class_name, instance_count, total_size, avg_size\n");
 
@@ -1114,7 +1115,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
     LOG_DEBUG("Found %d Java threads in getAllStackTraces", num_threads);
 
     /* Process each java live thread */
-    for (jsize j = 0; j < num_threads; j++) {
+    for (int j = 0; j < num_threads; j++) {
         jobject entry = NULL;
         jobject threadObj = NULL;
         jclass entryClass = NULL;
@@ -1572,6 +1573,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         goto deallocate;
     }
  
+    //TODO remove this testing/debugging code
     if (strstr(class_signature, "com/github"))
         LOG_DEBUG("Should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
 
@@ -2110,7 +2112,7 @@ static size_t hash_string(const char *str, size_t capacity)
 
 
 /* Enhanced find_or_create_stats with additional safety checks */
-static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx, const char *class_sig)
+static class_stats_t *find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 {
     class_hash_table_t *table = ctx->class_table;
     
@@ -2177,7 +2179,7 @@ static class_stats_t *find_or_create_stats_robust(heap_iteration_context_t *ctx,
 }
 
 /* Robust heap object callback with enhanced error handling */
-static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference_kind,
+static jint JNICALL heap_object_callback(jvmtiHeapReferenceKind reference_kind,
                                const jvmtiHeapReferenceInfo *reference_info,
                                jlong class_tag,
                                jlong referrer_class_tag,
@@ -2224,7 +2226,7 @@ static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference
     if (!info->in_heap_iteration) 
         return JVMTI_VISIT_OBJECTS;
 
-    class_stats_t *stats = find_or_create_stats_robust(ctx, info->class_sig);
+    class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
     
     if (!stats)
         return JVMTI_VISIT_OBJECTS;
@@ -2254,7 +2256,7 @@ static jint JNICALL heap_object_callback_robust(jvmtiHeapReferenceKind reference
 }
 
 /* Improved hashtable sizing with better limits */
-static size_t calculate_hashtable_size_safe(int class_count) 
+static size_t calculate_hashtable_size(int class_count) 
 {
     /* Defensive bounds checking - check negative first */
     if (class_count < 0) {
@@ -2301,7 +2303,7 @@ static size_t calculate_hashtable_size_safe(int class_count)
 }
 
 /* Fully robust heap statistics collection maintaining all safety checks */
-static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *env) 
+static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env) 
 {
     arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
     if (!scratch_arena) 
@@ -2317,6 +2319,7 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     global_ctx->last_heap_stats = NULL;
     global_ctx->last_heap_stats_count = 0;
 
+    // TODO move to config
     const size_t TOP_N = 20;
     
     /* Get loaded classes with error handling */
@@ -2339,7 +2342,7 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
     LOG_INFO("Collecting heap statistics for %d loaded classes", class_count);
     
     /* Calculate optimal hashtable size with safety checks */
-    size_t hash_size = calculate_hashtable_size_safe(class_count);
+    size_t hash_size = calculate_hashtable_size(class_count);
     
     /* Defensive size calculation with bounds checking */
     size_t hash_table_size = sizeof(class_hash_table_t);
@@ -2388,17 +2391,9 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
         LOG_ERROR("Failed to allocate hash table entries");
         goto cleanup_classes;
     }
-    
-    table->capacity = hash_size;
-    table->count = 0;
 
-    /* Initialize all entries as unoccupied with empty signatures */
-    for (size_t i = 0; i < hash_size; i++) 
-    {
-        table->entries[i].class_sig[0] = '\0';
-        table->entries[i].occupied = 0;
-        memset(&table->entries[i].stats, 0, sizeof(class_stats_t));
-    }
+    /* table and entries already zero-initialized by arena_alloc */
+    table->capacity = hash_size;
     
     LOG_DEBUG("Hash table initialized: capacity=%zu, entry_size=%zu", 
               table->capacity, sizeof(class_entry_t));
@@ -2437,10 +2432,11 @@ static void collect_heap_statistics_robust_optimized(jvmtiEnv *jvmti, JNIEnv *en
         }
     }
     
+    //TODO move this to init_jvm_capabilities instead of setting it each time
     /* Set up heap iteration callbacks */
     jvmtiHeapCallbacks callbacks;
     memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.heap_reference_callback = heap_object_callback_robust;
+    callbacks.heap_reference_callback = heap_object_callback;
     
     LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
     err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &ctx);
@@ -2565,7 +2561,7 @@ void *heap_stats_thread_func(void *arg)
         
         /* Collect heap statistics */
         LOG_INFO("Heap statistics collection starting...");
-        collect_heap_statistics_robust_optimized(ctx->jvmti_env, jni);
+        collect_heap_statistics(ctx->jvmti_env, jni);
         
         /* Sleep for 60 seconds between collections */
         sleep(60);
@@ -2653,6 +2649,11 @@ int load_config(agent_context_t *ctx, const char *cf)
 
 /**
  * Helper function to initialize the metrics Struct-of-Arrays structure
+ * 
+ * @param arena pointer to arena_t to allocate from
+ * @param initial_capacity size_t of capacity
+ * 
+ * @return pointer to method_metrics_soa_t or NULL if allocation fails
  */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity) 
 {
@@ -2999,8 +3000,6 @@ static int init_jvm_capabilities(agent_context_t *ctx)
         LOG_ERROR("SetEventCallbacks failed with error %d\n", err);
         return COOPER_ERR;
     }
-
-    /* Enable event notifications */
     err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
     if (err != JVMTI_ERROR_NONE) 
     {
@@ -3049,6 +3048,12 @@ static int init_jvm_capabilities(agent_context_t *ctx)
         LOG_ERROR("Could not enable class load: %d\n", err);
         return COOPER_ERR;
     }
+
+    // TODO would be good to set here, but need access in the collect_heap_statistics function
+    // /* Set heap callbacks */
+    // jvmtiHeapCallbacks heap_callbacks;
+    // memset(&callbacks, 0, sizeof(heap_callbacks));
+    // heap_callbacks.heap_reference_callback = heap_object_callback;
 
     return COOPER_OK; /* Success */
 }
