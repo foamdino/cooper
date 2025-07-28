@@ -104,6 +104,7 @@ typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
 typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
+typedef struct callbacks callbacks_t;
 
 typedef struct class_cache_key class_cache_key_t;
 typedef struct class_cache_value class_cache_value_t;
@@ -242,6 +243,12 @@ struct heap_iteration_context
     hashtable_t *class_table;
 };
 
+struct callbacks 
+{
+    jvmtiEventCallbacks event_callbacks;
+    jvmtiHeapCallbacks heap_callbacks;
+};
+
 struct method_cache_value 
 {
     char class_signature[MAX_SIG_SZ];
@@ -305,6 +312,7 @@ struct agent_context
     JavaVM *jvm;                    /**< JVM itself */
     jclass java_thread_class;       /**< Global reference for java.lang.Thread class */
     jmethodID getId_method;         /**< Cached Thread.getId() method ID */
+    callbacks_t callbacks;          /**< Centralized callback structures */
     char **method_filters;          /**< Method filter list */
     int num_filters;                /**< Number of filters */
     FILE *log_file;                 /**< Log output file */

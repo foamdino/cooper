@@ -2362,14 +2362,9 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
         }
     }
     
-    //TODO move this to init_jvm_capabilities instead of setting it each time
-    /* Set up heap iteration callbacks */
-    jvmtiHeapCallbacks callbacks;
-    memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.heap_reference_callback = heap_object_callback;
-    
+    /* Use centralized heap callbacks */
     LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
-    err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &ctx);
+    err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &global_ctx->callbacks.heap_callbacks, &ctx);
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("Heap iteration failed: %d", err);
@@ -2900,7 +2895,6 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     if (!ctx) return COOPER_ERR;
 
     jvmtiCapabilities capabilities;
-    jvmtiEventCallbacks callbacks;
     jvmtiError err;
 
     /* Enable capabilities */
@@ -2921,76 +2915,48 @@ static int init_jvm_capabilities(agent_context_t *ctx)
         return COOPER_ERR;
     }
 
-    /* Set callbacks */
-    memset(&callbacks, 0, sizeof(callbacks));
-    callbacks.MethodEntry = &method_entry_callback;
-    callbacks.MethodExit = &method_exit_callback;
-    callbacks.Exception = &exception_callback;
-    callbacks.VMObjectAlloc = &object_alloc_callback;
-    callbacks.ThreadEnd = &thread_end_callback;
-    callbacks.VMInit = &vm_init_callback;
-    callbacks.ClassLoad = &class_load_callback;
+    /* Set event callbacks */
+    memset(&ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
+    ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
+    ctx->callbacks.event_callbacks.MethodExit = &method_exit_callback;
+    ctx->callbacks.event_callbacks.Exception = &exception_callback;
+    ctx->callbacks.event_callbacks.VMObjectAlloc = &object_alloc_callback;
+    ctx->callbacks.event_callbacks.ThreadEnd = &thread_end_callback;
+    ctx->callbacks.event_callbacks.VMInit = &vm_init_callback;
+    ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
 
-    err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &callbacks, sizeof(callbacks));
+    /* Set heap callbacks */
+    memset(&ctx->callbacks.heap_callbacks, 0, sizeof(ctx->callbacks.heap_callbacks));
+    ctx->callbacks.heap_callbacks.heap_reference_callback = heap_object_callback;
+
+    err = (*global_ctx->jvmti_env)->SetEventCallbacks(global_ctx->jvmti_env, &ctx->callbacks.event_callbacks, sizeof(ctx->callbacks.event_callbacks));
     if (err != JVMTI_ERROR_NONE) 
     {
         LOG_ERROR("SetEventCallbacks failed with error %d\n", err);
         return COOPER_ERR;
     }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_ENTRY, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_ENTRY failed with error %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_METHOD_EXIT, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_METHOD_EXIT failed with error %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_EXCEPTION_CATCH, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("SetEventNotificationMode for JVMTI_EVENT_EXCEPTION failed with error %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_OBJECT_ALLOC, NULL);
-    if (err != JVMTI_ERROR_NONE)
-    {
-        LOG_ERROR("Could not enable allocation events: %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_THREAD_END, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("Could not enable thread end events: %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_VM_INIT, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("Could not enable vm init events: %d\n", err);
-        return COOPER_ERR;
-    }
-    err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, JVMTI_EVENT_CLASS_LOAD, NULL);
-    if (err != JVMTI_ERROR_NONE) 
-    {
-        LOG_ERROR("Could not enable class load: %d\n", err);
-        return COOPER_ERR;
-    }
 
-    // TODO would be good to set here, but need access in the collect_heap_statistics function
-    // /* Set heap callbacks */
-    // jvmtiHeapCallbacks heap_callbacks;
-    // memset(&callbacks, 0, sizeof(heap_callbacks));
-    // heap_callbacks.heap_reference_callback = heap_object_callback;
+    /* The events we want to monitor */
+    jvmtiEvent events[] = 
+    {
+        JVMTI_EVENT_METHOD_ENTRY,
+        JVMTI_EVENT_METHOD_EXIT,
+        JVMTI_EVENT_EXCEPTION,
+        JVMTI_EVENT_EXCEPTION_CATCH,
+        JVMTI_EVENT_VM_OBJECT_ALLOC,
+        JVMTI_EVENT_THREAD_END,
+        JVMTI_EVENT_VM_INIT,
+        JVMTI_EVENT_CLASS_LOAD
+    };
+
+    for (size_t i = 0; i < sizeof(events)/sizeof(events[0]); ++i) {
+        err = (*global_ctx->jvmti_env)->SetEventNotificationMode(global_ctx->jvmti_env, JVMTI_ENABLE, events[i], NULL);
+        if (err != JVMTI_ERROR_NONE) 
+        {
+            LOG_ERROR("SetEventNotificationMode for event %d failed with error %d\n", events[i], err);
+            return COOPER_ERR;
+        }
+    }
 
     return COOPER_OK; /* Success */
 }
