@@ -51,7 +51,7 @@ arena_t *find_arena_fast(agent_context_t *ctx, const char *name)
     
     if (!ctx->arena_hashtable) 
     {
-        LOG_WARN("Arena hashtable not initialized, falling back to linked list");
+        LOG_INFO("Arena hashtable not initialized, falling back to linked list to find %s", name);
         return find_arena(ctx->arena_head, name);
     }
     
@@ -2401,7 +2401,7 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
                     continue;
                 }
                 
-                /* Copy stats instead of assignment */
+                /* Copy stats */
                 *heap_entry = *stats;
                 heap_entry->class_name = arena_strdup(scratch_arena, entry->key);
                 if (!heap_entry->class_name)
@@ -2980,8 +2980,10 @@ static int init_arena_hashtable(agent_context_t *ctx)
     
     /* Populate with existing arenas */
     arena_node_t *node = ctx->arena_head;
-    while (node) {
-        if (!ht_put(ctx->arena_hashtable, node->name, node->arena)) {
+    while (node) 
+    {
+        if (!ht_put(ctx->arena_hashtable, node->name, node->arena)) 
+        {
             LOG_ERROR("Failed to add arena to hashtable: %s", node->name);
             return COOPER_ERR;
         }

@@ -87,17 +87,8 @@ hashtable_t *ht_create(arena_t *arena, size_t initial_cap, double load_factor)
     
     /* Initialize structure */
     ht->capacity = initial_cap;
-    ht->count = 0;
     ht->load_factor = load_factor;
     ht->arena = arena;
-    
-    /* Initialize all entries as empty */
-    for (size_t i = 0; i < initial_cap; i++) {
-        //TODO memset
-        ht->entries[i].key = NULL;
-        ht->entries[i].value = NULL;
-        ht->entries[i].occupied = 0;
-    }
     
     LOG_DEBUG("Created hashtable: capacity=%zu, load_factor=%.2f", 
               initial_cap, load_factor);
@@ -211,18 +202,12 @@ double ht_get_load(hashtable_t *ht)
 
 void ht_reset(hashtable_t *ht) 
 {
-    //TODO should we assert here?
     /* We have no ht so do nothing */
     if (!ht || !ht->entries)
         return;
     
     /* Reset all entries */
-    for (size_t i = 0; i < ht->capacity; i++) {
-        //TODO memset instead
-        ht->entries[i].key = NULL;
-        ht->entries[i].value = NULL;
-        ht->entries[i].occupied = 0;
-    }
+    memset(ht->entries, 0, ht->capacity * sizeof(ht_entry_t));
     
     ht->count = 0;
     LOG_DEBUG("Reset hashtable (capacity: %zu)", ht->capacity);
