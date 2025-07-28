@@ -53,13 +53,13 @@ struct arena_node
 
 struct arena 
 {
-    void* memory;          /* Pre-allocated memory buffer */
-    void* original_memory; /* Original pointer returned by malloc */
+    void *memory;          /* Pre-allocated memory buffer */
+    void *original_memory; /* Original pointer returned by malloc */
     size_t alloc_sz;     /* Total allocation size */
     size_t total_sz;     /* Total size of memory pool */
     size_t used;           /* Currently used bytes */
-    void** free_blocks;    /* Array of pointers to free blocks */
-    size_t* block_sizes;   /* Corresponding sizes of free blocks */
+    void **free_blocks;    /* Array of pointers to free blocks */
+    size_t *block_sizes;   /* Corresponding sizes of free blocks */
     size_t free_count;     /* Number of free blocks available */
     size_t max_free_blocks; /* Maximum number of free blocks we can track */
     char name[32];         /* Name of the arena for debugging */
@@ -133,8 +133,7 @@ void arena_reset(arena_t *arena);
  * 
  * @return          Pointer to the created arena, or NULL on failure
  */
-arena_t *create_arena(arena_node_t **head, arena_node_t **tail, 
-    const char *name, size_t size, size_t max_blocks);
+arena_t *create_arena(arena_node_t **head, arena_node_t **tail, const char *name, size_t size, size_t max_blocks);
 
 /**
 * Find an arena by name

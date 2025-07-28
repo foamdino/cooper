@@ -44,6 +44,20 @@ static const cache_config_t method_cache_config =
     .name = METHOD_CACHE_NAME
 };
 
+arena_t *find_arena_fast(agent_context_t *ctx, const char *name)
+{
+    assert(ctx != NULL);
+    assert(name != NULL);
+    
+    if (!ctx->arena_hashtable) 
+    {
+        LOG_WARN("Arena hashtable not initialized, falling back to linked list");
+        return find_arena(ctx->arena_head, name);
+    }
+    
+    return (arena_t*)ht_get(ctx->arena_hashtable, name);
+}
+
 #ifdef ENABLE_DEBUG_LOGS
 /* Debug function for dumping method stack */
 static void debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
@@ -552,7 +566,7 @@ static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, con
         return -1;
     }
 
-    arena_t *arena = find_arena(global_ctx->arena_head, METRICS_ARENA_NAME);
+    arena_t *arena = find_arena_fast(global_ctx, METRICS_ARENA_NAME);
     if (!arena)
     {
         LOG_ERROR("unable to find metrics arena!\n");
@@ -1171,7 +1185,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
             /* If not found, create new metrics structure */
             if (!found) 
             {
-                arena_t *metrics_arena = find_arena(ctx->arena_head, METRICS_ARENA_NAME);
+                arena_t *metrics_arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
                 if (metrics_arena) 
                 {
                     thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
@@ -1522,7 +1536,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
             return;
 
         /* Continue with sampling logic using cached values... */
-        arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
+        arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
         if (!arena) 
             return;
 
@@ -1594,7 +1608,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
 
     /* Create a new sample on our method stack */
-    arena_t *arena = find_arena(global_ctx->arena_head, SAMPLE_ARENA_NAME);
+    arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
     if (!arena)
     {
         LOG_ERROR("Could not find sample_arena!\n");
@@ -1889,7 +1903,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
         LOG_DEBUG("Method params: \n");
 
-        arena_t *arena = find_arena(global_ctx->arena_head, EXCEPTION_ARENA_NAME);
+        arena_t *arena = find_arena_fast(global_ctx, EXCEPTION_ARENA_NAME);
         if (arena == NULL)
         {
             LOG_ERROR(">> Unable to find exception arena on list! <<\n");
@@ -2095,81 +2109,60 @@ static int class_stats_compare(const void *a, const void *b)
     return 0;
 }
 
-static size_t hash_string(const char *str, size_t capacity)
-{
-    if (!str || capacity == 0) return 0;
-    
-    size_t hash = 5381; /* djb2 hash starting prime */
-    int c;
-    while ((c = *str++))
-        hash = ((hash << 5) + hash) + c;
-
-    return hash % capacity;
-}
-
-
 /* Enhanced find_or_create_stats with additional safety checks */
 static class_stats_t *find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 {
-    class_hash_table_t *table = ctx->class_table;
     
-    /* Enhanced bounds checking */
-    if (!table || !table->entries || table->capacity == 0) 
-    {
-        LOG_ERROR("Invalid hash table state in find_or_create_stats");
-        return NULL;
-    }
-    
+    assert(ctx != NULL);
+    assert(ctx->class_table != NULL);
+    assert(class_sig != NULL);
+
     /* Additional validation */
     if (!class_sig || class_sig[0] == '\0')
     {
         LOG_DEBUG("Skipping null or empty class_sig");
         return NULL;
     }
-    
-    size_t hash = hash_string(class_sig, table->capacity);
-    
-    /* Linear probing with enhanced bounds checking */
-    for (size_t i = 0; i < table->capacity; i++) {
-        size_t idx = (hash + i) % table->capacity;
-        class_entry_t *entry = &table->entries[idx];
-        
-        if (!entry->occupied) 
-        {
-            /* Empty slot - check load factor before creating */
-            if (table->count >= table->capacity * 0.75) {
-                LOG_ERROR("Hash table load factor exceeded (%zu/%zu)", 
-                         table->count, table->capacity);
-                return NULL;
-            }
-            
-            /* Create new entry */
-            size_t sig_len = strlen(class_sig);
-            if (sig_len >= sizeof(entry->class_sig)) 
-                sig_len = sizeof(entry->class_sig) - 1;
 
-            memcpy(entry->class_sig, class_sig, sig_len);
-            entry->class_sig[sig_len] = '\0';
-            
-            /* Defensive initialization */
-            memset(&entry->stats, 0, sizeof(entry->stats));
-            entry->occupied = 1;
-            table->count++;
-            
-            LOG_DEBUG("Created new hash entry for class '%s' at index %zu (load: %zu/%zu)",
-                     class_sig, idx, table->count, table->capacity);
-            return &entry->stats;
-        }
-        else if (strcmp(entry->class_sig, class_sig) == 0) 
-        {
-            /* Found existing entry */
-            return &entry->stats;
-        }
-        /* Continue probing for collisions */
+    /* Try to find existing stats using API */
+    class_stats_t *stats = (class_stats_t*)ht_get(ctx->class_table, class_sig);
+    if (stats) 
+    {
+        /* Found existing entry */
+        return stats;
     }
-    
-    LOG_ERROR("Hash table full, cannot add class signature '%s'", class_sig);
-    return NULL; /* Table full */
+
+    /* Check load factor before creating new entry */
+    if (ht_get_load(ctx->class_table) >= 0.75) 
+    {
+        LOG_ERROR("Hash table load factor exceeded");
+        return NULL;
+    }
+
+    /* Create new stats entry */
+    stats = arena_alloc(ctx->arena, sizeof(class_stats_t));
+    if (!stats) 
+    {
+        LOG_ERROR("Failed to allocate class stats");
+        return NULL;
+    }
+
+    /* Initialize stats */
+    stats->instance_count = 0;
+    stats->total_size = 0;
+    stats->avg_size = 0;
+    stats->class_name = NULL; /* Will be set later if needed */
+
+    /* Add to hashtable using API */
+    if (!ht_put(ctx->class_table, class_sig, stats)) 
+    {
+        LOG_ERROR("Failed to add class stats to hashtable");
+        return NULL;
+    }
+
+    LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)", 
+                class_sig, ht_get_load(ctx->class_table));
+    return stats;
 }
 
 /* Robust heap object callback with enhanced error handling */
@@ -2289,7 +2282,7 @@ static size_t calculate_hashtable_size(int class_count)
 /* Fully robust heap statistics collection maintaining all safety checks */
 static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env) 
 {
-    arena_t *scratch_arena = find_arena(global_ctx->arena_head, SCRATCH_ARENA_NAME);
+    arena_t *scratch_arena = find_arena_fast(global_ctx, SCRATCH_ARENA_NAME);
     if (!scratch_arena) 
     {
         LOG_ERROR("Failed to find scratch arena");
@@ -2324,64 +2317,7 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
     }
     
     LOG_INFO("Collecting heap statistics for %d loaded classes", class_count);
-    
-    /* Calculate optimal hashtable size with safety checks */
-    size_t hash_size = calculate_hashtable_size(class_count);
-    
-    /* Defensive size calculation with bounds checking */
-    size_t hash_table_size = sizeof(class_hash_table_t);
-    size_t entries_size;
-    
-    /* Check for overflow in entries calculation */
-    if (hash_size > SIZE_MAX / sizeof(class_entry_t)) {
-        LOG_ERROR("Hash table entries size would overflow");
-        goto cleanup_classes;
-    }
-    entries_size = hash_size * sizeof(class_entry_t);
-    
-    size_t heap_size = TOP_N * sizeof(class_stats_t);
-    size_t signature_space = hash_size * 64; /* Average signature length */
-    size_t safety_margin = 4096; /* Increased safety margin */
-    
-    /* Check for total size overflow */
-    size_t required_space = hash_table_size + entries_size + heap_size + signature_space + safety_margin;
-    if (required_space < hash_table_size) { /* Overflow check */
-        LOG_ERROR("Required space calculation overflow");
-        goto cleanup_classes;
-    }
-    
-    /* Check available arena space */
-    if (scratch_arena->used + required_space > scratch_arena->total_sz) 
-    {
-        LOG_ERROR("Insufficient arena space: need %zu, have %zu available", 
-                  required_space, scratch_arena->total_sz - scratch_arena->used);
-        goto cleanup_classes;
-    }
-    
-    LOG_DEBUG("Arena space check passed: using %zu of %zu available bytes", 
-              required_space, scratch_arena->total_sz - scratch_arena->used);
-    
-    /* Safe hashtable allocation */
-    class_hash_table_t *table = arena_alloc(scratch_arena, sizeof(class_hash_table_t));
-    if (!table) 
-    {
-        LOG_ERROR("Failed to allocate hash table structure");
-        goto cleanup_classes;
-    }
-    
-    table->entries = arena_alloc(scratch_arena, entries_size);
-    if (!table->entries) 
-    {
-        LOG_ERROR("Failed to allocate hash table entries");
-        goto cleanup_classes;
-    }
 
-    /* table and entries already zero-initialized by arena_alloc */
-    table->capacity = hash_size;
-    
-    LOG_DEBUG("Hash table initialized: capacity=%zu, entry_size=%zu", 
-              table->capacity, sizeof(class_entry_t));
-    
     /* Create min heap with error checking */
     min_heap_t *heap = min_heap_create(scratch_arena, TOP_N, class_stats_compare);
     if (!heap) 
@@ -2390,12 +2326,22 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
         goto cleanup_classes;
     }
     
+    /* Create generic hashtable for class statistics */
+    size_t hash_size = calculate_hashtable_size(class_count);
+    hashtable_t *class_ht = ht_create(scratch_arena, hash_size, 0.75);
+    if (!class_ht) 
+    {
+        LOG_ERROR("Failed to create class generic hashtable");
+        goto cleanup_classes;
+    }
+
+
     /* Set up iteration context with validation */
     heap_iteration_context_t ctx = {
         .env = env,
         .jvmti = jvmti,
         .arena = scratch_arena,
-        .class_table = table,
+        .class_table = class_ht
     };
     
     /* Validate context before proceeding */
@@ -2430,21 +2376,28 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
         goto cleanup_tags;
     }
     
-    LOG_INFO("Heap iteration completed, processing %zu unique classes", table->count);
+    LOG_INFO("Heap iteration completed, processing %zu unique classes", ctx.class_table->count);
     
     /* Process hashtable results into top-N heap with bounds checking */
     size_t processed = 0;
     
-    for (size_t i = 0; i < table->capacity && processed < table->count; i++) 
+    for (size_t i = 0; i < ctx.class_table->capacity && processed < ctx.class_table->count; i++) 
     {
-        class_entry_t *entry = &table->entries[i];
-        if (entry->stats.instance_count > 0) 
+        ht_entry_t *entry = &ctx.class_table->entries[i];
+        
+        /* CRITICAL: Check if entry is occupied before accessing value */
+        if (!entry->occupied || !entry->value) {
+            continue; /* Skip empty slots */
+        }
+        
+        class_stats_t *stats = (class_stats_t *)entry->value;
+        if (stats->instance_count > 0) 
         {
             processed++;
             
             /* Only resolve names for potential top-N entries */
             if (heap->size < TOP_N || 
-                entry->stats.total_size > ((class_stats_t*)heap->elements[0])->total_size) 
+                stats->total_size > ((class_stats_t *)heap->elements[0])->total_size) 
             {
                 class_stats_t *heap_entry = arena_alloc(scratch_arena, sizeof(class_stats_t));
                 if (!heap_entry) 
@@ -2453,9 +2406,9 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
                     continue;
                 }
                 
-                *heap_entry = entry->stats;
-                heap_entry->class_name = arena_strdup(scratch_arena, entry->class_sig);
-                /* unable to copy string for some reason */
+                /* Copy stats instead of assignment */
+                *heap_entry = *stats;
+                heap_entry->class_name = arena_strdup(scratch_arena, entry->key);
                 if (!heap_entry->class_name)
                     continue;
                 
@@ -2465,9 +2418,9 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
                     LOG_DEBUG("Failed to insert into heap (likely not top-N)");
                 } else {
                     LOG_DEBUG("Added to heap: %s (%llu instances, %llu bytes)", 
-                         heap_entry->class_name, 
-                         (unsigned long long)heap_entry->instance_count, 
-                         (unsigned long long)heap_entry->total_size);
+                        heap_entry->class_name, 
+                        (unsigned long long)heap_entry->instance_count, 
+                        (unsigned long long)heap_entry->total_size);
                 }
             }
         }
@@ -2580,7 +2533,7 @@ int load_config(agent_context_t *ctx, const char *cf)
     if (!ctx) 
         return COOPER_ERR;
     
-    arena_t *config_arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
+    arena_t *config_arena = find_arena_fast(ctx, CONFIG_ARENA_NAME);
     if (!config_arena) {
         LOG_ERROR("Config arena not found\n");
         return COOPER_ERR;
@@ -2712,7 +2665,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Add new entry */
-    arena_t *arena = find_arena(ctx->arena_head, METRICS_ARENA_NAME);
+    arena_t *arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
     if (!arena) 
     {
         LOG_DEBUG("Could not find metrics arena\n");
@@ -3042,6 +2995,37 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     return COOPER_OK; /* Success */
 }
 
+static int init_arena_hashtable(agent_context_t *ctx)
+{
+    /* Use config arena for hashtable metadata */
+    arena_t *config_arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
+    if (!config_arena) 
+    {
+        LOG_ERROR("Config arena not found for hashtable init");
+        return COOPER_ERR;
+    }
+    
+    /* Create hashtable with capacity for current + future arenas */
+    ctx->arena_hashtable = ht_create(config_arena, 16, 0.75);
+    if (!ctx->arena_hashtable) {
+        LOG_ERROR("Failed to create arena hashtable");
+        return COOPER_ERR;
+    }
+    
+    /* Populate with existing arenas */
+    arena_node_t *node = ctx->arena_head;
+    while (node) {
+        if (!ht_put(ctx->arena_hashtable, node->name, node->arena)) {
+            LOG_ERROR("Failed to add arena to hashtable: %s", node->name);
+            return COOPER_ERR;
+        }
+        node = node->next;
+    }
+    
+    LOG_INFO("Arena hashtable initialized with %zu arenas", ctx->arena_hashtable->count);
+    return COOPER_OK;
+}
+
 /*
  * Entry point
  */
@@ -3101,15 +3085,37 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         }
     }
 
+    /* Init logging after all arenas are created */
+    arena_t *log_arena = find_arena_fast(global_ctx, LOG_ARENA_NAME);
+    if (!log_arena) 
+    {
+        printf("Log arena not found\n");
+        return JNI_ERR;
+    }
+
+    /* We start the logging thread as we initialise the system now */
+    if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
+    {
+        cleanup(global_ctx);
+        return JNI_ERR;
+    }
+
+    if (init_arena_hashtable(global_ctx) != COOPER_OK) 
+    {
+        LOG_ERROR("Unable to initialise arena hashtable\n");
+        return JNI_ERR;
+    }
+
+    //TODO remove this hack once the hashtable is done
     /* Cache arena creation before other initializations */
-    arena_t *method_cache_arena = find_arena(global_ctx->arena_head, METHOD_CACHE_ARENA_NAME);
+    arena_t *method_cache_arena = find_arena_fast(global_ctx, METHOD_CACHE_ARENA_NAME);
     if (!method_cache_arena) 
     {
         LOG_ERROR("Cache arena not found\n");
         return JNI_ERR;
     }
 
-    arena_t *class_cache_arena = find_arena(global_ctx->arena_head, CLASS_CACHE_ARENA_NAME);
+    arena_t *class_cache_arena = find_arena_fast(global_ctx, CLASS_CACHE_ARENA_NAME);
     if (!class_cache_arena) 
     {
         LOG_ERROR("Cache arena not found\n");
@@ -3127,23 +3133,8 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     cached_method_cache_arena = method_cache_arena;
     cached_class_cache_arena = class_cache_arena;
 
-    /* Init logging after all arenas are created */
-    arena_t *log_arena = find_arena(global_ctx->arena_head, LOG_ARENA_NAME);
-    if (!log_arena) 
-    {
-        printf("Log arena not found\n");
-        return JNI_ERR;
-    }
-
-    /* We start the logging thread as we initialise the system now */
-    if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
-    {
-        cleanup(global_ctx);
-        return JNI_ERR;
-    }
-
     /* Initialize metrics after all arenas are created */
-    arena_t *metrics_arena = find_arena(global_ctx->arena_head, METRICS_ARENA_NAME);
+    arena_t *metrics_arena = find_arena_fast(global_ctx, METRICS_ARENA_NAME);
     if (!metrics_arena) 
     {
         LOG_ERROR("Metrics arena not found\n");
@@ -3180,7 +3171,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
     /* Initialize shared memory */
-    arena_t *config_arena = find_arena(global_ctx->arena_head, CONFIG_ARENA_NAME);
+    arena_t *config_arena = find_arena_fast(global_ctx, CONFIG_ARENA_NAME);
     if (!config_arena) 
     {
         LOG_ERROR("Config arena not found\n");

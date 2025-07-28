@@ -32,6 +32,7 @@ strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com
 * using tracing tools to uncover how many syscalls/librarycalls are made in the code
 * cleanup config file handling
 * add assertions where appropriate
+* add iterator to hashtable impl
 
 
 ## Features TODO
