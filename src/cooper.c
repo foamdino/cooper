@@ -13,10 +13,6 @@ static agent_context_t *global_ctx = NULL; /* Single global context */
 static pthread_key_t context_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
-/* Method cache key and value structures */
-typedef struct method_cache_key method_cache_key_t;
-typedef struct method_cache_value method_cache_value_t;
-
 /* Arena configurations */
 static const arena_config_t arena_configs[] = {
     {EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
@@ -1292,11 +1288,12 @@ void *mem_sampling_thread_func(void *arg)
         sleep(ctx->config.mem_sample_interval);
     }
 
-    /* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
-    if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+    /* Cannot detach thread when not attached.. */
+    if (mem_thread_attached)
     {
-        if (mem_thread_attached)
-            (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+        /* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
+        if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+                (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
     }
     
     LOG_INFO("Memory sampling thread terminated\n");
@@ -2036,7 +2033,7 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     sample->current_alloc_bytes += safe_sz;
 
     LOG_DEBUG("Allocation: %lld bytes for method_index %d, total: %lld, allocated object of class: %s, size: %lld", 
-        safe_sz, sample->method_index, (long long)sample->current_alloc_bytes, class_sig_buffer, safe_sz);
+        safe_sz, sample->method_index, (long long)sample->current_alloc_bytes, class_sig, safe_sz);
 }
 
 static void JNICALL class_load_callback(jvmtiEnv *jvmti_env, JNIEnv* jni_env, 
@@ -2141,7 +2138,7 @@ static class_stats_t *find_or_create_stats(heap_iteration_context_t *ctx, const 
         {
             /* Empty slot - check load factor before creating */
             if (table->count >= table->capacity * 0.75) {
-                LOG_WARN("Hash table load factor exceeded (%zu/%zu)", 
+                LOG_ERROR("Hash table load factor exceeded (%zu/%zu)", 
                          table->count, table->capacity);
                 return NULL;
             }
@@ -2155,10 +2152,7 @@ static class_stats_t *find_or_create_stats(heap_iteration_context_t *ctx, const 
             entry->class_sig[sig_len] = '\0';
             
             /* Defensive initialization */
-            entry->stats.instance_count = 0;
-            entry->stats.total_size = 0;
-            entry->stats.avg_size = 0;
-            entry->stats.class_name = NULL;
+            memset(&entry->stats, 0, sizeof(entry->stats));
             entry->occupied = 1;
             table->count++;
             
@@ -2259,16 +2253,12 @@ static jint JNICALL heap_object_callback(jvmtiHeapReferenceKind reference_kind,
 static size_t calculate_hashtable_size(int class_count) 
 {
     /* Defensive bounds checking - check negative first */
-    if (class_count < 0) {
-        LOG_ERROR("Negative class count: %d, using minimum hash size", class_count);
-        return 1000;
+    if (class_count <= 0) 
+    {
+        LOG_WARN("Invalid class count (%d), using minimum hash size of %d", class_count, MIN_HASH_SIZE);
+        return MIN_HASH_SIZE;
     }
-    
-    if (class_count == 0) {
-        LOG_WARN("Zero class count, using minimum hash size");
-        return 1000;
-    }
-    
+
     /* Now safe to cast to unsigned for overflow check */
     size_t class_count_unsigned = (size_t)class_count;
 
@@ -2276,17 +2266,11 @@ static size_t calculate_hashtable_size(int class_count)
     size_t estimated_size;
     if (class_count_unsigned > SIZE_MAX / 2) 
     {
-        LOG_WARN("Class count too large, capping hash table size");
-        estimated_size = 20000;
+        LOG_WARN("Class count too large, capping hash table size to %d", MAX_HASH_SIZE);
+        estimated_size = MAX_HASH_SIZE;
     } 
     else 
-    {
         estimated_size = (size_t)(class_count_unsigned * 1.7); /* Account for heap growth */
-    }
-    
-    /* Set reasonable bounds based on typical applications */
-    const size_t MIN_HASH_SIZE = 1000;
-    const size_t MAX_HASH_SIZE = 20000; /* Increased for enterprise apps */
     
     if (estimated_size < MIN_HASH_SIZE) 
     {
@@ -3090,7 +3074,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     if (options && strstr(options, "loglevel=debug"))
         current_log_level = LOG_LEVEL_DEBUG;
-
+    
     log_q_t *log_queue = malloc(sizeof(log_q_t));
 
     /* 

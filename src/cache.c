@@ -262,6 +262,9 @@ cache_t *cache_tls_get(const char *cache_id, arena_t *data_arena, const cache_co
     if (cache_tls_init() != 0) 
         return NULL;
 
+    if (!data_arena)
+        return NULL;
+
     tls_cache_manager_t *manager = pthread_getspecific(tls_cache_key);
     if (!manager) 
     {

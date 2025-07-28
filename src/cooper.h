@@ -86,6 +86,9 @@
 #define METHOD_CACHE_NAME "method_cache"
 #define METHOD_CACHE_MAX_ENTRIES 16
 
+#define MIN_HASH_SIZE 1000
+#define MAX_HASH_SIZE 20000
+
 typedef struct trace_event trace_event_t;
 typedef struct method_stats method_stats_t;
 typedef struct config config_t;
