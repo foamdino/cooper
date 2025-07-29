@@ -11,6 +11,11 @@
 #include <stdint.h>
 #include "arena.h"
 
+/* Entry states for tombstone deletion */
+#define HT_EMPTY    0
+#define HT_OCCUPIED 1
+#define HT_DELETED  2
+
 /* Forward declarations */
 typedef struct ht_entry ht_entry_t;
 typedef struct hashtable hashtable_t;
@@ -20,7 +25,7 @@ struct ht_entry
 {
     char *key;              /* String key (arena-allocated) */
     void *value;            /* Generic value pointer */
-    uint8_t occupied;       /* 0=empty, 1=occupied */
+    uint8_t state;          /* 0=empty, 1=occupied, 2=deleted */
 };
 
 /* Main hashtable structure */

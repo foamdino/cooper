@@ -108,6 +108,7 @@ typedef struct callbacks callbacks_t;
 
 typedef struct class_cache_key class_cache_key_t;
 typedef struct class_cache_value class_cache_value_t;
+typedef struct method_info method_info_t;
 typedef struct class_info class_info_t;
 
 typedef void *thread_fn(void *args);
@@ -257,27 +258,26 @@ struct method_cache_value
     int should_sample;
 };
 
-struct class_cache_key 
-{
-    jclass class_ref;           /* Class reference as key */
-};
-
-struct class_cache_value 
-{
-    char class_signature[MAX_SIG_SZ];
-    int valid;                  /* Validation flag */
-};
-
 struct thread_context
 {
     int stack_depth; /**< Depth of call stack */
     method_sample_t *sample; /**< Current top of method sample stack - most recent call */
 };
 
+struct method_info
+{
+    jmethodID method_id;
+    char *method_name;
+    char *method_signature;
+    int sample_index; /**< -1 for not sampled, index into SoA structure */
+};
+
 struct class_info
 {
     char class_sig[MAX_SIG_SZ];
     uint8_t in_heap_iteration;
+    uint32_t method_count;
+    method_info_t *methods; /**< Array of methods for this class */
 };
 
 struct thread_alloc

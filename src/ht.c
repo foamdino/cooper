@@ -23,7 +23,7 @@ static size_t ht_hash_string(const char *str, size_t capacity)
     return hash % capacity;
 }
 
-/* Find entry index for key (linear probing) */
+/* Find entry index for key (linear probing with tombstone support) */
 static size_t ht_find_slot(hashtable_t *ht, const char *key, int *found) 
 {
     assert(ht != NULL);
@@ -33,6 +33,7 @@ static size_t ht_find_slot(hashtable_t *ht, const char *key, int *found)
     
     size_t hash = ht_hash_string(key, ht->capacity);
     *found = 0;
+    size_t first_deleted = ht->capacity; /* Track first deleted slot for insertion */
     
     /* Linear probing with wraparound */
     for (size_t i = 0; i < ht->capacity; i++) 
@@ -40,20 +41,25 @@ static size_t ht_find_slot(hashtable_t *ht, const char *key, int *found)
         size_t idx = (hash + i) % ht->capacity;
         ht_entry_t *entry = &ht->entries[idx];
         
-        if (!entry->occupied) {
-            /* Empty slot found */
-            return idx;
+        if (entry->state == HT_EMPTY) {
+            /* Empty slot found - can use for insertion */
+            return (first_deleted < ht->capacity) ? first_deleted : idx;
         }
         
-        if (entry->key && strcmp(entry->key, key) == 0) {
+        if (entry->state == HT_DELETED && first_deleted == ht->capacity) {
+            /* Remember first deleted slot for potential insertion */
+            first_deleted = idx;
+        }
+        
+        if (entry->state == HT_OCCUPIED && entry->key && strcmp(entry->key, key) == 0) {
             /* Key exists */
             *found = 1;
             return idx;
         }
     }
     
-    /* Table full */
-    return ht->capacity;
+    /* Table full or return first deleted slot for insertion */
+    return first_deleted;
 }
 
 hashtable_t *ht_create(arena_t *arena, size_t initial_cap, double load_factor) 
@@ -140,7 +146,7 @@ int ht_put(hashtable_t *ht, const char *key, void *value)
         entry->key[key_len] = '\0';
         
         entry->value = value;
-        entry->occupied = 1;
+        entry->state = HT_OCCUPIED;
         ht->count++;
         
         LOG_DEBUG("Inserted new key: %s (count: %zu/%zu)", 
@@ -181,11 +187,11 @@ int ht_remove(hashtable_t *ht, const char *key)
         return 0;
     }
     
-    /* Mark as unoccupied (tombstone approach for linear probing) */
+    /* Mark as deleted (tombstone) - preserves probe chain */
     ht_entry_t *entry = &ht->entries[idx];
     entry->key = NULL;
     entry->value = NULL;
-    entry->occupied = 0;
+    entry->state = HT_DELETED;
     ht->count--;
     
     LOG_DEBUG("Removed key: %s (count: %zu/%zu)", key, ht->count, ht->capacity);
@@ -206,7 +212,7 @@ void ht_reset(hashtable_t *ht)
     if (!ht || !ht->entries)
         return;
     
-    /* Reset all entries */
+    /* Reset all entries - memset to 0 sets all states to HT_EMPTY */
     memset(ht->entries, 0, ht->capacity * sizeof(ht_entry_t));
     
     ht->count = 0;
