@@ -49,7 +49,6 @@
 #define SAMPLE_ARENA_SZ 2048 * 1024
 #define CONFIG_ARENA_SZ 512 * 1024
 #define METRICS_ARENA_SZ 8 * 1024 * 1024
-#define METHOD_CACHE_ARENA_SZ 12 * 1024 * 1024
 #define SCRATCH_ARENA_SZ 16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 
@@ -60,7 +59,6 @@
 #define SAMPLE_ARENA_BLOCKS 1024
 #define CONFIG_ARENA_BLOCKS 1024
 #define METRICS_ARENA_BLOCKS 1024
-#define METHOD_CACHE_ARENA_BLOCKS 1024
 #define CLASS_CACHE_ARENA_BLOCKS 1024
 #define SCRATCH_ARENA_BLOCKS 1024
 
@@ -70,7 +68,6 @@
 #define SAMPLE_ARENA_NAME "sample_arena"
 #define CONFIG_ARENA_NAME "config_arena"
 #define METRICS_ARENA_NAME "metrics_arena"
-#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
 #define SCRATCH_ARENA_NAME "scratch_arena"
 
@@ -93,8 +90,6 @@
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
-// typedef struct method_cache_key method_cache_key_t;
-// typedef struct method_cache_value method_cache_value_t;
 typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct app_memory_metrics app_memory_metrics_t;
@@ -223,11 +218,6 @@ struct method_sample
     method_sample_t *parent; /**< Parent (or calling) method */
 };
 
-// struct method_cache_key 
-// {
-//     jmethodID method_id;
-// };
-
 struct class_stats 
 {
     char* class_name;
@@ -249,14 +239,6 @@ struct callbacks
     jvmtiEventCallbacks event_callbacks;
     jvmtiHeapCallbacks heap_callbacks;
 };
-
-// struct method_cache_value 
-// {
-//     char class_signature[MAX_SIG_SZ];
-//     char method_name[64];
-//     char method_signature[256];
-//     int should_sample;
-// };
 
 struct thread_context
 {

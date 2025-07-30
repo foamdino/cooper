@@ -6,7 +6,6 @@
 
 #include "cooper.h"
 
-
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
 /* Thread-local storage key and initialization mutex */
@@ -20,16 +19,13 @@ static const arena_config_t arena_configs[] = {
     {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS},
     {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
     {CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS}
-    // {HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ, HEAP_STATS_ARENA_BLOCKS}
 };
 
-//TODO perhaps move these to ctx
+//TODO perhaps move this to ctx
 
 /* Cache arena pointers globally to avoid repeated lookups */
-static arena_t *cached_method_cache_arena = NULL;
 static arena_t *cached_class_cache_arena = NULL;
 
 arena_t *find_arena_fast(agent_context_t *ctx, const char *name)
@@ -1612,11 +1608,13 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     const int s_index = method_info->sample_index;
 
     // 4. We found a method to track. Atomically increment its total call count.
-    pthread_mutex_lock(&global_ctx->samples_lock);
-    global_ctx->metrics->call_counts[s_index]++;
-    uint64_t current_calls = global_ctx->metrics->call_counts[s_index];
-    int sample_rate = global_ctx->metrics->sample_rates[s_index];
-    pthread_mutex_unlock(&global_ctx->samples_lock);
+    // pthread_mutex_lock(&global_ctx->samples_lock);
+    // global_ctx->metrics->call_counts[s_index]++;
+    // uint64_t current_calls = global_ctx->metrics->call_counts[s_index];
+    // int sample_rate = global_ctx->metrics->sample_rates[s_index];
+    // pthread_mutex_unlock(&global_ctx->samples_lock);
+    uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[s_index], 1, __ATOMIC_RELAXED);
+    int sample_rate = global_ctx->metrics->sample_rates[s_index]; /* Read-only after init */
 
     // 5. Decide whether to sample this specific call based on the rate.
     if ((current_calls % sample_rate) != 0)
@@ -2593,7 +2591,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     if (!metrics) return NULL;
     
     metrics->capacity = initial_capacity;
-    metrics->count = 0;
     
     /* arena_alloc zeroes memory — no need for manual memset */
     metrics->signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
@@ -2849,7 +2846,8 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     ctx->callbacks.event_callbacks.VMObjectAlloc = &object_alloc_callback;
     ctx->callbacks.event_callbacks.ThreadEnd = &thread_end_callback;
     ctx->callbacks.event_callbacks.VMInit = &vm_init_callback;
-    ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
+    // ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
+    ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
 
     /* Set heap callbacks */
     memset(&ctx->callbacks.heap_callbacks, 0, sizeof(ctx->callbacks.heap_callbacks));
@@ -3000,15 +2998,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    //TODO remove this hack once the hashtable is done
-    /* Cache arena creation before other initializations */
-    arena_t *method_cache_arena = find_arena_fast(global_ctx, METHOD_CACHE_ARENA_NAME);
-    if (!method_cache_arena) 
-    {
-        LOG_ERROR("Cache arena not found\n");
-        return JNI_ERR;
-    }
-
     arena_t *class_cache_arena = find_arena_fast(global_ctx, CLASS_CACHE_ARENA_NAME);
     if (!class_cache_arena) 
     {
@@ -3016,15 +3005,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    /* Initialize cache system */
-    if (cache_init_system(method_cache_arena) != 0) 
-    {
-        LOG_ERROR("Failed to initialize cache system\n");
-        return JNI_ERR;
-    }
-
     /* Cache the cache arena so it's available globally */
-    cached_method_cache_arena = method_cache_arena;
     cached_class_cache_arena = class_cache_arena;
 
     /* Initialize metrics after all arenas are created */
