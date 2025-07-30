@@ -573,89 +573,6 @@ static void test_arena()
     printf("[TEST] arena: All tests passed\n");
 }
 
-/* Test should_sample_method */
-static void test_should_sample_method()
-{
-    agent_context_t *ctx = init_test_context();
-    
-    /* Initialize metrics arena for metrics data */
-    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
-    
-    /* Initialize event_counter (for rate-based sampling) */
-    ctx->event_counter = 0;
-    
-    /* Initialize metrics structure */
-    ctx->metrics = init_method_metrics(metrics_arena, 10);
-    assert(ctx->metrics != NULL);
-    
-    /* Add a method with rate=1 (sample every call) */
-    int idx1 = add_method_to_metrics(ctx, "Lcom/github/foamdino/Test; a ()V", 1, METRIC_FLAG_TIME | METRIC_FLAG_MEMORY);
-    assert(idx1 >= 0);
-    
-    /* Add a method with rate=10 (sample every 10th call) */
-    int idx2 = add_method_to_metrics(ctx, "Lcom/github/foamdino/Test; b ()V", 10, METRIC_FLAG_TIME);
-    assert(idx2 >= 0);
-    
-    /* Add a class wildcard filter - use space format to match should_sample_method implementation */
-    int idx3 = add_method_to_metrics(ctx, "Ljava/lang/String; * *", 50, METRIC_FLAG_TIME);
-    assert(idx3 >= 0);
-    
-    /* Test exact method match with rate=1 */
-    int sample1 = should_sample_method(ctx, "Lcom/github/foamdino/Test;", "a", "()V");
-    assert(sample1 == idx1 + 1); /* +1 because 0 means "don't sample" */
-    assert(ctx->metrics->call_counts[idx1] == 1);
-    
-    /* Call the same method again - should still sample because rate=1 */
-    sample1 = should_sample_method(ctx, "Lcom/github/foamdino/Test;", "a", "()V");
-    assert(sample1 == idx1 + 1);
-    assert(ctx->metrics->call_counts[idx1] == 2);
-    
-    /* Test method with rate=10 */
-    /* First call (count becomes 1) - NOT sampled */
-    int sample2 = should_sample_method(ctx, "Lcom/github/foamdino/Test;", "b", "()V");
-    assert(sample2 == 0); /* Should NOT be sampled on first call */
-    assert(ctx->metrics->call_counts[idx2] == 1);
-    
-    /* Call 8 more times (count becomes 2-9) - not sampled */
-    for (int i = 0; i < 8; i++) {
-        sample2 = should_sample_method(ctx, "Lcom/github/foamdino/Test;", "b", "()V");
-        assert(sample2 == 0); /* Don't sample these calls */
-    }
-    assert(ctx->metrics->call_counts[idx2] == 9);
-    
-    /* 10th call (count becomes 10) - SHOULD be sampled */
-    sample2 = should_sample_method(ctx, "Lcom/github/foamdino/Test;", "b", "()V");
-    assert(sample2 == idx2 + 1); /* 10th call should be sampled */
-    assert(ctx->metrics->call_counts[idx2] == 10);
-    
-    /* Test class wildcard match */
-    /* Since sample rate is 50, first call won't be sampled */
-    int sample3 = should_sample_method(ctx, "Ljava/lang/String;", "length", "()I");
-    assert(sample3 == 0); /* First call should NOT be sampled (rate=50) */
-    assert(ctx->metrics->call_counts[idx3] == 1);
-    
-    /* Call 49 more times (positions 2-50) */
-    for (int i = 1; i < 49; i++) {
-        sample3 = should_sample_method(ctx, "Ljava/lang/String;", "length", "()I");
-        assert(sample3 == 0); /* Don't sample these calls */
-    }
-    assert(ctx->metrics->call_counts[idx3] == 49);
-    
-    /* 50th call should be sampled */
-    sample3 = should_sample_method(ctx, "Ljava/lang/String;", "length", "()I");
-    assert(sample3 == idx3 + 1); /* 50th call should be sampled */
-    assert(ctx->metrics->call_counts[idx3] == 50);
-    
-    /* Method not in the filters */
-    int sample4 = should_sample_method(ctx, "Ljava/lang/Object;", "toString", "()Ljava/lang/String;");
-    assert(sample4 == 0); /* Should not be sampled */
-    
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
-    cleanup_test_context(ctx);
-    
-    printf("[TEST] should_sample_method: All tests passed\n");
-}
-
 /* Test metrics recording functionality */
 static void test_record_method_execution()
 {
@@ -2122,7 +2039,6 @@ int main()
     test_config_extract_and_trim_value();
     test_config_process_config_line();
     test_load_config();
-    test_should_sample_method();
     test_record_method_execution();
     test_arena();
     test_log_queue();

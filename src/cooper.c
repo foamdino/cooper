@@ -32,18 +32,6 @@ static const arena_config_t arena_configs[] = {
 static arena_t *cached_method_cache_arena = NULL;
 static arena_t *cached_class_cache_arena = NULL;
 
-static const cache_config_t method_cache_config = 
-{
-    .max_entries = METHOD_CACHE_MAX_ENTRIES,
-    .key_size = sizeof(method_cache_key_t),
-    .value_size = sizeof(method_cache_value_t),
-    .key_compare = method_cache_key_compare,
-    .key_copy = NULL,    /* Will use default memcpy */
-    .value_copy = NULL,  /* Will use default memcpy */
-    .entry_init = NULL,
-    .name = METHOD_CACHE_NAME
-};
-
 arena_t *find_arena_fast(agent_context_t *ctx, const char *name)
 {
     assert(ctx != NULL);
@@ -1473,31 +1461,47 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
 }
 #endif
 
-// /* Caches class signature in class_info_t using SetTag */
-// static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
-// {
-//     char *class_sig = NULL;
-//     jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+/**
+ * Find the index of a method in the metrics structure
+ */
+int find_method_index(method_metrics_soa_t *metrics, const char *signature) 
+{
+    if (!metrics || !signature) return -1;
     
-//     if (err == JVMTI_ERROR_NONE && class_sig != NULL) 
-//     {
-//         class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
-//         if (info != NULL) 
-//         {
-//             size_t len = strlen(class_sig);
-//             if (len >= sizeof(info->class_sig)) 
-//                 len = sizeof(info->class_sig) - 1;
+    for (size_t i = 0; i < metrics->count; i++) {
+        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0) {
+            return (int)i;
+        }
+    }
+    
+    return -1;  /* Not found */
+}
 
-//             memcpy(info->class_sig, class_sig, len);
-//             info->class_sig[len] = '\0';
-//             info->in_heap_iteration = 0;
+/**
+ * Finds the index for a method in the metrics array based on filter rules.
+ * This is a read-only, non-locking function used during class loading.
+ *
+ * @return The index into the metrics array if a match is found, otherwise -1.
+ */
+static int find_method_filter_index(agent_context_t *ctx, const char *class_signature,
+                                    const char *method_name, const char *method_signature)
+{
+    char full_sig[MAX_SIG_SZ];
 
-//             jlong tag = (jlong)(intptr_t)info;
-//             (*jvmti_env)->SetTag(jvmti_env, klass, tag);
-//         }
-//         (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
-//     }
-// }
+    // Check for an exact match first
+    snprintf(full_sig, sizeof(full_sig), "%s %s %s", class_signature, method_name, method_signature);
+    int method_index = find_method_index(ctx->metrics, full_sig);
+    if (method_index >= 0)
+        return method_index;
+
+    // If no exact match, try a class-level wildcard match
+    snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
+    method_index = find_method_index(ctx->metrics, full_sig);
+    if (method_index >= 0)
+        return method_index;
+
+    return -1; // No matching filter found
+}
 
 /* Caches class and method info using SetTag */
 static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass) 
@@ -1561,34 +1565,6 @@ deallocate:
     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)class_sig);
 }
 
-/**
- * Finds the index for a method in the metrics array based on filter rules.
- * This is a read-only, non-locking function used during class loading.
- *
- * @return The index into the metrics array if a match is found, otherwise -1.
- */
-static int find_method_filter_index(agent_context_t *ctx, const char *class_signature,
-                                    const char *method_name, const char *method_signature)
-{
-    char full_sig[MAX_SIG_SZ];
-
-    // Check for an exact match first
-    snprintf(full_sig, sizeof(full_sig), "%s %s %s", class_signature, method_name, method_signature);
-    int method_index = find_method_index(ctx->metrics, full_sig);
-    if (method_index >= 0) {
-        return method_index;
-    }
-
-    // If no exact match, try a class-level wildcard match
-    snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
-    method_index = find_method_index(ctx->metrics, full_sig);
-    if (method_index >= 0) {
-        return method_index;
-    }
-
-    return -1; // No matching filter found
-}
-
 /*
  * Method entry callback
  */
@@ -1621,7 +1597,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     // For extreme performance, this linear scan could be replaced with a binary search
     // or a micro-hashtable if the methods array was sorted by method_id at class load time.
     method_info_t *method_info = NULL;
-    for (int i = 0; i < info->method_count; i++) {
+    for (uint32_t i = 0; i < info->method_count; i++) {
         if (info->methods[i].method_id == method) {
             method_info = &info->methods[i];
             break;
@@ -1643,13 +1619,12 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     pthread_mutex_unlock(&global_ctx->samples_lock);
 
     // 5. Decide whether to sample this specific call based on the rate.
-    if ((current_calls % sample_rate) != 0) {
+    if ((current_calls % sample_rate) != 0)
         return; // Don't sample this call.
-    }
 
     // 6. This call will be sampled. Proceed with creating the method_sample_t.
-    thread_context_t *context = get_thread_local_context();
-    if (!context) return;
+    thread_context_t *tc = get_thread_local_context();
+    if (!tc) return;
 
     arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
     if (!arena) return;
@@ -1658,144 +1633,11 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     if (!sample) return;
 
     // Push the sample onto the thread's stack.
-    sample->parent = context->sample;
-    context->sample = sample;
-    context->stack_depth++;
+    sample->parent = tc->sample;
+    tc->sample = sample;
+    tc->stack_depth++;
 
     LOG_DEBUG("[ENTRY] Sampling method %s.%s\n", info->class_sig, method_info->method_name);
-    
-//     /* Get thread-local context */
-//     thread_context_t *context = get_thread_local_context();
-
-//     if (!context)
-//         return;
-
-//     /* Get our method cache */
-//     cache_t *cache = cache_tls_get(METHOD_CACHE_NAME, cached_method_cache_arena, &method_cache_config);
-//     if (!cache) 
-//         return;
-
-//     method_cache_key_t cache_key = { .method_id = method };
-//     method_cache_value_t cache_value;
-
-//     /* Check cache first */
-//     if (cache_get(cache, &cache_key, &cache_value)) 
-//     {
-//         /* Cache hit */
-//         if (!cache_value.should_sample) 
-//             return;
-
-//         /* Use cached method info for sampling */
-//         int sample_index = should_sample_method(global_ctx, 
-//             cache_value.class_signature, cache_value.method_name, cache_value.method_signature);
-        
-//         if (sample_index == 0) 
-//             return;
-
-//         /* Continue with sampling logic using cached values... */
-//         arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
-//         if (!arena) 
-//             return;
-
-//         method_sample_t *sample = init_method_sample(arena, sample_index - 1, method);
-//         if (!sample) 
-//             return;
-
-//         sample->parent = context->sample;
-//         context->sample = sample;
-//         context->stack_depth++;
-
-//         LOG_INFO("[ENTRY] Sampling cached method %s.%s%s\n", 
-//             cache_value.class_signature, cache_value.method_name, cache_value.method_signature);
-//         return;
-//     }
-
-//     /* Ok we haven't seen this or it's not cached - miss, get the method info via jvmti */
-//     char *method_name = NULL;
-//     char *method_signature = NULL;
-//     char *class_signature = NULL;
-//     jclass declaring_class;
-//     jvmtiError err;
-
-//     if (jvmti != global_ctx->jvmti_env)
-//         LOG_WARN("WARNING: jvmti (%p) differs from global_ctx->jvmti_env (%p)\n", jvmti, global_ctx->jvmti_env);
-
-//     err = (*jvmti)->GetMethodName(jvmti, method, &method_name, &method_signature, NULL);
-//     if (err != JVMTI_ERROR_NONE) 
-//     {
-//         LOG_ERROR("GetMethodName failed with error %d\n", err);
-//         goto deallocate;
-//     }
-
-//     err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
-//     if (err != JVMTI_ERROR_NONE) 
-//     {
-//         LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
-//         goto deallocate;
-//     }
-
-//     err = (*jvmti)->GetClassSignature(jvmti, declaring_class, &class_signature, NULL);
-//     if (err != JVMTI_ERROR_NONE) 
-//     {
-//         LOG_ERROR("GetClassSignature failed with error %d\n", err);
-//         goto deallocate;
-//     }
- 
-//     //TODO remove this testing/debugging code
-//     if (strstr(class_signature, "com/github"))
-//         LOG_DEBUG("Should we sample...: class_sig: (%s) method_name: (%s) method_sig (%s) \n", class_signature, method_name, method_signature);
-
-//     /* Check if we should sample this method call */
-//     int sample_index = should_sample_method(global_ctx, class_signature, method_name, method_signature);
-
-//     /* If we get a sample_index of 0 we don't sample this method, so jump to deallocate */
-//     if (sample_index == 0)
-//         goto deallocate;
-    
-//     /* Cache the result */
-//     memset(&cache_value, 0, sizeof(cache_value));
-//     strncpy(cache_value.class_signature, class_signature, sizeof(cache_value.class_signature) - 1);
-//     strncpy(cache_value.method_name, method_name, sizeof(cache_value.method_name) - 1);
-//     strncpy(cache_value.method_signature, method_signature, sizeof(cache_value.method_signature) - 1);
-//     cache_value.should_sample = (sample_index > 0);
-
-//     cache_put(cache, &cache_key, &cache_value);
-
-//     /* We're sampling this call */
-//     LOG_DEBUG("Sampling : %s (%d)\n", method_name, sample_index);
-
-//     /* Create a new sample on our method stack */
-//     arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
-//     if (!arena)
-//     {
-//         LOG_ERROR("Could not find sample_arena!\n");
-//         goto deallocate;
-//     }
-
-//     /* Now create the actual sample with the correct data */
-//     method_sample_t *sample = init_method_sample(arena, sample_index -1, method); /* Convert sample_index back to 0-based index */
-//     if (!sample)
-//     {
-//         LOG_ERROR("Failed to allocate method sample context!\n");
-//         goto deallocate;
-//     }
-
-//     /* Now we update our sample stack */
-//     /* 1. This sample's parent is whatever is in the current context... */
-//     sample->parent = context->sample;
-//     /* 2. Overwrite the context's sample with this sample */
-//     context->sample = sample;
-//     /* 3. Increase our stack depth */
-//     context->stack_depth++;
-    
-//     LOG_INFO("[ENTRY] Sampling method %s.%s%s with jmethodID [%p]\n", 
-//         class_signature, method_name, method_signature, method);
-
-// deallocate:
-//     /* Deallocate memory allocated by JVMTI */
-//     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_name);
-//     (*jvmti)->Deallocate(jvmti, (unsigned char*)method_signature);
-//     (*jvmti)->Deallocate(jvmti, (unsigned char*)class_signature);
 }
 
 /*
@@ -1823,7 +1665,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p", context, context->sample);
     }
     
-
     /* We need to look in our stack to find a corresponding method entry 
     Note that the JVM doesn't guarantee ordering of method entry/exits for a variety of reasons:
     - Threading
@@ -2836,78 +2677,6 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
         index, metrics->count);
     return index;
 }
-
-/**
- * Find the index of a method in the metrics structure
- */
-int find_method_index(method_metrics_soa_t *metrics, const char *signature) 
-{
-    if (!metrics || !signature) return -1;
-    
-    for (size_t i = 0; i < metrics->count; i++) {
-        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0) {
-            return (int)i;
-        }
-    }
-    
-    return -1;  /* Not found */
-}
-
-/**
- * Check if a method should be sampled and return its index if it should
- */
-int should_sample_method(agent_context_t *ctx, const char *class_signature, 
-                         const char *method_name, const char *method_signature) 
-{
-    /* We need to find the method in our metrics structure */
-    char full_sig[MAX_SIG_SZ];
-    int written = snprintf(full_sig, sizeof(full_sig), "%s %s %s", 
-                        class_signature, method_name, method_signature);
-    
-    /* Signature is too long, skip */
-    if (written < 0 || written >= MAX_SIG_SZ)
-        return 0;
-    
-    int method_index = find_method_index(ctx->metrics, full_sig);
-    
-    /* If exact match not found, try class wildcard */
-    if (method_index < 0) 
-    {
-        written = snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
-        if (written >= 0 && written < MAX_SIG_SZ)
-            method_index = find_method_index(ctx->metrics, full_sig);
-    }
-    
-    /* If still not found, not a method we want to sample */
-    if (method_index < 0)
-        return 0;
-    
-    /* Lock to safely update call count */
-    pthread_mutex_lock(&ctx->samples_lock);
-
-    /* We found the method, increment its call count */
-    ctx->metrics->call_counts[method_index]++;
-
-    /* Log call count updates for debugging */
-    LOG_DEBUG("Method %s call_count incremented to %lu\n", 
-        ctx->metrics->signatures[method_index], ctx->metrics->call_counts[method_index]);
-
-    /* Check if we should sample this call based on the sample rate */
-    int should_sample = (ctx->metrics->call_counts[method_index] % ctx->metrics->sample_rates[method_index]) == 0;
-    LOG_DEBUG("Method %s: call_count=%lu, sample_rate=%d, should_sample=%d\n", 
-        ctx->metrics->signatures[method_index], 
-        ctx->metrics->call_counts[method_index], 
-        ctx->metrics->sample_rates[method_index], 
-        should_sample);
-
-    pthread_mutex_unlock(&ctx->samples_lock);
-
-    if (should_sample)
-        return method_index + 1;  /* +1 because 0 means "don't sample" */
-    
-    return 0;  /* Don't sample this call */
-}
-
 
 static int precache_loaded_classes(jvmtiEnv *jvmti_env)
 {

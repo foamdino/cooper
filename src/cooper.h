@@ -93,8 +93,8 @@
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
-typedef struct method_cache_key method_cache_key_t;
-typedef struct method_cache_value method_cache_value_t;
+// typedef struct method_cache_key method_cache_key_t;
+// typedef struct method_cache_value method_cache_value_t;
 typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct app_memory_metrics app_memory_metrics_t;
@@ -223,10 +223,10 @@ struct method_sample
     method_sample_t *parent; /**< Parent (or calling) method */
 };
 
-struct method_cache_key 
-{
-    jmethodID method_id;
-};
+// struct method_cache_key 
+// {
+//     jmethodID method_id;
+// };
 
 struct class_stats 
 {
@@ -250,13 +250,13 @@ struct callbacks
     jvmtiHeapCallbacks heap_callbacks;
 };
 
-struct method_cache_value 
-{
-    char class_signature[MAX_SIG_SZ];
-    char method_name[64];
-    char method_signature[256];
-    int should_sample;
-};
+// struct method_cache_value 
+// {
+//     char class_signature[MAX_SIG_SZ];
+//     char method_name[64];
+//     char method_signature[256];
+//     int should_sample;
+// };
 
 struct thread_context
 {
@@ -341,16 +341,6 @@ struct agent_context
     size_t last_heap_stats_count;
     uint64_t last_heap_stats_time;
 };
-
-/* Key comparison function for method cache */
-static inline int method_cache_key_compare(const void *key1, const void *key2)
-{
-    const method_cache_key_t *k1 = (const method_cache_key_t *)key1;
-    const method_cache_key_t *k2 = (const method_cache_key_t *)key2;
-    
-    if (k1->method_id == k2->method_id) return 0;
-    return (k1->method_id < k2->method_id) ? -1 : 1;
-}
 
 /* jmvti callback functions */
 void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
