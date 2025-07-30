@@ -1500,7 +1500,11 @@ static char *get_parameter_value(arena_t *arena, jvmtiEnv *jvmti, JNIEnv *jni_en
 // }
 
 /* Caches class and method info using SetTag */
-static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass) {
+static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass) 
+{
+    
+    assert(jvmti_env != NULL);
+    
     char *class_sig = NULL;
     jvmtiError err = (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
     if (err != JVMTI_ERROR_NONE || class_sig == NULL) 
@@ -1538,12 +1542,8 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass) {
                     info->methods[i].method_name = arena_strdup(cached_class_cache_arena, method_name);
                     info->methods[i].method_signature = arena_strdup(cached_class_cache_arena, method_sig);
 
-                    // Check against your configuration filters to see if it should be sampled
-                    int should_sample = should_sample_method(global_ctx, class_sig, method_name, method_sig);
-                    if (should_sample == 0)
-                        info->methods[i].sample_index = -1; // -1 is a sentinel value, need to convert from 0 to -1 here, TODO probably make this simpler
-                    else
-                        info->methods[i].sample_index = should_sample;
+                    info->methods[i].sample_index = find_method_filter_index(
+                        global_ctx, class_sig, method_name, method_sig);
 
                     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
                     (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_sig);
@@ -1633,11 +1633,13 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         return;
     }
 
+    const int s_index = method_info->sample_index;
+
     // 4. We found a method to track. Atomically increment its total call count.
     pthread_mutex_lock(&global_ctx->samples_lock);
-    global_ctx->metrics->call_counts[method_info->sample_index]++;
-    uint64_t current_calls = global_ctx->metrics->call_counts[method_info->sample_index];
-    int sample_rate = global_ctx->metrics->sample_rates[method_info->sample_index];
+    global_ctx->metrics->call_counts[s_index]++;
+    uint64_t current_calls = global_ctx->metrics->call_counts[s_index];
+    int sample_rate = global_ctx->metrics->sample_rates[s_index];
     pthread_mutex_unlock(&global_ctx->samples_lock);
 
     // 5. Decide whether to sample this specific call based on the rate.
