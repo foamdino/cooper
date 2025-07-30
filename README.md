@@ -25,8 +25,11 @@ valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all \
 strace -o trace.log -f java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test
 ```
 
-
-
+## async-profiler
+This is the main open source profiler/agent tool available. Need to work out the equivalent params so we can compare like-for-like (as much as we can)
+```
+java -agentpath:/home/kev/projects/async-profiler/build/lib/libasyncProfiler.so=start,cpu,flat=20,loop=60 -jar java-src/target/spring-boot-test-0.0.1-SNAPSHOT.jar
+```
 ## Misc TODO
 
 * using tracing tools to uncover how many syscalls/librarycalls are made in the code
