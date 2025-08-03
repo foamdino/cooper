@@ -2507,6 +2507,61 @@ void *heap_stats_thread_func(void *arg)
 }
 
 /**
+ * Add a method to the metrics structure
+ */
+int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags) 
+{
+    
+    assert(ctx != NULL);
+    assert(ctx->metrics != NULL);
+
+    method_metrics_soa_t *metrics = ctx->metrics;
+
+    /* Add debug output to see what's being added */
+    LOG_DEBUG("Adding method to metrics: %s (rate=%d, flags=%u)\n", 
+        signature, sample_rate, flags);
+
+    /* Check if method already exists */
+    int index = find_method_index(metrics, signature);
+    if (index >= 0) 
+    {
+        /* Update existing entry */
+        metrics->sample_rates[index] = sample_rate;
+        metrics->metric_flags[index] = flags;
+        LOG_DEBUG("Updated existing method at index %d\n", index);
+        return index;
+    }
+    
+    /* Need to add a new entry */
+    if (metrics->count >= metrics->capacity) 
+    {
+        /* Cannot grow in the current implementation with arenas */
+        LOG_DEBUG("Method metrics capacity reached (%zu)\n", metrics->capacity);
+        return -1;
+    }
+    
+    /* Add new entry */
+    arena_t *arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
+    if (!arena) 
+    {
+        LOG_DEBUG("Could not find metrics arena\n");
+        return -1;
+    }
+    index = metrics->count;
+
+    /* As the values are guaranteed to be 0 by the initial allocation, no need to set every value here */
+    metrics->signatures[index] = arena_strdup(arena, signature);
+    metrics->sample_rates[index] = sample_rate;
+    metrics->min_time_ns[index] = UINT64_MAX;
+    metrics->metric_flags[index] = flags;
+    
+    metrics->count++;
+    LOG_DEBUG("Added new method at index %d, total methods: %zu\n", 
+        index, metrics->count);
+    return index;
+}
+
+/**
  * Load agent configuration from a file
  * 
  * Uses arena-based memory management for all string operations.
@@ -2620,60 +2675,7 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     return metrics;
 }
 
-/**
- * Add a method to the metrics structure
- */
-int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sample_rate, unsigned int flags) 
-{
-    
-    assert(ctx != NULL);
-    assert(ctx->metrics != NULL);
 
-    method_metrics_soa_t *metrics = ctx->metrics;
-
-    /* Add debug output to see what's being added */
-    LOG_DEBUG("Adding method to metrics: %s (rate=%d, flags=%u)\n", 
-        signature, sample_rate, flags);
-
-    /* Check if method already exists */
-    int index = find_method_index(metrics, signature);
-    if (index >= 0) 
-    {
-        /* Update existing entry */
-        metrics->sample_rates[index] = sample_rate;
-        metrics->metric_flags[index] = flags;
-        LOG_DEBUG("Updated existing method at index %d\n", index);
-        return index;
-    }
-    
-    /* Need to add a new entry */
-    if (metrics->count >= metrics->capacity) 
-    {
-        /* Cannot grow in the current implementation with arenas */
-        LOG_DEBUG("Method metrics capacity reached (%zu)\n", metrics->capacity);
-        return -1;
-    }
-    
-    /* Add new entry */
-    arena_t *arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
-    if (!arena) 
-    {
-        LOG_DEBUG("Could not find metrics arena\n");
-        return -1;
-    }
-    index = metrics->count;
-
-    /* As the values are guaranteed to be 0 by the initial allocation, no need to set every value here */
-    metrics->signatures[index] = arena_strdup(arena, signature);
-    metrics->sample_rates[index] = sample_rate;
-    metrics->min_time_ns[index] = UINT64_MAX;
-    metrics->metric_flags[index] = flags;
-    
-    metrics->count++;
-    LOG_DEBUG("Added new method at index %d, total methods: %zu\n", 
-        index, metrics->count);
-    return index;
-}
 
 static int precache_loaded_classes(jvmtiEnv *jvmti_env)
 {
@@ -2918,6 +2920,29 @@ static int init_arena_hashtable(agent_context_t *ctx)
     return COOPER_OK;
 }
 
+/**
+ * Cleanup state
+ * 
+ * @param ctx Pointer to an agent_context_t
+ */
+static void cleanup(agent_context_t *ctx)
+{
+    /* check if we have work to do */
+    if (ctx->config.filters) 
+    {
+        /* Only free the array of pointers, strings are handled by config_arena */
+        free(ctx->config.filters);
+    }
+
+    /* Reset config values (no need to free arena allocated strings) */
+    ctx->config.filters = NULL;
+    ctx->config.num_filters = 0;
+    ctx->config.sample_file_path = NULL;
+    ctx->config.export_method = NULL;
+    ctx->method_filters = NULL;
+    ctx->num_filters = 0;
+}
+
 /*
  * Entry point
  */
@@ -3092,29 +3117,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
     LOG_INFO("JVMTI Agent Loaded.\n");
     return JNI_OK;
-}
-
-/**
- * Cleanup state
- * 
- * @param ctx Pointer to an agent_context_t
- */
-void cleanup(agent_context_t *ctx)
-{
-    /* check if we have work to do */
-    if (ctx->config.filters) 
-    {
-        /* Only free the array of pointers, strings are handled by config_arena */
-        free(ctx->config.filters);
-    }
-
-    /* Reset config values (no need to free arena allocated strings) */
-    ctx->config.filters = NULL;
-    ctx->config.num_filters = 0;
-    ctx->config.sample_file_path = NULL;
-    ctx->config.export_method = NULL;
-    ctx->method_filters = NULL;
-    ctx->num_filters = 0;
 }
 
 /**

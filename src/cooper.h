@@ -324,15 +324,7 @@ struct agent_context
     uint64_t last_heap_stats_time;
 };
 
-/* jmvti callback functions */
-void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method);
-void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, jmethodID method, jboolean was_popped_by_exception, jvalue return_value);
-void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jmethodID method, jlocation location, jobject exception, jmethodID catch_method, jlocation catch_location);
-
-/* Methods sampling functions */
-int should_sample_method(agent_context_t *ctx, const char *class_signature, const char *method_name, const char *method_signature);
 int load_config(agent_context_t *ctx, const char *cf);
-void cleanup(agent_context_t *ctx);
 int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
 
 /* Metrics management functions */
