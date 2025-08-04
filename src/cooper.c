@@ -380,9 +380,8 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
 }
 
 /* Record method execution metrics */
-void record_method_execution(agent_context_t *ctx, int method_index, 
-    uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles) {
-
+void record_method_execution(agent_context_t *ctx, int method_index, uint64_t exec_time_ns, uint64_t memory_bytes, uint64_t cycles) 
+{
     method_metrics_soa_t *metrics = ctx->metrics;
 
     LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu\n", 
@@ -398,38 +397,42 @@ void record_method_execution(agent_context_t *ctx, int method_index,
         return;
     }
 
-    /* Lock metrics for thread safety */
-    pthread_mutex_lock(&ctx->samples_lock);
-
     /* Update sample count */
-    metrics->sample_counts[method_index]++;
+    __atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
 
     /* Update timing metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0) {
-        metrics->total_time_ns[method_index] += exec_time_ns;
+    if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0) 
+    {
+        __atomic_add_fetch(&metrics->total_time_ns[method_index], exec_time_ns, __ATOMIC_RELAXED);
 
         /* Update min/max */
-        if (exec_time_ns < metrics->min_time_ns[method_index]) {
+        pthread_mutex_lock(&ctx->samples_lock);
+
+        if (exec_time_ns < metrics->min_time_ns[method_index]) 
             metrics->min_time_ns[method_index] = exec_time_ns;
-        }
-        if (exec_time_ns > metrics->max_time_ns[method_index]) {
+
+        if (exec_time_ns > metrics->max_time_ns[method_index]) 
             metrics->max_time_ns[method_index] = exec_time_ns;
-        }
+        
+        pthread_mutex_unlock(&ctx->samples_lock);
     }
 
     /* Update memory metrics if enabled */
     if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) 
     {
-        metrics->alloc_bytes[method_index] += memory_bytes;
+        __atomic_add_fetch(&metrics->alloc_bytes[method_index], memory_bytes, __ATOMIC_RELAXED);
+
+        pthread_mutex_lock(&ctx->samples_lock);
+
         if (memory_bytes > metrics->peak_memory[method_index])
             metrics->peak_memory[method_index] = memory_bytes;
+            
+        pthread_mutex_unlock(&ctx->samples_lock);
     }
 
     /* Update CPU metrics if enabled */
     if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-        metrics->cpu_cycles[method_index] += cycles;
-
-    pthread_mutex_unlock(&ctx->samples_lock);
+        __atomic_add_fetch(&metrics->cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
 
     LOG_DEBUG("Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu", 
         method_index, 
