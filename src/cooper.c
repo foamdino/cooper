@@ -208,8 +208,8 @@ static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
             LOG_DEBUG("Current thread ID: %d for Java thread ID: %lld", result, (long long)thread_id);
 
             /* Add to our map */
-            pthread_mutex_lock(&global_ctx->samples_lock);
             int empty_slot = -1;
+            pthread_mutex_lock(&global_ctx->samples_lock);
             for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
             {
                 if (global_ctx->thread_mappings[i].java_thread_id == 0)
@@ -225,16 +225,12 @@ static pid_t get_native_thread_id(jvmtiEnv *jvmti_env, JNIEnv *jni, jthread thre
                 global_ctx->thread_mappings[empty_slot].native_thread_id = result;
             } 
             else
-            {
                 LOG_ERROR("No empty slots available for thread mapping");
-            } 
 
             pthread_mutex_unlock(&global_ctx->samples_lock);
         }
         else
-        {
             LOG_DEBUG("Cannot get native ID for non-current thread");
-        }
     }
 
     return result;
@@ -569,16 +565,18 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
     if (!ctx || !class_sig)
         return;
 
-    pthread_mutex_lock(&ctx->samples_lock);
+    // TODO look into these locks and see if we can use atomic_add_fetch for object_metrics here
+    
     
     int index = find_or_add_object_type(ctx->object_metrics, class_sig);
     if (index >= 0) 
     {
-        ctx->object_metrics->allocation_counts[index]++;
-        ctx->object_metrics->total_bytes[index] += safe_sz;
-        ctx->object_metrics->current_instances[index]++;
+        __atomic_add_fetch(&ctx->object_metrics->allocation_counts[index], 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&ctx->object_metrics->total_bytes[index], safe_sz, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&ctx->object_metrics->current_instances[index], 1, __ATOMIC_RELAXED);
         
         /* Update size statistics */
+        pthread_mutex_lock(&ctx->samples_lock);
         if (safe_sz < ctx->object_metrics->min_size[index])
             ctx->object_metrics->min_size[index] = safe_sz;
 
@@ -588,9 +586,8 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
         /* Update average size */
         ctx->object_metrics->avg_size[index] = 
             ctx->object_metrics->total_bytes[index] / ctx->object_metrics->allocation_counts[index];
+        pthread_mutex_unlock(&ctx->samples_lock);
     }
-    
-    pthread_mutex_unlock(&ctx->samples_lock);
 }
 
 static void export_method_to_shm(agent_context_t *ctx) {
@@ -1596,18 +1593,12 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     const int s_index = method_info->sample_index;
 
     /* We found a method to track. Atomically increment its total call count. */
-    // TODO mutex vs __atomic_add_fetch
-    // pthread_mutex_lock(&global_ctx->samples_lock);
-    // global_ctx->metrics->call_counts[s_index]++;
-    // uint64_t current_calls = global_ctx->metrics->call_counts[s_index];
-    // int sample_rate = global_ctx->metrics->sample_rates[s_index];
-    // pthread_mutex_unlock(&global_ctx->samples_lock);
     uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[s_index], 1, __ATOMIC_RELAXED);
     int sample_rate = global_ctx->metrics->sample_rates[s_index]; /* Read-only after init */
 
     /* Decide whether to sample this specific call based on the rate. */
     if ((current_calls % sample_rate) != 0)
-        return; // Don't sample this call.
+        return; /* Don't sample this call. */
 
     /* This call will be sampled. Proceed with creating the method_sample_t. */
     thread_context_t *tc = get_thread_local_context();
@@ -1701,7 +1692,6 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
         LOG_DEBUG("No matching method found for methodID [%p]\n", method);
         return;
     }
-
 
     LOG_DEBUG("Matching method found for methodID [%p]\n", method);
     unsigned int flags = 0; 
