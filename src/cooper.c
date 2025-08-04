@@ -79,20 +79,23 @@ static void init_thread_local_storage_once(void)
 }
 
 /* Initialize thread-local storage */
-static void init_thread_local_storage() {
+static void init_thread_local_storage() 
+{
     pthread_once(&tls_init_once, init_thread_local_storage_once);
 }
 
 /* Get the thread-local sample structure */
-static thread_context_t *get_thread_local_context() {
-
+static thread_context_t *get_thread_local_context() 
+{
     init_thread_local_storage();
     
     thread_context_t *context = pthread_getspecific(context_key);
-    if (!context) {
+    if (!context) 
+    {
         /* First time this thread is accessing the key */
         context = calloc(1, sizeof(thread_context_t));
-        if (context) {
+        if (context) 
+        {
             context->sample = NULL;
             context->stack_depth = 0;
             pthread_setspecific(context_key, context);
@@ -359,15 +362,12 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     /* Initialise sample */
     sample->method_index = method_index;
     sample->method_id = method_id;
-    sample->parent = NULL;
+    /* current_alloc_bytes and parent already zero-initialized by arena_alloc */
     
     unsigned int flags = global_ctx->metrics->metric_flags[method_index];
 
     if (flags & METRIC_FLAG_TIME)
         sample->start_time = get_current_time_ns();
-    
-    if (flags & METRIC_FLAG_MEMORY)
-        sample->current_alloc_bytes = 0;
         
     if (flags & METRIC_FLAG_CPU)
         sample->start_cpu = cycles_start();
@@ -545,12 +545,9 @@ static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, con
         LOG_ERROR("Failed to allocate memory for class signature: %s\n", class_sig);
         return -1;
     }
-    obj_metrics->allocation_counts[index] = 0;
-    obj_metrics->total_bytes[index] = 0;
+
+    /* Only set non-zero values, the rest of the values are initialised to 0 */
     obj_metrics->min_size[index] = UINT64_MAX;
-    obj_metrics->max_size[index] = 0;
-    obj_metrics->current_instances[index] = 0;
-    
     obj_metrics->count++;
     LOG_DEBUG("Added object type at index %d: %s (total types: %zu)\n", 
         index, class_sig, obj_metrics->count);
@@ -565,9 +562,6 @@ static void update_object_allocation_stats(agent_context_t *ctx, const char *cla
     if (!ctx || !class_sig)
         return;
 
-    // TODO look into these locks and see if we can use atomic_add_fetch for object_metrics here
-    
-    
     int index = find_or_add_object_type(ctx->object_metrics, class_sig);
     if (index >= 0) 
     {
@@ -966,10 +960,11 @@ void *export_thread_func(void *arg)
     {
         LOG_DEBUG("Export thread sleeping for %d seconds\n", ctx->config.export_interval);
         /* Sleep in smaller increments to be more responsive to shutdown */
-        for (int i = 0; i < ctx->config.export_interval && ctx->export_running; i++) {
+        for (int i = 0; i < ctx->config.export_interval && ctx->export_running; i++)
             sleep(1);
-        }
-        if (ctx->export_running) {
+        
+        if (ctx->export_running) 
+        {
             LOG_DEBUG("Export thread woke up, exporting metrics\n");
             export_to_file(ctx);
         }
@@ -1445,10 +1440,10 @@ int find_method_index(method_metrics_soa_t *metrics, const char *signature)
 {
     if (!metrics || !signature) return -1;
     
-    for (size_t i = 0; i < metrics->count; i++) {
-        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0) {
+    for (size_t i = 0; i < metrics->count; i++) 
+    {
+        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0)
             return (int)i;
-        }
     }
     
     return -1;  /* Not found */
@@ -1465,25 +1460,24 @@ static int find_method_filter_index(agent_context_t *ctx, const char *class_sign
 {
     char full_sig[MAX_SIG_SZ];
 
-    // Check for an exact match first
+    /* Check for an exact match first */
     snprintf(full_sig, sizeof(full_sig), "%s %s %s", class_signature, method_name, method_signature);
     int method_index = find_method_index(ctx->metrics, full_sig);
     if (method_index >= 0)
         return method_index;
 
-    // If no exact match, try a class-level wildcard match
+    /* If no exact match, try a class-level wildcard match */
     snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
     method_index = find_method_index(ctx->metrics, full_sig);
     if (method_index >= 0)
         return method_index;
 
-    return -1; // No matching filter found
+    return -1; /* No matching filter found */
 }
 
 /* Caches class and method info using SetTag */
 static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass) 
 {
-    
     assert(jvmti_env != NULL);
     
     char *class_sig = NULL;
@@ -1491,7 +1485,7 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
     if (err != JVMTI_ERROR_NONE || class_sig == NULL) 
         goto deallocate;
 
-    // 1. Allocate the main class_info struct from the class cache arena
+    /* Allocate the main class_info struct from the class cache arena */
     class_info_t *info = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(class_info_t));
     if (info == NULL) 
         goto deallocate;
@@ -1499,27 +1493,29 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
     strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
     info->in_heap_iteration = 0;
 
-    // 2. Get all methods for the class
+    /* Get all methods for the class */
     jint method_count = 0;
     jmethodID *methods = NULL;
     err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
 
     if (err == JVMTI_ERROR_NONE && method_count > 0) 
     {
-        // 3. Allocate space for the method info array in the same arena
+        /* Allocate space for the method info array in the same arena */
         info->methods = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(method_info_t) * method_count);
         info->method_count = method_count;
 
-        if (info->methods != NULL) {
-            // 4. Loop through each method and cache its details
-            for (int i = 0; i < method_count; i++) {
+        if (info->methods != NULL) 
+        {
+            /* Loop through each method and cache its details */
+            for (int i = 0; i < method_count; i++) 
+            {
                 char *method_name = NULL;
                 char *method_sig = NULL;
                 info->methods[i].method_id = methods[i];
 
                 if ((*jvmti_env)->GetMethodName(jvmti_env, methods[i], &method_name, &method_sig, NULL) == JVMTI_ERROR_NONE) 
                 {
-                    // Store arena-allocated copies of the names
+                    /* Store arena-allocated copies of the names */
                     info->methods[i].method_name = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_name);
                     info->methods[i].method_signature = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
 
@@ -1534,7 +1530,7 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
         (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)methods);
     }
 
-    // 5. Set the tag
+    /* Set the tag */
     jlong tag = (jlong)(intptr_t)info;
     (*jvmti_env)->SetTag(jvmti_env, klass, tag);
 
@@ -1554,9 +1550,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     jclass declaring_class;
     jvmtiError err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
     if (err != JVMTI_ERROR_NONE) 
-    {
-        return; // Cannot proceed without the class.
-    }
+        return; /* Cannot proceed without the class. */
 
     /* Get the tag associated with the class, which points to our cached class_info_t struct. */
     jlong tag = 0;
@@ -1584,11 +1578,9 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         }
     }
 
+    /* We either didn't find the method (should be rare) or it's not one we're configured to sample. */
     if (method_info == NULL || method_info->sample_index < 0) 
-    {
-        /* We either didn't find the method (should be rare) or it's not one we're configured to sample. */
         return;
-    }
 
     const int s_index = method_info->sample_index;
 
@@ -2355,9 +2347,8 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
         ht_entry_t *entry = &ctx.class_table->entries[i];
         
         /* CRITICAL: Check if entry is occupied before accessing value */
-        if (entry->state != HT_OCCUPIED || !entry->value) {
+        if (entry->state != HT_OCCUPIED || !entry->value)
             continue; /* Skip empty slots */
-        }
         
         class_stats_t *stats = (class_stats_t *)entry->value;
         if (stats->instance_count > 0) 
@@ -2532,7 +2523,6 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     metrics->sample_rates[index] = sample_rate;
     metrics->min_time_ns[index] = UINT64_MAX;
     metrics->metric_flags[index] = flags;
-    
     metrics->count++;
     LOG_DEBUG("Added new method at index %d, total methods: %zu\n", index, metrics->count);
     return index;
@@ -2930,14 +2920,6 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     /* Create each arena from the configuration table */
     for (size_t i = 0; i < ARENA_ID__LAST; i++) 
     {
-        // arena_t *arena = create_arena(
-        //     // &global_ctx->arena_head, 
-        //     // &global_ctx->arena_tail, 
-        //     arena_configs[i].name, 
-        //     arena_configs[i].size, 
-        //     arena_configs[i].block_count
-        // );
-
         arena_t *arena = arena_init(arena_configs[i].name, 
             arena_configs[i].size, arena_configs[i].block_count);
         
