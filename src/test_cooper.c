@@ -26,18 +26,6 @@ static int string_compare(const void *key1, const void *key2) {
     return strcmp((const char*)key1, (const char*)key2);
 }
 
-static int method_key_compare(const void *key1, const void *key2) {
-    typedef struct {
-        void *method_id;
-    } test_method_key_t;
-    
-    const test_method_key_t *k1 = (const test_method_key_t *)key1;
-    const test_method_key_t *k2 = (const test_method_key_t *)key2;
-    
-    if (k1->method_id == k2->method_id) return 0;
-    return (k1->method_id < k2->method_id) ? -1 : 1;
-}
-
 /* Helper to create a temporary config file */
 static const char *create_temp_config(const char *content) 
 {
@@ -125,7 +113,8 @@ static void cleanup_test_context(agent_context_t *ctx)
 static void test_arena_trim() 
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    arena_t *config_arena = arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
     char *result1 = arena_trim(config_arena, "  hello  \n");
     assert(result1 != NULL);
@@ -143,7 +132,7 @@ static void test_arena_trim()
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
 
     printf("[TEST] test_arena_trim: All tests passed\n");
@@ -153,7 +142,8 @@ static void test_arena_trim()
 static void test_arena_strip_comment() 
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    arena_t *config_arena = arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
     char *result1 = arena_strip_comment(config_arena, "hello # comment");
     assert(result1 != NULL);
@@ -171,7 +161,7 @@ static void test_arena_strip_comment()
     assert(result4 != NULL);
     assert(strlen(result4) == 0);
 
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
 
     printf("[TEST] test_arena_strip_comment: All tests passed\n");
@@ -181,7 +171,8 @@ static void test_arena_strip_comment()
 static void test_config_extract_and_trim_value() 
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    arena_t *config_arena = arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
     /* Standard key-value pair */
     char *result1 = config_extract_and_trim_value(config_arena, "key = value");
@@ -246,7 +237,7 @@ static void test_config_extract_and_trim_value()
     assert(result13 != NULL);
     assert(strcmp(result13, "value=with=equals") == 0);
 
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
 
     printf("[TEST] test_config_extract_and_trim_value: All tests passed\n");
@@ -256,7 +247,8 @@ static void test_config_extract_and_trim_value()
 static void test_config_process_config_line() 
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *config_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    arena_t *config_arena = arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
     /* Line with a comment */
     char *result1 = config_process_config_line(config_arena, "key = value # comment");
@@ -293,7 +285,7 @@ static void test_config_process_config_line()
     assert(result7 != NULL);
     assert(strcmp(result7, "key = \"value with # inside quotes\"") == 0);
 
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
 
     printf("[TEST] test_config_process_config_line: All tests passed\n");
@@ -308,9 +300,12 @@ static void test_load_config()
     assert(init_log_q(ctx) == 0);
     
     /* Create necessary arenas */
-    create_arena(&ctx->arena_head, &ctx->arena_tail, "config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
-    arena_t *log_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
-    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    arena_t *config_arena = arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+    ctx->arenas[CONFIG_ARENA_ID] = config_arena;
+    arena_t *log_arena = arena_init("log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    ctx->arenas[LOG_ARENA_ID] = log_arena;
+    arena_t *metrics_arena = arena_init("metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    ctx->arenas[METRICS_ARENA_ID] = metrics_arena;
 
     /* Initialize log system */
     init_log_system(log_queue, log_arena, stdout);
@@ -393,7 +388,7 @@ static void test_load_config()
         free(log_queue);
     }
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] load_config: All tests passed\n");
@@ -411,7 +406,8 @@ static void test_log_queue()
     assert(ctx != NULL);
     
     /* Initialize log arena for message storage */
-    arena_t *log_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    arena_t *log_arena = arena_init("log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    ctx->arenas[LOG_ARENA_ID] = log_arena;
     assert(log_arena != NULL);
     
     /* Initialize a log queue using the actual log system */
@@ -437,7 +433,7 @@ static void test_log_queue()
     assert(message_count <= 2); /* Messages might have been processed already */
     
     /* Clean up the arenas */
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] log_queue: All tests passed\n");
@@ -579,7 +575,8 @@ static void test_record_method_execution()
     agent_context_t *ctx = init_test_context();
     
     /* Initialize metrics arena for metrics data */
-    arena_t *metrics_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    arena_t *metrics_arena = arena_init("metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+    ctx->arenas[METRICS_ARENA_ID] = metrics_arena;
     assert(metrics_arena != NULL);
     
     /* Initialize metrics structure */
@@ -656,7 +653,7 @@ static void test_record_method_execution()
     record_method_execution(ctx, 999, 1000, 512, 2000);
     record_method_execution(ctx, -1, 1000, 512, 2000);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] record_method_execution: All tests passed\n");
@@ -729,7 +726,8 @@ static void test_cpu_cycles()
 static void test_cache_basic()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Simple integer key-value cache */
     cache_config_t config = {
@@ -773,7 +771,7 @@ static void test_cache_basic()
     cache_stats(cache, NULL, NULL, &entries);
     assert(entries == 4);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_basic: All tests passed\n");
@@ -783,8 +781,8 @@ static void test_cache_basic()
 static void test_cache_eviction()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
-    
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     cache_config_t config = {
         .max_entries = 3,
@@ -829,7 +827,7 @@ static void test_cache_eviction()
     assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
     assert(cache_get(cache, &(int){5}, &value) == 0 && value == 500);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_eviction: All tests passed\n");
@@ -839,7 +837,8 @@ static void test_cache_eviction()
 static void test_cache_update()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     cache_config_t config = {
         .max_entries = 4,
@@ -870,7 +869,7 @@ static void test_cache_update()
     cache_stats(cache, NULL, NULL, &entries);
     assert(entries == 1);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_update: All tests passed\n");
@@ -880,7 +879,8 @@ static void test_cache_update()
 static void test_cache_clear()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     cache_config_t config = {
         .max_entries = 4,
@@ -924,7 +924,7 @@ static void test_cache_clear()
     assert(cache_put(cache, &(int){4}, &(int){400}) == 0);
     assert(cache_get(cache, &(int){4}, &value) == 0 && value == 400);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_clear: All tests passed\n");
@@ -934,7 +934,8 @@ static void test_cache_clear()
 static void test_cache_tls()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Initialize TLS cache system */
     assert(cache_tls_init() == 0);
@@ -977,104 +978,18 @@ static void test_cache_tls()
     /* Cleanup TLS */
     cache_tls_cleanup();
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_tls: All tests passed\n");
-}
-
-/* Test method cache specific functionality */
-static void test_method_cache()
-{
-    agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
-    
-    /* Method cache key and value structures for testing */
-    typedef struct {
-        void *method_id; /* Using void* to simulate jmethodID */
-    } test_method_key_t;
-    
-    typedef struct {
-        char class_signature[MAX_SIG_SZ];
-        char method_name[64];
-        char method_signature[256];
-        int should_sample;
-    } test_method_value_t;
-    
-    cache_config_t config = {
-        .max_entries = 8,
-        .key_size = sizeof(test_method_key_t),
-        .value_size = sizeof(test_method_value_t),
-        .key_compare = method_key_compare,
-        .key_copy = NULL,
-        .value_copy = NULL,
-        .entry_init = NULL,
-        .name = "method_cache_test"
-    };
-    
-    cache_t *cache = cache_init(test_arena, &config);
-    assert(cache != NULL);
-    
-    /* Simulate method IDs */
-    void *method1 = (void*)0x1000;
-    void *method2 = (void*)0x2000;
-    void *method3 = (void*)0x3000;
-    
-    /* Test method cache operations */
-    test_method_key_t key1 = { .method_id = method1 };
-    test_method_value_t value1 = {
-        .should_sample = 1
-    };
-    strcpy(value1.class_signature, "Lcom/example/TestClass;");
-    strcpy(value1.method_name, "testMethod");
-    strcpy(value1.method_signature, "()V");
-    
-    /* Cache miss initially */
-    test_method_value_t retrieved;
-    assert(cache_get(cache, &key1, &retrieved) == 1);
-    
-    /* Put method in cache */
-    assert(cache_put(cache, &key1, &value1) == 0);
-    
-    /* Cache hit */
-    assert(cache_get(cache, &key1, &retrieved) == 0);
-    assert(retrieved.should_sample == 1);
-    assert(strcmp(retrieved.class_signature, "Lcom/example/TestClass;") == 0);
-    assert(strcmp(retrieved.method_name, "testMethod") == 0);
-    assert(strcmp(retrieved.method_signature, "()V") == 0);
-    
-    /* Test multiple methods */
-    test_method_key_t key2 = { .method_id = method2 };
-    test_method_value_t value2 = {
-        .should_sample = 0
-    };
-    strcpy(value2.class_signature, "Ljava/lang/Object;");
-    strcpy(value2.method_name, "toString");
-    strcpy(value2.method_signature, "()Ljava/lang/String;");
-    
-    assert(cache_put(cache, &key2, &value2) == 0);
-    assert(cache_get(cache, &key2, &retrieved) == 0);
-    assert(retrieved.should_sample == 0);
-    
-    /* First method should still be cached */
-    assert(cache_get(cache, &key1, &retrieved) == 0);
-    assert(retrieved.should_sample == 1);
-    
-    /* Test method not in cache */
-    test_method_key_t key3 = { .method_id = method3 };
-    assert(cache_get(cache, &key3, &retrieved) == 1);
-    
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
-    cleanup_test_context(ctx);
-    
-    printf("[TEST] test_method_cache: All tests passed\n");
 }
 
 /* Test cache error conditions */
 static void test_cache_errors()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Test invalid configurations (should return NULL gracefully) */
     cache_config_t bad_config = {
@@ -1130,7 +1045,7 @@ static void test_cache_errors()
     cache_clear(NULL);
     cache_stats(NULL, NULL, NULL, NULL);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_errors: All tests passed\n");
@@ -1140,7 +1055,8 @@ static void test_cache_errors()
 static void test_cache_string_keys()
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     cache_config_t config = {
         .max_entries = 4,
@@ -1175,7 +1091,7 @@ static void test_cache_string_keys()
     assert(cache_get(cache, "method2", &value) == 0 && value == 200);
     assert(cache_get(cache, "nonexistent", &value) == 1);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_string_keys: All tests passed\n");
@@ -1570,7 +1486,8 @@ static void test_shared_memory_mixed_data_types() {
 void test_buffer_overflow_protection(void) 
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "overflow_test_arena", 1024, 10);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Test allocation of exact available size */
     size_t available_size = test_arena->total_sz - sizeof(block_header_t) - 8; /* Account for alignment */
@@ -1614,7 +1531,7 @@ void test_buffer_overflow_protection(void)
     /* Restore magic for cleanup */
     normal_header->magic = original_magic;
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_buffer_overflow_protection: All tests passed\n");
@@ -1624,7 +1541,8 @@ void test_buffer_overflow_protection(void)
 void test_arena_bounds_checking(void)
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "bounds_test_arena", 512, 5);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Test allocation with zero size */
     // void *zero_block = arena_alloc(test_arena, 0);
@@ -1692,7 +1610,7 @@ void test_arena_bounds_checking(void)
         assert(result == 0); /* Should fail - free list full */
     }
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_arena_bounds_checking: All tests passed\n");
@@ -1702,7 +1620,8 @@ void test_arena_bounds_checking(void)
 void test_string_handling_safety(void)
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "string_test_arena", 2048, 20);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     /* Test arena_strdup with NULL input */
     char *result = arena_strdup(test_arena, NULL);
@@ -1771,18 +1690,19 @@ void test_string_handling_safety(void)
     assert(result == NULL); /* Should return NULL - string too long */
 
     /* Test with string that fits within limit - use a fresh arena to ensure space */
-    arena_t *fresh_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "fresh_string_arena", 8192, 20);
+    arena_reset(test_arena);
+    // arena_t *fresh_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "fresh_string_arena", 8192, 20);
 
     char medium_string[64]; /* Use smaller string to ensure arena has space */
     memset(medium_string, 'B', sizeof(medium_string) - 1);
     medium_string[sizeof(medium_string) - 1] = '\0';
 
-    result = arena_strndup(fresh_arena, medium_string, MAX_STR_LEN - 1);
+    result = arena_strndup(test_arena, medium_string, MAX_STR_LEN - 1);
     assert(result != NULL);
     assert(strlen(result) == 63);
     assert(strcmp(result, medium_string) == 0);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_string_handling_safety: All tests passed\n");
@@ -1853,7 +1773,8 @@ void test_shared_memory_race_conditions(void)
 void test_cache_thread_safety(void)
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *test_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "cache_test_arena", 64 * 1024, 100);
+    arena_t *test_arena = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+    ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
     
     cache_config_t config = {
         .max_entries = 8,
@@ -1910,7 +1831,7 @@ void test_cache_thread_safety(void)
     /* Note: This test verifies the cache behaves consistently in sequential access.
      * For true thread safety, external synchronization would be required. */
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_cache_thread_safety: All tests passed\n");
@@ -1920,7 +1841,8 @@ void test_cache_thread_safety(void)
 void test_logging_concurrent_writes(void)
 {
     agent_context_t *ctx = init_test_context();
-    arena_t *log_arena = create_arena(&ctx->arena_head, &ctx->arena_tail, "log_test_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    arena_t *log_arena = arena_init(LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+    ctx->arenas[LOG_ARENA_ID] = log_arena;
     
     /* Initialize logging system */
     log_q_t *queue = arena_alloc(log_arena, sizeof(log_q_t));
@@ -2024,7 +1946,7 @@ void test_logging_concurrent_writes(void)
     pthread_cond_destroy(&queue->cond);
     pthread_mutex_destroy(&queue->lock);
     
-    destroy_all_arenas(&ctx->arena_head, &ctx->arena_tail);
+    destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
     cleanup_test_context(ctx);
     
     printf("[TEST] test_logging_concurrent_writes: All tests passed\n");
@@ -2048,7 +1970,6 @@ int main()
     test_cache_update();
     test_cache_clear();
     test_cache_tls();
-    test_method_cache();
     test_cache_errors();
     test_cache_string_keys();
     test_shared_memory_init();

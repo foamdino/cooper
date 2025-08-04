@@ -25,7 +25,6 @@
 
 typedef struct arena arena_t;
 typedef struct block_header block_header_t;
-typedef struct arena_node arena_node_t;
 typedef struct arena_config arena_config_t;
 
 struct arena_config
@@ -42,16 +41,6 @@ struct block_header
     size_t total_block_sz; /**< Size of block user data + header */
     uint32_t magic; /**< Magic number used for validation */
 };
-
-struct arena_node
-{
-    arena_t *arena;            /**< The actual arena */
-    char name[32];             /**< Name of the arena (for lookup) */
-    size_t sz;               /**< Size of the arena */
-    arena_node_t *next;   /**< Next node in the list */
-    arena_node_t *prev;   /**< Previous node in the list */
-};
-
 struct arena 
 {
     void *memory;          /* Pre-allocated memory buffer */
@@ -124,35 +113,10 @@ void arena_destroy(arena_t *arena);
 void arena_reset(arena_t *arena);
 
 /**
- * Create a new arena, initialize it and add it to a list
- * 
- * @param head      Pointer to the head pointer of the list (modified)
- * @param tail      Pointer to the tail pointer of the list (modified)
- * @param name      Name of the arena
- * @param size      Size of the arena
- * @param max_blocks Maximum number of free blocks to track
- * 
- * @return          Pointer to the created arena, or NULL on failure
- */
-arena_t *create_arena(arena_node_t **head, arena_node_t **tail, const char *name, size_t size, size_t max_blocks);
-
-/**
-* Find an arena by name
-* 
-* @param head      Head of the arena list
-* @param name      Name of the arena to find
-* 
-* @return          Pointer to the found arena, or NULL if not found
-*/
-arena_t *find_arena(arena_node_t *head, const char *name);
-
-/**
  * Destroy all arenas in the list
  * 
- * @param head      Pointer to the head pointer of the list (modified)
- * @param tail      Pointer to the tail pointer of the list (modified)
  */
-void destroy_all_arenas(arena_node_t **head, arena_node_t **tail);
+void destroy_all_arenas(arena_t *arenas[], size_t max);
 
 #endif /* ARENA_H */
  

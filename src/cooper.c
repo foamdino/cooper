@@ -2937,21 +2937,24 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     /* Create each arena from the configuration table */
     for (size_t i = 0; i < ARENA_ID__LAST; i++) 
     {
-        arena_t *arena = create_arena(
-            &global_ctx->arena_head, 
-            &global_ctx->arena_tail, 
-            arena_configs[i].name, 
-            arena_configs[i].size, 
-            arena_configs[i].block_count
-        );
-        
-        global_ctx->arenas[arena_configs[i].id] = arena;
+        // arena_t *arena = create_arena(
+        //     // &global_ctx->arena_head, 
+        //     // &global_ctx->arena_tail, 
+        //     arena_configs[i].name, 
+        //     arena_configs[i].size, 
+        //     arena_configs[i].block_count
+        // );
 
+        arena_t *arena = arena_init(arena_configs[i].name, 
+            arena_configs[i].size, arena_configs[i].block_count);
+        
         if (!arena) 
         {
             printf("Failed to create %s with id: %ld\n", arena_configs[i].name, arena_configs[i].id);
             return JNI_ERR;
         }
+
+        global_ctx->arenas[arena_configs[i].id] = arena;
     }
 
     /* Init logging after all arenas are created */
@@ -3161,7 +3164,7 @@ JNIEXPORT void JNICALL Agent_OnUnload(JavaVM *vm) {
         cleanup_log_system();
 
         /* Cleanup the arenas - this will free all cache managers and cache data */
-        destroy_all_arenas(&global_ctx->arena_head, &global_ctx->arena_tail);
+        destroy_all_arenas(global_ctx->arenas, ARENA_ID__LAST);
         /* Null out metrics */
         global_ctx->metrics = NULL;
         global_ctx->object_metrics = NULL;

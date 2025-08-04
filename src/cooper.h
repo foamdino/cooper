@@ -322,8 +322,6 @@ struct agent_context
     int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
-    arena_node_t *arena_head;       /**< First arena in the list */
-    arena_node_t *arena_tail;       /**< Last arena in the list */
     arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
     app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
