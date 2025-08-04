@@ -108,6 +108,18 @@ typedef struct class_info class_info_t;
 
 typedef void *thread_fn(void *args);
 
+enum arenas
+{
+    EXCEPTION_ARENA_ID,
+    LOG_ARENA_ID,
+    SAMPLE_ARENA_ID,
+    CONFIG_ARENA_ID,
+    METRICS_ARENA_ID,
+    SCRATCH_ARENA_ID,
+    CLASS_CACHE_ARENA_ID,
+    ARENA_ID__LAST
+};
+
 /**
  * Struct-of-Arrays for storing method metrics
  * 
@@ -312,7 +324,7 @@ struct agent_context
     config_t config;                /**< Agent configuration */
     arena_node_t *arena_head;       /**< First arena in the list */
     arena_node_t *arena_tail;       /**< Last arena in the list */
-    hashtable_t *arena_hashtable;   /**< Hashtable of arena name -> arena for O(1) lookups */
+    arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
     method_metrics_soa_t *metrics;  /**< Method metrics in SoA format */
     app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
     thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */

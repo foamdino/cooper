@@ -14,33 +14,14 @@ static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Arena configurations */
 static const arena_config_t arena_configs[] = {
-    {EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
-    {LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
-    {SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
-    {CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
-    {METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS}
+    {EXCEPTION_ARENA_ID, EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
+    {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
+    {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
+    {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
+    {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
+    {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
+    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS}
 };
-
-//TODO perhaps move this to ctx
-
-/* Cache arena pointers globally to avoid repeated lookups */
-static arena_t *cached_class_cache_arena = NULL;
-
-arena_t *find_arena_fast(agent_context_t *ctx, const char *name)
-{
-    assert(ctx != NULL);
-    assert(name != NULL);
-    
-    if (!ctx->arena_hashtable) 
-    {
-        LOG_INFO("Arena hashtable not initialized, falling back to linked list to find %s", name);
-        return find_arena(ctx->arena_head, name);
-    }
-    
-    return (arena_t*)ht_get(ctx->arena_hashtable, name);
-}
 
 #ifdef ENABLE_DEBUG_LOGS
 /* Debug function for dumping method stack */
@@ -550,7 +531,7 @@ static int find_or_add_object_type(object_allocation_metrics_t *obj_metrics, con
         return -1;
     }
 
-    arena_t *arena = find_arena_fast(global_ctx, METRICS_ARENA_NAME);
+    arena_t *arena = global_ctx->arenas[METRICS_ARENA_ID];
     if (!arena)
     {
         LOG_ERROR("unable to find metrics arena!\n");
@@ -1169,7 +1150,7 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
             /* If not found, create new metrics structure */
             if (!found) 
             {
-                arena_t *metrics_arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
+                arena_t *metrics_arena = ctx->arenas[METRICS_ARENA_ID];
                 if (metrics_arena) 
                 {
                     thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
@@ -1511,7 +1492,7 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
         goto deallocate;
 
     // 1. Allocate the main class_info struct from the class cache arena
-    class_info_t *info = arena_alloc(cached_class_cache_arena, sizeof(class_info_t));
+    class_info_t *info = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(class_info_t));
     if (info == NULL) 
         goto deallocate;
 
@@ -1526,7 +1507,7 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
     if (err == JVMTI_ERROR_NONE && method_count > 0) 
     {
         // 3. Allocate space for the method info array in the same arena
-        info->methods = arena_alloc(cached_class_cache_arena, sizeof(method_info_t) * method_count);
+        info->methods = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(method_info_t) * method_count);
         info->method_count = method_count;
 
         if (info->methods != NULL) {
@@ -1539,8 +1520,8 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
                 if ((*jvmti_env)->GetMethodName(jvmti_env, methods[i], &method_name, &method_sig, NULL) == JVMTI_ERROR_NONE) 
                 {
                     // Store arena-allocated copies of the names
-                    info->methods[i].method_name = arena_strdup(cached_class_cache_arena, method_name);
-                    info->methods[i].method_signature = arena_strdup(cached_class_cache_arena, method_sig);
+                    info->methods[i].method_name = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_name);
+                    info->methods[i].method_signature = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
 
                     info->methods[i].sample_index = find_method_filter_index(
                         global_ctx, class_sig, method_name, method_sig);
@@ -1569,7 +1550,7 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     UNUSED(jni);
     UNUSED(thread);
 
-    // 1. Get the declaring class of the method. This is the only JVMTI call needed for lookup.
+    /* Get the declaring class of the method. This is the only JVMTI call needed for lookup. */
     jclass declaring_class;
     jvmtiError err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
     if (err != JVMTI_ERROR_NONE) 
@@ -1577,37 +1558,42 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
         return; // Cannot proceed without the class.
     }
 
-    // 2. Get the tag associated with the class, which points to our cached class_info_t struct.
+    /* Get the tag associated with the class, which points to our cached class_info_t struct. */
     jlong tag = 0;
-    // This GetTag call is extremely fast.
+
+    /* This GetTag call is extremely fast. */
     err = (*jvmti)->GetTag(jvmti, declaring_class, &tag);
     if (err != JVMTI_ERROR_NONE || tag == 0) 
     {
-        // This can happen for classes loaded before the agent was attached.
-        // We simply ignore them to keep this path fast.
+        /* This can happen for classes loaded before the agent was attached.
+        We simply ignore them to keep this path fast. */
         return;
     }
     class_info_t *info = (class_info_t*)(intptr_t)tag;
 
-    // 3. Find the specific method's cached info in the class's method list.
-    // For extreme performance, this linear scan could be replaced with a binary search
-    // or a micro-hashtable if the methods array was sorted by method_id at class load time.
+    /* Find the specific method's cached info in the class's method list.
+    For extreme performance, this linear scan could be replaced with a binary search
+    or a micro-hashtable if the methods array was sorted by method_id at class load time. */
     method_info_t *method_info = NULL;
-    for (uint32_t i = 0; i < info->method_count; i++) {
-        if (info->methods[i].method_id == method) {
+    for (uint32_t i = 0; i < info->method_count; i++) 
+    {
+        if (info->methods[i].method_id == method) 
+        {
             method_info = &info->methods[i];
             break;
         }
     }
 
-    if (method_info == NULL || method_info->sample_index < 0) {
-        // We either didn't find the method (should be rare) or it's not one we're configured to sample.
+    if (method_info == NULL || method_info->sample_index < 0) 
+    {
+        /* We either didn't find the method (should be rare) or it's not one we're configured to sample. */
         return;
     }
 
     const int s_index = method_info->sample_index;
 
-    // 4. We found a method to track. Atomically increment its total call count.
+    /* We found a method to track. Atomically increment its total call count. */
+    // TODO mutex vs __atomic_add_fetch
     // pthread_mutex_lock(&global_ctx->samples_lock);
     // global_ctx->metrics->call_counts[s_index]++;
     // uint64_t current_calls = global_ctx->metrics->call_counts[s_index];
@@ -1616,21 +1602,21 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[s_index], 1, __ATOMIC_RELAXED);
     int sample_rate = global_ctx->metrics->sample_rates[s_index]; /* Read-only after init */
 
-    // 5. Decide whether to sample this specific call based on the rate.
+    /* Decide whether to sample this specific call based on the rate. */
     if ((current_calls % sample_rate) != 0)
         return; // Don't sample this call.
 
-    // 6. This call will be sampled. Proceed with creating the method_sample_t.
+    /* This call will be sampled. Proceed with creating the method_sample_t. */
     thread_context_t *tc = get_thread_local_context();
     if (!tc) return;
 
-    arena_t *arena = find_arena_fast(global_ctx, SAMPLE_ARENA_NAME);
+    arena_t *arena = global_ctx->arenas[SAMPLE_ARENA_ID];
     if (!arena) return;
 
     method_sample_t *sample = init_method_sample(arena, method_info->sample_index, method);
     if (!sample) return;
 
-    // Push the sample onto the thread's stack.
+    /* Push the sample onto the thread's stack. */
     sample->parent = tc->sample;
     tc->sample = sample;
     tc->stack_depth++;
@@ -1899,7 +1885,7 @@ void JNICALL exception_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread th
 
         LOG_DEBUG("Method params: \n");
 
-        arena_t *arena = find_arena_fast(global_ctx, EXCEPTION_ARENA_NAME);
+        arena_t *arena = global_ctx->arenas[EXCEPTION_ARENA_ID];
         if (arena == NULL)
         {
             LOG_ERROR(">> Unable to find exception arena on list! <<\n");
@@ -2278,7 +2264,7 @@ static size_t calculate_hashtable_size(int class_count)
 /* Fully robust heap statistics collection maintaining all safety checks */
 static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env) 
 {
-    arena_t *scratch_arena = find_arena_fast(global_ctx, SCRATCH_ARENA_NAME);
+    arena_t *scratch_arena = global_ctx->arenas[SCRATCH_ARENA_ID];
     if (!scratch_arena) 
     {
         LOG_ERROR("Failed to find scratch arena");
@@ -2330,7 +2316,6 @@ static void collect_heap_statistics(jvmtiEnv *jvmti, JNIEnv *env)
         LOG_ERROR("Failed to create class generic hashtable");
         goto cleanup_classes;
     }
-
 
     /* Set up iteration context with validation */
     heap_iteration_context_t ctx = {
@@ -2541,7 +2526,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     }
     
     /* Add new entry */
-    arena_t *arena = find_arena_fast(ctx, METRICS_ARENA_NAME);
+    arena_t *arena = ctx->arenas[METRICS_ARENA_ID];
     if (!arena) 
     {
         LOG_DEBUG("Could not find metrics arena\n");
@@ -2556,8 +2541,7 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     metrics->metric_flags[index] = flags;
     
     metrics->count++;
-    LOG_DEBUG("Added new method at index %d, total methods: %zu\n", 
-        index, metrics->count);
+    LOG_DEBUG("Added new method at index %d, total methods: %zu\n", index, metrics->count);
     return index;
 }
 
@@ -2579,8 +2563,9 @@ int load_config(agent_context_t *ctx, const char *cf)
     if (!ctx) 
         return COOPER_ERR;
     
-    arena_t *config_arena = find_arena_fast(ctx, CONFIG_ARENA_NAME);
-    if (!config_arena) {
+    arena_t *config_arena = ctx->arenas[CONFIG_ARENA_ID];
+    if (!config_arena) 
+    {
         LOG_ERROR("Config arena not found\n");
         return COOPER_ERR;
     }
@@ -2601,7 +2586,8 @@ int load_config(agent_context_t *ctx, const char *cf)
     ctx->config.num_filters = 0; /* We'll track this as we add methods */
     
     /* Convert filters to metrics entries */
-    for (size_t i = 0; i < config.num_filters; i++) {
+    for (size_t i = 0; i < config.num_filters; i++) 
+    {
         method_filter_entry_t *filter = &config.filters[i];
         
         /* Build full signature for matching */
@@ -2674,8 +2660,6 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
     
     return metrics;
 }
-
-
 
 static int precache_loaded_classes(jvmtiEnv *jvmti_env)
 {
@@ -2887,39 +2871,6 @@ static int init_jvm_capabilities(agent_context_t *ctx)
     return COOPER_OK; /* Success */
 }
 
-static int init_arena_hashtable(agent_context_t *ctx)
-{
-    /* Use config arena for hashtable metadata */
-    arena_t *config_arena = find_arena(ctx->arena_head, CONFIG_ARENA_NAME);
-    if (!config_arena) 
-    {
-        LOG_ERROR("Config arena not found for hashtable init");
-        return COOPER_ERR;
-    }
-    
-    /* Create hashtable with capacity for current + future arenas */
-    ctx->arena_hashtable = ht_create(config_arena, 16, 0.75);
-    if (!ctx->arena_hashtable) {
-        LOG_ERROR("Failed to create arena hashtable");
-        return COOPER_ERR;
-    }
-    
-    /* Populate with existing arenas */
-    arena_node_t *node = ctx->arena_head;
-    while (node) 
-    {
-        if (!ht_put(ctx->arena_hashtable, node->name, node->arena)) 
-        {
-            LOG_ERROR("Failed to add arena to hashtable: %s", node->name);
-            return COOPER_ERR;
-        }
-        node = node->next;
-    }
-    
-    LOG_INFO("Arena hashtable initialized with %zu arenas", ctx->arena_hashtable->count);
-    return COOPER_OK;
-}
-
 /**
  * Cleanup state
  * 
@@ -2983,10 +2934,9 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
       destroy all the arenas in the corresponding Agent_OnUnload
     */
 
-    /* Number of arena configurations in the table */
-    const size_t num_arenas = sizeof(arena_configs) / sizeof(arena_configs[0]);
     /* Create each arena from the configuration table */
-    for (size_t i = 0; i < num_arenas; i++) {
+    for (size_t i = 0; i < ARENA_ID__LAST; i++) 
+    {
         arena_t *arena = create_arena(
             &global_ctx->arena_head, 
             &global_ctx->arena_tail, 
@@ -2995,15 +2945,17 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
             arena_configs[i].block_count
         );
         
+        global_ctx->arenas[arena_configs[i].id] = arena;
+
         if (!arena) 
         {
-            printf("Failed to create %s\n", arena_configs[i].name);
+            printf("Failed to create %s with id: %ld\n", arena_configs[i].name, arena_configs[i].id);
             return JNI_ERR;
         }
     }
 
     /* Init logging after all arenas are created */
-    arena_t *log_arena = find_arena_fast(global_ctx, LOG_ARENA_NAME);
+    arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];
     if (!log_arena) 
     {
         printf("Log arena not found\n");
@@ -3017,24 +2969,15 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
         return JNI_ERR;
     }
 
-    if (init_arena_hashtable(global_ctx) != COOPER_OK) 
-    {
-        LOG_ERROR("Unable to initialise arena hashtable\n");
-        return JNI_ERR;
-    }
-
-    arena_t *class_cache_arena = find_arena_fast(global_ctx, CLASS_CACHE_ARENA_NAME);
+    arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
     if (!class_cache_arena) 
     {
         LOG_ERROR("Cache arena not found\n");
         return JNI_ERR;
     }
 
-    /* Cache the cache arena so it's available globally */
-    cached_class_cache_arena = class_cache_arena;
-
     /* Initialize metrics after all arenas are created */
-    arena_t *metrics_arena = find_arena_fast(global_ctx, METRICS_ARENA_NAME);
+    arena_t *metrics_arena = global_ctx->arenas[METRICS_ARENA_ID];
     if (!metrics_arena) 
     {
         LOG_ERROR("Metrics arena not found\n");
@@ -3071,7 +3014,7 @@ JNIEXPORT jint JNICALL Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     pthread_mutex_init(&global_ctx->app_memory_metrics->lock, NULL);
     
     /* Initialize shared memory */
-    arena_t *config_arena = find_arena_fast(global_ctx, CONFIG_ARENA_NAME);
+    arena_t *config_arena = global_ctx->arenas[CONFIG_ARENA_ID];
     if (!config_arena) 
     {
         LOG_ERROR("Config arena not found\n");

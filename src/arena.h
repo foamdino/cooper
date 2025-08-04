@@ -30,6 +30,7 @@ typedef struct arena_config arena_config_t;
 
 struct arena_config
 {
+    size_t id;               /**< Arena id */
     const char *name;        /**< Arena name */
     size_t size;             /**< Arena size in bytes */
     size_t block_count;      /**< Maximum number of free blocks to track */
