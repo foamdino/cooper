@@ -13,6 +13,8 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 /**
  * Magic number for block validation
@@ -80,6 +82,9 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks);
  * @return              Pointer to the allocated memory, or NULL if allocation failed
  */
 void *arena_alloc(arena_t *arena, size_t sz);
+
+
+void *arena_alloc_aligned(arena_t *arena, size_t size, size_t alignment);
 
 /**
  * Free memory back to the arena

@@ -34,24 +34,32 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     strncpy(arena->name, name ? name : "unnamed", sizeof(arena->name) - 1);
     arena->name[sizeof(arena->name) - 1] = '\0';
     
+    /* Round up size to page boundary for mmap */
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    size_t mmap_size = (sz + page_size - 1) & ~(page_size - 1);
+
     /* 
      * Store the allocation size for future reference - this will help
      * with arena cleanup during shutdown 
      */
-    arena->alloc_sz = sz;
+    arena->alloc_sz = mmap_size;
     
-    /* Allocate the memory pool */
-    void* memory = malloc(sz);
-    if (!memory)
+    /* Allocate the memory pool using mmap */
+    void* memory = mmap(NULL, mmap_size, 
+                       PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS,
+                       -1, 0);
+    
+    if (memory == MAP_FAILED)
         goto error_cleanup;
     
     arena->memory = memory;
-    arena->total_sz = sz;
+    arena->total_sz = mmap_size;
     arena->used = 0;
     
     /* Allocate tracking arrays from the pre-allocated memory */
     size_t tracking_sz = max_blocks * (sizeof(void*) + sizeof(size_t));
-    if (tracking_sz >= sz)
+    if (tracking_sz >= mmap_size)
         goto error_cleanup;
         
     arena->free_blocks = (void**)memory;
@@ -69,8 +77,8 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     return arena;
 
 error_cleanup:
-    if (memory)
-        free(memory);
+    if (memory && memory != MAP_FAILED)
+        munmap(memory, mmap_size);
 
     if (arena)
         free(arena);
@@ -154,6 +162,39 @@ void *arena_alloc(arena_t *arena, size_t sz)
 }
 
 /**
+ * 
+ * Before alignment:
+ * |--------used--------|xxxxx|<-requested size->|-----free-----|
+ *                      ^
+ *                      current position (unaligned)
+ *
+ * After alignment:
+ * |--------used--------|xxxxx|padding|<-requested size->|-----free-----|
+ *                                    ^
+ *                                    aligned position
+ */
+void *arena_alloc_aligned(arena_t *arena, size_t size, size_t alignment)
+{
+    assert(arena != NULL);
+    assert(alignment > 0 && (alignment & (alignment - 1)) == 0); /* Power of 2 */
+    
+    /* Calculate padding needed for alignment */
+    uintptr_t current = (uintptr_t)((char*)arena->memory + arena->used);
+    uintptr_t aligned = (current + alignment - 1) & ~(alignment - 1);
+    size_t padding = aligned - current;
+    
+    /* Check if we have enough space */
+    if (arena->used + padding + size > arena->total_sz)
+        return NULL;
+    
+    /* Apply padding before allocation */
+    arena->used += padding;
+    
+    /* Now allocate normally */
+    return arena_alloc(arena, size);
+}
+
+/**
  * Free memory back to the arena
  * 
  * Returns a previously allocated block to the arena's free list for potential reuse.
@@ -215,13 +256,9 @@ void arena_destroy(arena_t *arena)
     if (!arena)
         return;
     
-    /* Free the original memory we allocated directly in arena_init */
-    if (arena->original_memory) 
-    {
-        free(arena->original_memory);
-        arena->original_memory = NULL;
-        arena->memory = NULL;
-    }
+    /* Unmap the memory instead of free */
+    if (arena->original_memory && arena->original_memory != MAP_FAILED)
+        munmap(arena->original_memory, arena->alloc_sz);
     
     /* Free the arena struct itself */
     free(arena);
