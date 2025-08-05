@@ -139,26 +139,26 @@ struct method_metrics_soa
     /* Align to cache line to prevent false sharing with metadata */
     struct {
         uint64_t *call_counts CACHE_ALIGNED;
-        int *sample_rates;
-        unsigned int *metric_flags;
+        int *sample_rates CACHE_ALIGNED;
+        unsigned int *metric_flags CACHE_ALIGNED;
     } hot;
 
     /* ===== WARM PATH DATA - Accessed when sampling ===== */
     /* These are accessed in callbacks but only when actually sampling a method */
     struct {
         uint64_t *sample_counts CACHE_ALIGNED;   /**< Number of times each method has been sampled */
-        uint64_t *total_time_ns;                 /**< Total execution time in nanoseconds */
-        uint64_t *alloc_bytes;                   /**< Total bytes allocated */
-        uint64_t *cpu_cycles;                    /**< CPU cycles used */
+        uint64_t *total_time_ns CACHE_ALIGNED;                 /**< Total execution time in nanoseconds */
+        uint64_t *alloc_bytes CACHE_ALIGNED;                   /**< Total bytes allocated */
+        uint64_t *cpu_cycles CACHE_ALIGNED;                    /**< CPU cycles used */
     } warm;
 
     /* ===== COLD PATH DATA - Accessed during export/statistics ===== */
     /* These fields are primarily accessed during periodic exports */
     struct {
         char **signatures CACHE_ALIGNED;         /**< Array of method signatures */
-        uint64_t *min_time_ns;                   /**< Minimum execution time */
-        uint64_t *max_time_ns;                   /**< Maximum execution time */
-        uint64_t *peak_memory;                   /**< Peak memory usage */
+        uint64_t *min_time_ns CACHE_ALIGNED;                   /**< Minimum execution time */
+        uint64_t *max_time_ns CACHE_ALIGNED;                   /**< Maximum execution time */
+        uint64_t *peak_memory CACHE_ALIGNED;                   /**< Peak memory usage */
     } cold;
 
     // /* Identification data */
