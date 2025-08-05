@@ -30,14 +30,7 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     if (ctx->data_fd == -1) 
     {
         LOG_ERROR("shm_open failed for %s: %s (errno=%d)", COOPER_DATA_SHM_NAME, strerror(errno), errno);
-        /* Try to unlink and recreate */
-        shm_unlink(COOPER_DATA_SHM_NAME);
-        ctx->data_fd = shm_open(COOPER_DATA_SHM_NAME, O_CREAT | O_RDWR, 0644);
-        if (ctx->data_fd == -1) 
-        {
-            LOG_ERROR("Failed to create data shared memory: %s", strerror(errno));
-            return -1;
-        }
+        return -1;
     }
     
     if (ftruncate(ctx->data_fd, ctx->data_shm_size) == -1) 
@@ -59,18 +52,13 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     ctx->data_shm->version = COOPER_SHM_VERSION;
     ctx->data_shm->max_entries = COOPER_MAX_ENTRIES;
     ctx->data_shm->start_time = time(NULL);
-    ctx->data_shm->next_write_index = 0;
     
     /* Create status shared memory (CLI writes, agent reads) */
     ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR, 0644);
     if (ctx->status_fd == -1) 
     {
-        shm_unlink(COOPER_STATUS_SHM_NAME);
-        ctx->status_fd = shm_open(COOPER_STATUS_SHM_NAME, O_CREAT | O_RDWR, 0644);
-        if (ctx->status_fd == -1) {
-            LOG_ERROR("Failed to create status shared memory: %s", strerror(errno));
-            goto error_cleanup;
-        }
+        LOG_ERROR("Failed to create status shared memory: %s", strerror(errno));
+        goto error_cleanup;
     }
     
     if (ftruncate(ctx->status_fd, ctx->status_shm_size) == -1) 
@@ -89,11 +77,6 @@ int cooper_shm_init_agent(cooper_shm_context_t *ctx) {
     
     /* Initialize status shared memory */
     memset(ctx->status_shm, 0, ctx->status_shm_size);
-    for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++) 
-    {
-        ctx->status_shm->status[i] = ENTRY_EMPTY;
-    }
-    
     LOG_INFO("Shared memory initialized successfully");
     return 0;
     
