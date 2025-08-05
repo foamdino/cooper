@@ -1498,37 +1498,40 @@ static void cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
     jmethodID *methods = NULL;
     err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
 
-    if (err == JVMTI_ERROR_NONE && method_count > 0) 
+    if (err != JVMTI_ERROR_NONE)
+        goto deallocate;
+
+    if (method_count == 0)
+        goto deallocate;
+
+    /* Allocate space for the method info array in the same arena */
+    info->methods = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(method_info_t) * method_count);
+    info->method_count = method_count;
+
+    if (info->methods != NULL) 
     {
-        /* Allocate space for the method info array in the same arena */
-        info->methods = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(method_info_t) * method_count);
-        info->method_count = method_count;
-
-        if (info->methods != NULL) 
+        /* Loop through each method and cache its details */
+        for (int i = 0; i < method_count; i++) 
         {
-            /* Loop through each method and cache its details */
-            for (int i = 0; i < method_count; i++) 
+            char *method_name = NULL;
+            char *method_sig = NULL;
+            info->methods[i].method_id = methods[i];
+
+            if ((*jvmti_env)->GetMethodName(jvmti_env, methods[i], &method_name, &method_sig, NULL) == JVMTI_ERROR_NONE) 
             {
-                char *method_name = NULL;
-                char *method_sig = NULL;
-                info->methods[i].method_id = methods[i];
+                /* Store arena-allocated copies of the names */
+                info->methods[i].method_name = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_name);
+                info->methods[i].method_signature = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
 
-                if ((*jvmti_env)->GetMethodName(jvmti_env, methods[i], &method_name, &method_sig, NULL) == JVMTI_ERROR_NONE) 
-                {
-                    /* Store arena-allocated copies of the names */
-                    info->methods[i].method_name = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_name);
-                    info->methods[i].method_signature = arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
+                info->methods[i].sample_index = find_method_filter_index(
+                    global_ctx, class_sig, method_name, method_sig);
 
-                    info->methods[i].sample_index = find_method_filter_index(
-                        global_ctx, class_sig, method_name, method_sig);
-
-                    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
-                    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_sig);
-                }
+                (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_name);
+                (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)method_sig);
             }
         }
-        (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)methods);
     }
+    (*jvmti_env)->Deallocate(jvmti_env, (unsigned char*)methods);
 
     /* Set the tag */
     jlong tag = (jlong)(intptr_t)info;
@@ -1582,11 +1585,9 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     if (method_info == NULL || method_info->sample_index < 0) 
         return;
 
-    const int s_index = method_info->sample_index;
-
     /* We found a method to track. Atomically increment its total call count. */
-    uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[s_index], 1, __ATOMIC_RELAXED);
-    int sample_rate = global_ctx->metrics->sample_rates[s_index]; /* Read-only after init */
+    uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[method_info->sample_index], 1, __ATOMIC_RELAXED);
+    int sample_rate = global_ctx->metrics->sample_rates[method_info->sample_index]; /* Read-only after init */
 
     /* Decide whether to sample this specific call based on the rate. */
     if ((current_calls % sample_rate) != 0)
