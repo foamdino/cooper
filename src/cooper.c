@@ -442,43 +442,25 @@ static object_allocation_metrics_t *init_object_allocation_metrics(arena_t *aren
 
     assert(arena != NULL);
 
-    object_allocation_metrics_t *metrics = arena_alloc(arena, sizeof(object_allocation_metrics_t));
+    object_allocation_metrics_t *metrics = arena_alloc_aligned(arena, sizeof(object_allocation_metrics_t), CACHE_LINE_SZ);
     if (!metrics)
         return NULL;
 
     metrics->capacity = initial_capacity;
 
     /* Allocate arrays in SoA structure */
-    metrics->class_signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
-    if (!metrics->class_signatures)
-        return NULL;
+    metrics->class_signatures = arena_alloc_aligned(arena, initial_capacity * sizeof(char*), CACHE_LINE_SZ);
+    metrics->allocation_counts = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->total_bytes = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->peak_instances = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->current_instances = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->min_size = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->max_size = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->avg_size = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 
-    metrics->allocation_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->allocation_counts)
-        return NULL;
-
-    metrics->total_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->total_bytes)
-        return NULL;
-
-    metrics->peak_instances = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->peak_instances)
-        return NULL;
-
-    metrics->current_instances = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->current_instances)
-        return NULL;
-
-    metrics->min_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->min_size)
-        return NULL;
-
-    metrics->max_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->max_size)
-        return NULL;
-
-    metrics->avg_size = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    if (!metrics->avg_size)
+    if (!metrics->class_signatures || !metrics->allocation_counts || !metrics->total_bytes ||
+        !metrics->peak_instances || !metrics->current_instances || !metrics->min_size || 
+        !metrics->max_size || !metrics->avg_size)
         return NULL;
     
     /* Set min_size to maximum value initially */
@@ -2612,23 +2594,23 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
 {
     assert(arena != NULL);
 
-    method_metrics_soa_t *metrics = arena_alloc(arena, sizeof(method_metrics_soa_t));
+    method_metrics_soa_t *metrics = arena_alloc_aligned(arena, sizeof(method_metrics_soa_t), CACHE_LINE_SZ);
     if (!metrics) return NULL;
     
     metrics->capacity = initial_capacity;
     
     /* arena_alloc zeroes memory — no need for manual memset */
-    metrics->signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
-    metrics->sample_rates = arena_alloc(arena, initial_capacity * sizeof(int));
-    metrics->call_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->sample_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->total_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->min_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
+    metrics->signatures = arena_alloc_aligned(arena, initial_capacity * sizeof(char*), CACHE_LINE_SZ);
+    metrics->sample_rates = arena_alloc_aligned(arena, initial_capacity * sizeof(int), CACHE_LINE_SZ);
+    metrics->call_counts = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->sample_counts = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->total_time_ns = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->min_time_ns = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->max_time_ns = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->alloc_bytes = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->peak_memory = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->cpu_cycles = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->metric_flags = arena_alloc_aligned(arena, initial_capacity * sizeof(unsigned int), CACHE_LINE_SZ);
     
     /* Check if all allocations succeeded */
     if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
