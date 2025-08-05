@@ -34,6 +34,9 @@
 #include "heap.h"
 #include "ht.h"
 
+/* Align to cache line boundary */
+#define CACHE_ALIGNED __attribute__((aligned(CACHE_LINE_SZ)))
+
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x) (void)(x)
 
@@ -128,31 +131,58 @@ enum arenas
  */
 struct method_metrics_soa 
 {
+    /* Metadata - accessed during initialization and export */
     size_t capacity;          /**< Total capacity allocated */
     size_t count;             /**< Current number of methods being tracked */
     
-    /* Identification data */
-    char **signatures;        /**< Array of method signatures */
-    int *sample_rates;        /**< Configured sample rate for each method */
+    /* ===== HOT PATH DATA - Frequently accessed in callbacks ===== */
+    /* Align to cache line to prevent false sharing with metadata */
+    struct {
+        uint64_t *call_counts CACHE_ALIGNED;
+        int *sample_rates;
+        unsigned int *metric_flags;
+    } hot;
+
+    /* ===== WARM PATH DATA - Accessed when sampling ===== */
+    /* These are accessed in callbacks but only when actually sampling a method */
+    struct {
+        uint64_t *sample_counts CACHE_ALIGNED;   /**< Number of times each method has been sampled */
+        uint64_t *total_time_ns;                 /**< Total execution time in nanoseconds */
+        uint64_t *alloc_bytes;                   /**< Total bytes allocated */
+        uint64_t *cpu_cycles;                    /**< CPU cycles used */
+    } warm;
+
+    /* ===== COLD PATH DATA - Accessed during export/statistics ===== */
+    /* These fields are primarily accessed during periodic exports */
+    struct {
+        char **signatures CACHE_ALIGNED;         /**< Array of method signatures */
+        uint64_t *min_time_ns;                   /**< Minimum execution time */
+        uint64_t *max_time_ns;                   /**< Maximum execution time */
+        uint64_t *peak_memory;                   /**< Peak memory usage */
+    } cold;
+
+    // /* Identification data */
+    // char **signatures;        /**< Array of method signatures */
+    // int *sample_rates;        /**< Configured sample rate for each method */
     
-    /* Counters */
-    uint64_t *call_counts;    /**< Number of times each method has been called */
-    uint64_t *sample_counts;  /**< Number of times each method has been sampled */
+    // /* Counters */
+    // uint64_t *call_counts;    /**< Number of times each method has been called */
+    // uint64_t *sample_counts;  /**< Number of times each method has been sampled */
     
-    /* Timing metrics */
-    uint64_t *total_time_ns;  /**< Total execution time in nanoseconds */
-    uint64_t *min_time_ns;    /**< Minimum execution time */
-    uint64_t *max_time_ns;    /**< Maximum execution time */
+    // /* Timing metrics */
+    // uint64_t *total_time_ns;  /**< Total execution time in nanoseconds */
+    // uint64_t *min_time_ns;    /**< Minimum execution time */
+    // uint64_t *max_time_ns;    /**< Maximum execution time */
     
-    /* Memory metrics */
-    uint64_t *alloc_bytes;    /**< Total bytes allocated */
-    uint64_t *peak_memory;    /**< Peak memory usage */
+    // /* Memory metrics */
+    // uint64_t *alloc_bytes;    /**< Total bytes allocated */
+    // uint64_t *peak_memory;    /**< Peak memory usage */
     
-    /* CPU metrics */
-    uint64_t *cpu_cycles;     /**< CPU cycles used */
+    // /* CPU metrics */
+    // uint64_t *cpu_cycles;     /**< CPU cycles used */
     
-    /* Flags for which metrics are collected for each method */
-    unsigned int *metric_flags;
+    // /* Flags for which metrics are collected for each method */
+    // unsigned int *metric_flags;
 };
 
 struct app_memory_metrics

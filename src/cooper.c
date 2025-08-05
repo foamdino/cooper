@@ -364,7 +364,7 @@ static method_sample_t *init_method_sample(arena_t *arena, int method_index, jme
     sample->method_id = method_id;
     /* current_alloc_bytes and parent already zero-initialized by arena_alloc */
     
-    unsigned int flags = global_ctx->metrics->metric_flags[method_index];
+    unsigned int flags = global_ctx->metrics->hot.metric_flags[method_index];
 
     if (flags & METRIC_FLAG_TIME)
         sample->start_time = get_current_time_ns();
@@ -394,41 +394,41 @@ void record_method_execution(agent_context_t *ctx, int method_index, uint64_t ex
     }
 
     /* Update sample count */
-    __atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&metrics->warm.sample_counts[method_index], 1, __ATOMIC_RELAXED);
 
     /* Update timing metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0) 
+    if ((metrics->hot.metric_flags[method_index] & METRIC_FLAG_TIME) != 0) 
     {
-        __atomic_add_fetch(&metrics->total_time_ns[method_index], exec_time_ns, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&metrics->warm.total_time_ns[method_index], exec_time_ns, __ATOMIC_RELAXED);
 
         /* Update min/max */
         pthread_mutex_lock(&ctx->samples_lock);
 
-        if (exec_time_ns < metrics->min_time_ns[method_index]) 
-            metrics->min_time_ns[method_index] = exec_time_ns;
+        if (exec_time_ns < metrics->cold.min_time_ns[method_index]) 
+            metrics->cold.min_time_ns[method_index] = exec_time_ns;
 
-        if (exec_time_ns > metrics->max_time_ns[method_index]) 
-            metrics->max_time_ns[method_index] = exec_time_ns;
+        if (exec_time_ns > metrics->cold.max_time_ns[method_index]) 
+            metrics->cold.max_time_ns[method_index] = exec_time_ns;
         
         pthread_mutex_unlock(&ctx->samples_lock);
     }
 
     /* Update memory metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) 
+    if ((metrics->hot.metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0) 
     {
-        __atomic_add_fetch(&metrics->alloc_bytes[method_index], memory_bytes, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&metrics->warm.alloc_bytes[method_index], memory_bytes, __ATOMIC_RELAXED);
 
         pthread_mutex_lock(&ctx->samples_lock);
 
-        if (memory_bytes > metrics->peak_memory[method_index])
-            metrics->peak_memory[method_index] = memory_bytes;
+        if (memory_bytes > metrics->cold.peak_memory[method_index])
+            metrics->cold.peak_memory[method_index] = memory_bytes;
             
         pthread_mutex_unlock(&ctx->samples_lock);
     }
 
     /* Update CPU metrics if enabled */
-    if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-        __atomic_add_fetch(&metrics->cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
+    if ((metrics->hot.metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
+        __atomic_add_fetch(&metrics->warm.cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
 
     LOG_DEBUG("Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu", 
         method_index, 
@@ -591,23 +591,23 @@ static void export_method_to_shm(agent_context_t *ctx) {
     pthread_mutex_lock(&ctx->samples_lock);
     
     for (size_t i = 0; i < ctx->metrics->capacity; i++) {
-        if (ctx->metrics->signatures[i]) {
+        if (ctx->metrics->cold.signatures[i]) {
             /* Create clean method data structure */
             cooper_method_data_t method_data = {0};
             
-            strncpy(method_data.signature, ctx->metrics->signatures[i], COOPER_MAX_SIGNATURE_LEN - 1);
+            strncpy(method_data.signature, ctx->metrics->cold.signatures[i], COOPER_MAX_SIGNATURE_LEN - 1);
             method_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
             
             /* Direct field assignment */
-            method_data.call_count = ctx->metrics->call_counts[i];
-            method_data.sample_count = ctx->metrics->sample_counts[i];
-            method_data.total_time_ns = ctx->metrics->total_time_ns[i];
-            method_data.min_time_ns = ctx->metrics->min_time_ns[i];
-            method_data.max_time_ns = ctx->metrics->max_time_ns[i];
-            method_data.alloc_bytes = ctx->metrics->alloc_bytes[i];
-            method_data.peak_memory = ctx->metrics->peak_memory[i];
-            method_data.cpu_cycles = ctx->metrics->cpu_cycles[i];
-            method_data.metric_flags = ctx->metrics->metric_flags[i];
+            method_data.call_count = ctx->metrics->hot.call_counts[i];
+            method_data.sample_count = ctx->metrics->warm.sample_counts[i];
+            method_data.total_time_ns = ctx->metrics->warm.total_time_ns[i];
+            method_data.min_time_ns = ctx->metrics->cold.min_time_ns[i];
+            method_data.max_time_ns = ctx->metrics->cold.max_time_ns[i];
+            method_data.alloc_bytes = ctx->metrics->warm.alloc_bytes[i];
+            method_data.peak_memory = ctx->metrics->cold.peak_memory[i];
+            method_data.cpu_cycles = ctx->metrics->warm.cpu_cycles[i];
+            method_data.metric_flags = ctx->metrics->hot.metric_flags[i];
             
             cooper_shm_write_method_data(ctx->shm_ctx, &method_data);
         }
@@ -869,15 +869,15 @@ void export_to_file(agent_context_t *ctx)
     size_t total_samples = 0;
     for (size_t i = 0; i < ctx->metrics->count; i++)
     {
-        if (ctx->metrics->signatures[i])
+        if (ctx->metrics->cold.signatures[i])
         {
             /* Calculate avg time if samples exist */
             uint64_t avg_time = 0;
-            if (ctx->metrics->sample_counts[i] > 0)
-                avg_time = ctx->metrics->total_time_ns[i] / ctx->metrics->sample_counts[i];
+            if (ctx->metrics->warm.sample_counts[i] > 0)
+                avg_time = ctx->metrics->warm.total_time_ns[i] / ctx->metrics->warm.sample_counts[i];
 
-            total_calls += ctx->metrics->call_counts[i];
-            total_samples += ctx->metrics->sample_counts[i];
+            total_calls += ctx->metrics->hot.call_counts[i];
+            total_samples += ctx->metrics->warm.sample_counts[i];
 
             /* Debug output to verify each method's metrics */
             LOG_DEBUG("Method[%zu]: %s, calls=%lu, samples=%lu, time=%lu\n", 
@@ -889,16 +889,16 @@ void export_to_file(agent_context_t *ctx)
 
             /* Print out the details */
             fprintf(fp, "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
-                ctx->metrics->signatures[i],
-                (unsigned long)ctx->metrics->call_counts[i],
-                (unsigned long)ctx->metrics->sample_counts[i],
-                (unsigned long)ctx->metrics->total_time_ns[i],
+                ctx->metrics->cold.signatures[i],
+                (unsigned long)ctx->metrics->hot.call_counts[i],
+                (unsigned long)ctx->metrics->warm.sample_counts[i],
+                (unsigned long)ctx->metrics->warm.total_time_ns[i],
                 (unsigned long)avg_time,
-                (unsigned long)(ctx->metrics->min_time_ns[i] == UINT64_MAX ? 0 : ctx->metrics->min_time_ns[i]),
-                (unsigned long)ctx->metrics->max_time_ns[i],
-                (unsigned long)ctx->metrics->alloc_bytes[i],
-                (unsigned long)ctx->metrics->peak_memory[i],
-                (unsigned long)ctx->metrics->cpu_cycles[i]);
+                (unsigned long)(ctx->metrics->cold.min_time_ns[i] == UINT64_MAX ? 0 : ctx->metrics->cold.min_time_ns[i]),
+                (unsigned long)ctx->metrics->cold.max_time_ns[i],
+                (unsigned long)ctx->metrics->warm.alloc_bytes[i],
+                (unsigned long)ctx->metrics->cold.peak_memory[i],
+                (unsigned long)ctx->metrics->warm.cpu_cycles[i]);
         }
     }
 
@@ -1442,7 +1442,7 @@ int find_method_index(method_metrics_soa_t *metrics, const char *signature)
     
     for (size_t i = 0; i < metrics->count; i++) 
     {
-        if (metrics->signatures[i] && strcmp(metrics->signatures[i], signature) == 0)
+        if (metrics->cold.signatures[i] && strcmp(metrics->cold.signatures[i], signature) == 0)
             return (int)i;
     }
     
@@ -1585,8 +1585,8 @@ void JNICALL method_entry_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread,
     const int s_index = method_info->sample_index;
 
     /* We found a method to track. Atomically increment its total call count. */
-    uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->call_counts[s_index], 1, __ATOMIC_RELAXED);
-    int sample_rate = global_ctx->metrics->sample_rates[s_index]; /* Read-only after init */
+    uint64_t current_calls = __atomic_add_fetch(&global_ctx->metrics->hot.call_counts[s_index], 1, __ATOMIC_RELAXED);
+    int sample_rate = global_ctx->metrics->hot.sample_rates[s_index]; /* Read-only after init */
 
     /* Decide whether to sample this specific call based on the rate. */
     if ((current_calls % sample_rate) != 0)
@@ -1689,7 +1689,7 @@ void JNICALL method_exit_callback(jvmtiEnv *jvmti, JNIEnv* jni, jthread thread, 
     unsigned int flags = 0; 
     
     if (target->method_index >= 0 && (size_t)target->method_index < global_ctx->metrics->count)
-        flags = global_ctx->metrics->metric_flags[target->method_index];
+        flags = global_ctx->metrics->hot.metric_flags[target->method_index];
     
     /* Get metrics if they were enabled */
     uint64_t exec_time = 0;
@@ -2007,7 +2007,7 @@ static void JNICALL object_alloc_callback(jvmtiEnv *jvmti_env, JNIEnv *jni, jthr
     /* Check if memory metrics are enabled for this method */
     if (sample->method_index < 0 || 
         (size_t)sample->method_index >= global_ctx->metrics->count || 
-        !(global_ctx->metrics->metric_flags[sample->method_index] & METRIC_FLAG_MEMORY))
+        !(global_ctx->metrics->hot.metric_flags[sample->method_index] & METRIC_FLAG_MEMORY))
         return;
 
     /* Add allocation to the current method being sampled */
@@ -2495,8 +2495,8 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     if (index >= 0) 
     {
         /* Update existing entry */
-        metrics->sample_rates[index] = sample_rate;
-        metrics->metric_flags[index] = flags;
+        metrics->hot.sample_rates[index] = sample_rate;
+        metrics->hot.metric_flags[index] = flags;
         LOG_DEBUG("Updated existing method at index %d\n", index);
         return index;
     }
@@ -2519,10 +2519,10 @@ int add_method_to_metrics(agent_context_t *ctx, const char *signature, int sampl
     index = metrics->count;
 
     /* As the values are guaranteed to be 0 by the initial allocation, no need to set every value here */
-    metrics->signatures[index] = arena_strdup(arena, signature);
-    metrics->sample_rates[index] = sample_rate;
-    metrics->min_time_ns[index] = UINT64_MAX;
-    metrics->metric_flags[index] = flags;
+    metrics->cold.signatures[index] = arena_strdup(arena, signature);
+    metrics->hot.sample_rates[index] = sample_rate;
+    metrics->cold.min_time_ns[index] = UINT64_MAX;
+    metrics->hot.metric_flags[index] = flags;
     metrics->count++;
     LOG_DEBUG("Added new method at index %d, total methods: %zu\n", index, metrics->count);
     return index;
@@ -2611,35 +2611,41 @@ method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacit
 {
     assert(arena != NULL);
 
-    method_metrics_soa_t *metrics = arena_alloc(arena, sizeof(method_metrics_soa_t));
+    method_metrics_soa_t *metrics = arena_alloc_aligned(arena, sizeof(method_metrics_soa_t), CACHE_LINE_SZ);
     if (!metrics) return NULL;
     
     metrics->capacity = initial_capacity;
     
-    /* arena_alloc zeroes memory — no need for manual memset */
-    metrics->signatures = arena_alloc(arena, initial_capacity * sizeof(char*));
-    metrics->sample_rates = arena_alloc(arena, initial_capacity * sizeof(int));
-    metrics->call_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->sample_counts = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->total_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->min_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->alloc_bytes = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->cpu_cycles = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
-    metrics->metric_flags = arena_alloc(arena, initial_capacity * sizeof(unsigned int));
+    /* Allocate hot path arrays - these are accessed most frequently */
+    metrics->hot.call_counts = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->hot.sample_rates = arena_alloc_aligned(arena, initial_capacity * sizeof(int), CACHE_LINE_SZ);
+    metrics->hot.metric_flags = arena_alloc_aligned(arena, initial_capacity * sizeof(unsigned int), CACHE_LINE_SZ);
+    
+    /* Allocate warm path arrays */
+    metrics->warm.sample_counts = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->warm.total_time_ns = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->warm.alloc_bytes = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    metrics->warm.cpu_cycles = arena_alloc_aligned(arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+    
+    /* Allocate cold path arrays */
+    metrics->cold.signatures = arena_alloc_aligned(arena, initial_capacity * sizeof(char*), CACHE_LINE_SZ);
+    metrics->cold.min_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->cold.max_time_ns = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
+    metrics->cold.peak_memory = arena_alloc(arena, initial_capacity * sizeof(uint64_t));
     
     /* Check if all allocations succeeded */
-    if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts ||
-        !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns ||
-        !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory ||
-        !metrics->cpu_cycles || !metrics->metric_flags) {
+    if (!metrics->hot.call_counts || !metrics->hot.sample_rates || 
+        !metrics->hot.metric_flags || !metrics->warm.sample_counts || 
+        !metrics->warm.total_time_ns || !metrics->cold.min_time_ns ||
+        !metrics->cold.max_time_ns || !metrics->warm.alloc_bytes || 
+        !metrics->cold.peak_memory || !metrics->warm.cpu_cycles || 
+        !metrics->cold.signatures) {
         return NULL;
     }
 
     /* Set min_time_ns to maximum value initially */
     for (size_t i = 0; i < initial_capacity; i++)
-        metrics->min_time_ns[i] = UINT64_MAX;
+        metrics->cold.min_time_ns[i] = UINT64_MAX;
     
     return metrics;
 }

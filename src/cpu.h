@@ -10,6 +10,9 @@
 #include <stdint.h>
 
 #ifdef __x86_64__
+
+#define CACHE_LINE_SZ 64
+
 /**
  * Read the Time Stamp Counter at the start of a measurement period
  */
@@ -56,6 +59,10 @@ static __inline__ uint64_t rdtsc_end(void)
 #endif
 
 #ifdef __aarch64__
+
+/* Can be either 64 or 128 so set it to 128 (Apple M1 etc) */
+#define CACHE_LINE_SZ 128
+
 /**
  * Reads the current virtual count value from the system register CNTVCT_EL0.
  * This value represents the number of ticks since an arbitrary point in time.
