@@ -101,8 +101,6 @@ typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
 typedef struct callbacks callbacks_t;
 
-typedef struct class_cache_key class_cache_key_t;
-typedef struct class_cache_value class_cache_value_t;
 typedef struct method_info method_info_t;
 typedef struct class_info class_info_t;
 
