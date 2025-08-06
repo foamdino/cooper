@@ -1109,50 +1109,50 @@ static void sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timest
         
         /* Sample thread memory */
         uint64_t thread_mem = get_thread_memory(ctx->jvmti_env, jni, threadObj);
-        if (thread_mem > 0) 
+        if (thread_mem == 0)
+            continue;
+
+        thread_memory_metrics_t *thread_metrics = ctx->thread_mem_head;
+        int found = 0;
+        
+        /* Look for existing metrics for this thread */
+        while (thread_metrics) {
+            if (thread_metrics->thread_id == thread_id) 
+            {
+                found = 1;
+                break;
+            }
+            thread_metrics = thread_metrics->next;
+        }
+        
+        /* If not found, create new metrics structure */
+        if (!found) 
         {
-            thread_memory_metrics_t *thread_metrics = ctx->thread_mem_head;
-            int found = 0;
-            
-            /* Look for existing metrics for this thread */
-            while (thread_metrics) {
-                if (thread_metrics->thread_id == thread_id) 
-                {
-                    found = 1;
-                    break;
-                }
-                thread_metrics = thread_metrics->next;
-            }
-            
-            /* If not found, create new metrics structure */
-            if (!found) 
+            arena_t *metrics_arena = ctx->arenas[METRICS_ARENA_ID];
+            if (metrics_arena) 
             {
-                arena_t *metrics_arena = ctx->arenas[METRICS_ARENA_ID];
-                if (metrics_arena) 
+                thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
+                if (thread_metrics) 
                 {
-                    thread_metrics = arena_alloc(metrics_arena, sizeof(thread_memory_metrics_t));
-                    if (thread_metrics) 
-                    {
-                        thread_metrics->thread_id = thread_id;
-                        thread_metrics->next = ctx->thread_mem_head;
-                        ctx->thread_mem_head = thread_metrics;
-                        LOG_INFO("Created new thread memory metrics for thread %lld", (long long)thread_id);
-                    }
+                    thread_metrics->thread_id = thread_id;
+                    thread_metrics->next = ctx->thread_mem_head;
+                    ctx->thread_mem_head = thread_metrics;
+                    LOG_INFO("Created new thread memory metrics for thread %lld", (long long)thread_id);
                 }
             }
+        }
+        
+        /* Store the memory sample */
+        if (thread_metrics) 
+        {
+            size_t idx = thread_metrics->sample_count % MAX_MEMORY_SAMPLES;
+            thread_metrics->memory_samples[idx] = thread_mem;
+            thread_metrics->timestamps[idx] = timestamp;
             
-            /* Store the memory sample */
-            if (thread_metrics) 
-            {
-                size_t idx = thread_metrics->sample_count % MAX_MEMORY_SAMPLES;
-                thread_metrics->memory_samples[idx] = thread_mem;
-                thread_metrics->timestamps[idx] = timestamp;
-                
-                if (thread_metrics->sample_count < MAX_MEMORY_SAMPLES)
-                    thread_metrics->sample_count++;
-                
-                LOG_DEBUG("Stored memory sample for thread %lld: %llu bytes", (long long)thread_id, (unsigned long long)thread_mem);
-            }
+            if (thread_metrics->sample_count < MAX_MEMORY_SAMPLES)
+                thread_metrics->sample_count++;
+            
+            LOG_DEBUG("Stored memory sample for thread %lld: %llu bytes", (long long)thread_id, (unsigned long long)thread_mem);
         }
         
 local_clean:
