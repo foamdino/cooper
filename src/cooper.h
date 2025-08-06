@@ -87,6 +87,9 @@
 #define MIN_HASH_SIZE 1000
 #define MAX_HASH_SIZE 20000
 
+/* Forward declaration */
+typedef struct thread_manager thread_manager_t;
+
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
@@ -314,10 +317,11 @@ struct agent_context
     pthread_t shm_export_thread;    /**< Export via shared mem thread */
     pthread_t heap_stats_thread;    /**< Heap stats background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
-    int export_running;             /**< Flag to signal if export thread should continue */
-    int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
-    int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
-    int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
+
+    volatile int export_running;             /**< Flag to signal if export thread should continue */
+    volatile int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
+    volatile int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
+    volatile int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
@@ -344,5 +348,7 @@ void record_method_execution(agent_context_t *ctx, int method_index, uint64_t ex
 /* Export functions */
 void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
+
+uint64_t get_current_time_ns();
 
 #endif /* COOPER_H */
