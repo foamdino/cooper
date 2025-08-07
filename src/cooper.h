@@ -337,7 +337,6 @@ struct agent_context
 };
 
 int load_config(agent_context_t *ctx, const char *cf);
-int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
 
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
