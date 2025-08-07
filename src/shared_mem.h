@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-/* src/shared_mem.h */
 #ifndef SHARED_MEM_H
 #define SHARED_MEM_H
 
@@ -37,19 +36,22 @@
 	            ? COOPER_MEMORY_DATA_SZ                                              \
 	            : COOPER_OBJECT_ALLOC_DATA_SZ))
 
-typedef enum
+enum cooper_entry_status
 {
 	ENTRY_EMPTY = 0,
 	ENTRY_READY = 1,
 	ENTRY_READ  = 2
-} cooper_entry_status_e;
+};
 
-typedef enum
+enum cooper_data_type
 {
 	COOPER_DATA_METHOD_METRIC = 1,
 	COOPER_DATA_MEMORY_SAMPLE = 2,
 	COOPER_DATA_OBJECT_ALLOC  = 3
-} cooper_data_type_e;
+};
+
+typedef enum cooper_entry_status cooper_entry_status_e;
+typedef enum cooper_data_type cooper_data_type_e;
 
 typedef struct cooper_method_data cooper_method_data_t;
 typedef struct cooper_object_alloc_data cooper_object_alloc_data_t;

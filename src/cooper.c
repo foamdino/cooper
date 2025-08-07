@@ -808,6 +808,7 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 	    &global_ctx->metrics->call_counts[method_info->sample_index],
 	    1,
 	    __ATOMIC_RELAXED);
+
 	int sample_rate =
 	    global_ctx->metrics
 		->sample_rates[method_info->sample_index]; /* Read-only after init */
@@ -817,16 +818,17 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 		return; /* Don't sample this call. */
 
 	/* This call will be sampled. Proceed with creating the method_sample_t. */
-	thread_context_t *tc = get_thread_local_context();
-	if (!tc)
-		return;
-
 	arena_t *arena = global_ctx->arenas[SAMPLE_ARENA_ID];
 	if (!arena)
 		return;
 
+	thread_context_t *tc = get_thread_local_context();
+	if (!tc)
+		return;
+
 	method_sample_t *sample =
 	    init_method_sample(arena, method_info->sample_index, method);
+
 	if (!sample)
 		return;
 
@@ -1280,6 +1282,7 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
+
 	/* Update the global allocation stats */
 	update_object_allocation_stats(global_ctx, class_sig, safe_sz);
 
@@ -1397,19 +1400,13 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 		return NULL;
 	}
 
-	/* Create new stats entry */
-	stats = arena_alloc(ctx->arena, sizeof(class_stats_t));
+	/* Create new stats entry - stats will be memset to 0 by arena */
+	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
 	if (!stats)
 	{
 		LOG_ERROR("Failed to allocate class stats");
 		return NULL;
 	}
-
-	/* Initialize stats */
-	stats->instance_count = 0;
-	stats->total_size     = 0;
-	stats->avg_size       = 0;
-	stats->class_name     = NULL; /* Will be set later if needed */
 
 	/* Add to hashtable using API */
 	if (!ht_put(ctx->class_table, class_sig, stats))
