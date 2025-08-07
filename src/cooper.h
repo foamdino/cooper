@@ -87,9 +87,6 @@
 #define MIN_HASH_SIZE 1000
 #define MAX_HASH_SIZE 20000
 
-/* Forward declaration */
-typedef struct thread_manager thread_manager_t;
-
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
@@ -106,8 +103,6 @@ typedef struct callbacks callbacks_t;
 
 typedef struct method_info method_info_t;
 typedef struct class_info class_info_t;
-
-typedef void *thread_fn(void *args);
 
 enum arenas
 {
