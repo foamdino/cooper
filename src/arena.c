@@ -35,17 +35,11 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     arena->name[sizeof(arena->name) - 1] = '\0';
     
     /* Round up size to page boundary for mmap */
-    size_t page_size = sysconf(_SC_PAGESIZE);
-    size_t mmap_size = (sz + page_size - 1) & ~(page_size - 1);
-
-    /* 
-     * Store the allocation size for future reference - this will help
-     * with arena cleanup during shutdown 
-     */
-    arena->alloc_sz = mmap_size;
+    size_t page_sz = sysconf(_SC_PAGESIZE);
+    size_t mmap_sz = (sz + page_sz - 1) & ~(page_sz - 1);
     
     /* Allocate the memory pool using mmap */
-    void* memory = mmap(NULL, mmap_size, 
+    void* memory = mmap(NULL, mmap_sz, 
                        PROT_READ | PROT_WRITE,
                        MAP_PRIVATE | MAP_ANONYMOUS,
                        -1, 0);
@@ -53,13 +47,20 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     if (memory == MAP_FAILED)
         goto error_cleanup;
     
+    /* 
+     * Store the allocation size for future reference - this will help
+     * with arena cleanup during shutdown 
+     */
+    arena->alloc_sz = mmap_sz;
+    arena->available_sz = mmap_sz;
+    arena->requested_sz = sz;
+    arena->total_sz = mmap_sz;
     arena->memory = memory;
-    arena->total_sz = mmap_size;
     arena->used = 0;
     
     /* Allocate tracking arrays from the pre-allocated memory */
     size_t tracking_sz = max_blocks * (sizeof(void*) + sizeof(size_t));
-    if (tracking_sz >= mmap_size)
+    if (tracking_sz >= mmap_sz)
         goto error_cleanup;
         
     arena->free_blocks = (void**)memory;
@@ -72,13 +73,13 @@ arena_t *arena_init(const char *name, size_t sz, size_t max_blocks)
     
     /* Adjust available memory */
     arena->memory = (char*)memory + tracking_sz;
-    arena->total_sz -= tracking_sz;
+    arena->available_sz -= tracking_sz;
     
     return arena;
 
 error_cleanup:
     if (memory && memory != MAP_FAILED)
-        munmap(memory, mmap_size);
+        munmap(memory, mmap_sz);
 
     if (arena)
         free(arena);

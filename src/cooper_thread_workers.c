@@ -874,14 +874,14 @@ void *export_thread_func(void *arg)
     export_to_file(ctx);
 
     /* export to file while export_running flag is set */
-    while (__atomic_load_n(&ctx->export_running, __ATOMIC_ACQUIRE)) 
+    while (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
     {
         LOG_DEBUG("Export thread sleeping for %d seconds\n", ctx->config.export_interval);
         /* Sleep in smaller increments to be more responsive to shutdown */
-        for (int i = 0; i < ctx->config.export_interval && __atomic_load_n(&ctx->export_running, __ATOMIC_ACQUIRE); i++)
+        for (int i = 0; i < ctx->config.export_interval && check_worker_status(ctx->worker_statuses, EXPORT_RUNNING); i++)
             sleep(1);
         
-        if (__atomic_load_n(&ctx->export_running, __ATOMIC_ACQUIRE)) 
+        if (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
         {
             LOG_DEBUG("Export thread woke up, exporting metrics\n");
             export_to_file(ctx);
@@ -905,7 +905,7 @@ void *shm_export_thread_func(void *arg) {
     LOG_INFO("Shared memory export thread started");
     
     /* TODO move export interval to const */
-    while (ctx->export_running) {
+    while (check_worker_status(ctx->worker_statuses, SHM_EXPORT_RUNNING)) {
         if (ctx->shm_ctx == NULL)
         {
             LOG_DEBUG("Shared mem not available, thread sleeping");
@@ -959,7 +959,7 @@ void *mem_sampling_thread_func(void *arg)
     mem_thread_attached = 1;
     LOG_INFO("Memory sampling thread successfully attached to JVM");
 
-    while (ctx->mem_sampling_running)
+    while (check_worker_status(ctx->worker_statuses, MEM_SAMPLING_RUNNING))
     {
         err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
         if (err != JVMTI_ERROR_NONE)
@@ -1044,7 +1044,7 @@ void *heap_stats_thread_func(void *arg)
     LOG_INFO("Heap statistics thread successfully attached to JVM");
     
     //TODO extract sleep interval to config
-    while (ctx->heap_stats_running)
+    while (check_worker_status(ctx->worker_statuses, HEAP_STATS_RUNNING))
     {
         err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
         if (err != JVMTI_ERROR_NONE)

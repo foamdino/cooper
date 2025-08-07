@@ -14,6 +14,7 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
+#include "cooper.h"
 
 #define DEFAULT_CFG_FILE "trace.ini"
 #define MAX_FILTER_ENTRIES 256
@@ -24,7 +25,8 @@ typedef struct cooper_config cooper_config_t;
 /**
  * Represents a single method filter from the configuration
  */
-struct method_filter_entry {
+struct method_filter_entry 
+{
     char *class_signature;      /**< Class signature pattern */
     char *method_name;          /**< Method name pattern */
     char *method_signature;     /**< Method signature pattern */
@@ -35,7 +37,8 @@ struct method_filter_entry {
 /**
  * Complete configuration for the Cooper agent
  */
-struct cooper_config {
+struct cooper_config 
+{
     /* Global settings */
     int default_sample_rate;    /**< Default sample rate */
     char *sample_file_path;     /**< Path to output file */

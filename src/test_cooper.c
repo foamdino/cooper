@@ -56,7 +56,6 @@ static agent_context_t *init_test_context()
     ctx->config.sample_file_path = NULL;
     ctx->config.export_method = NULL;
     ctx->config.export_interval = 60;
-    ctx->export_running = 1;
     
     pthread_mutex_init(&ctx->samples_lock, NULL);
     
@@ -443,11 +442,14 @@ static void test_log_queue()
 static void test_arena()
 {
     /* Test arena_init */
+    size_t page_size = sysconf(_SC_PAGESIZE);
     arena_t *arena = arena_init("test_arena", 1024, 10);
     assert(arena != NULL);
     assert(strcmp(arena->name, "test_arena") == 0);
-    assert(arena->total_sz <= 1024);
-    assert(arena->total_sz > 0);
+    assert(arena->requested_sz == 1024);
+    assert(arena->total_sz % page_size == 0);   /* Verify page alignment */
+    assert(arena->total_sz >= 1024);
+    assert(arena->available_sz < arena->total_sz); /* Should be less as we subtract the tracking metadata size */
     assert(arena->used == 0);
     assert(arena->free_count == 0);
     assert(arena->max_free_blocks == 10);
@@ -523,7 +525,7 @@ static void test_arena()
     assert(header1->magic == ARENA_BLOCK_MAGIC);
     
     /* This should fail as we don't have enough space */
-    void *big_block = arena_alloc(arena, 1000);
+    void *big_block = arena_alloc(arena, 10000);
     assert(big_block == NULL);
     
     /* Test having more free blocks than we can track */
