@@ -313,10 +313,10 @@ struct agent_context
     pthread_t heap_stats_thread;    /**< Heap stats background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
 
-    volatile int export_running;             /**< Flag to signal if export thread should continue */
-    volatile int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
-    volatile int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
-    volatile int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
+    int export_running;             /**< Flag to signal if export thread should continue */
+    int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
+    int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
+    int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
