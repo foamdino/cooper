@@ -35,8 +35,8 @@ java -agentpath:/home/kev/projects/async-profiler/build/lib/libasyncProfiler.so=
 * using tracing tools to uncover how many syscalls/librarycalls are made in the code
 * cleanup config file handling
 * add assertions where appropriate
-* add iterator to hashtable impl
-
+* add iterator to hashtable impl (maybe)
+* only scan packages declared in config file (leave full scan as an option as it is a great way of revealing issues)
 
 ## Features TODO
 

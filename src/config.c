@@ -6,11 +6,6 @@
 
 #include "config.h"
 
-/* Metric flag constants - these should match cooper.h */
-#define METRIC_FLAG_TIME    0x0001
-#define METRIC_FLAG_MEMORY  0x0002
-#define METRIC_FLAG_CPU     0x0004
-
 /**
  * Extract value part from a "key = value" string and trim it, using arena allocation
  * Also handles quoted values by removing surrounding quotes
@@ -84,6 +79,7 @@ char *config_process_config_line(arena_t *arena, const char *line)
     return trimmed;
 }
 
+//TODO this function ties this code directly to cooper.h as the flags are shared
 /**
  * Parse metrics string and return flags
  */

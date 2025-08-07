@@ -71,11 +71,6 @@
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
 #define SCRATCH_ARENA_NAME "scratch_arena"
 
-/* Metric flags for method sampling */
-#define METRIC_FLAG_TIME    0x0001
-#define METRIC_FLAG_MEMORY  0x0002
-#define METRIC_FLAG_CPU     0x0004
-
 /* Ok/Err */
 #define COOPER_OK 0
 #define COOPER_ERR 1
@@ -104,8 +99,6 @@ typedef struct callbacks callbacks_t;
 typedef struct method_info method_info_t;
 typedef struct class_info class_info_t;
 
-typedef void *thread_fn(void *args);
-
 enum arenas
 {
     EXCEPTION_ARENA_ID,
@@ -116,6 +109,22 @@ enum arenas
     SCRATCH_ARENA_ID,
     CLASS_CACHE_ARENA_ID,
     ARENA_ID__LAST
+};
+
+/* Metric flags for method sampling */
+enum metric_flags
+{
+    METRIC_FLAG_TIME = (1 << 0), /* 1 */
+    METRIC_FLAG_MEMORY = (1 << 1), /* 2 */
+    METRIC_FLAG_CPU = (1 << 2) /* 4 */
+};
+
+enum thread_workers_status
+{
+    EXPORT_RUNNING = (1 << 0),
+    MEM_SAMPLING_RUNNING = (1 << 1),
+    SHM_EXPORT_RUNNING = (1 << 2),
+    HEAP_STATS_RUNNING = (1 << 3)
 };
 
 /**
@@ -314,10 +323,7 @@ struct agent_context
     pthread_t shm_export_thread;    /**< Export via shared mem thread */
     pthread_t heap_stats_thread;    /**< Heap stats background thread */
     pthread_mutex_t samples_lock;   /**< Lock for sample arrays */
-    int export_running;             /**< Flag to signal if export thread should continue */
-    int mem_sampling_running;       /**< Flag to signal if memory sampling thread should continue */
-    int shm_export_running;         /**< Flag to signal if the export data via shared mem is running */
-    int heap_stats_running;         /**< Flag to signal if the heap stats thread is running */
+    unsigned int worker_statuses;   /**< Bitfield flags for background worker threads - see thread_workers_status */
     cooper_shm_context_t *shm_ctx;  /**< Shared mem context */
     config_t config;                /**< Agent configuration */
     arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
@@ -333,7 +339,6 @@ struct agent_context
 };
 
 int load_config(agent_context_t *ctx, const char *cf);
-int start_thread(pthread_t *thread, thread_fn *tf, char *name, agent_context_t *ctx);
 
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
@@ -344,5 +349,22 @@ void record_method_execution(agent_context_t *ctx, int method_index, uint64_t ex
 /* Export functions */
 void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
+
+uint64_t get_current_time_ns();
+
+/* Set a specific worker status bit */
+static inline void set_worker_status(unsigned int *status, unsigned int flag) {
+    *status |= flag;
+}
+
+/* Check if a specific worker status bit is set - returns non-zero if set, zero if not set */
+static inline int check_worker_status(unsigned int status, unsigned int flag) {
+    return status & flag;
+}
+
+/* Clear a specific worker status bit */
+static inline void clear_worker_status(unsigned int *status, unsigned int flag) {
+    *status &= ~flag;
+}
 
 #endif /* COOPER_H */

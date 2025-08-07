@@ -47,8 +47,10 @@ struct arena
 {
     void *memory;          /* Pre-allocated memory buffer */
     void *original_memory; /* Original pointer returned by malloc */
-    size_t alloc_sz;     /* Total allocation size */
-    size_t total_sz;     /* Total size of memory pool */
+    size_t requested_sz; /* Requested size during init */
+    size_t alloc_sz;      /* Total allocation size, used for cleanup */
+    size_t available_sz;     /* Available (total - tracking metadata)  */
+    size_t total_sz;     /* Total size of memory pool - should be page aligned */
     size_t used;           /* Currently used bytes */
     void **free_blocks;    /* Array of pointers to free blocks */
     size_t *block_sizes;   /* Corresponding sizes of free blocks */

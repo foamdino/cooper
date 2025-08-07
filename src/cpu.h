@@ -120,4 +120,4 @@ static __inline__ uint64_t cycles_end(void)
 #endif
 }
 
-#endif
+#endif /* CPU_H */
