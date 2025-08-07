@@ -27,7 +27,7 @@ rdtsc_start(void)
 	unsigned cycles_high_bits;
 	unsigned cycles_low_bits;
 	/* Keep the code as is, do not optimise away etc */
-	__asm__ __volatile__(
+	asm volatile(
 	    "CPUID\n\t" /*Serialize - CPUID prevents the processor from re-ordering the
 	                   RDTSC instruction */
 	    "RDTSC\n\t" /*Read Time Stamp Counter instruction */
@@ -52,13 +52,13 @@ rdtsc_end(void)
 	unsigned cycles_high_bits;
 	unsigned cycles_low_bits;
 	/* Keep the code as is, do not optimise away etc */
-	__asm__ __volatile__("RDTSCP\n\t" /* Read timestamp counter and processor ID */
-	                     "mov %%edx, %0\n\t"
-	                     "mov %%eax, %1\n\t"
-	                     "CPUID\n\t" /* Serialize to prevent reordering */
-	                     : "=r"(cycles_high_bits), "=r"(cycles_low_bits)
-	                     : /* no input operands */
-	                     : "%rax", "%rbx", "%rcx", "%rdx");
+	asm volatile("RDTSCP\n\t" /* Read timestamp counter and processor ID */
+	             "mov %%edx, %0\n\t"
+	             "mov %%eax, %1\n\t"
+	             "CPUID\n\t" /* Serialize to prevent reordering */
+	             : "=r"(cycles_high_bits), "=r"(cycles_low_bits)
+	             : /* no input operands */
+	             : "%rax", "%rbx", "%rcx", "%rdx");
 
 	return ((uint64_t)cycles_high_bits << 32) | cycles_low_bits;
 }
