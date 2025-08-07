@@ -11,9 +11,9 @@
 #include <time.h>
 #include <stdarg.h>
 
-#define UI_MAX_DISPLAY_ITEMS 20
+#define UI_MAX_DISPLAY_ITEMS  20
 #define UI_MAX_HISTORY_POINTS 100
-#define UI_MAX_SIGNATURE_LEN 512
+#define UI_MAX_SIGNATURE_LEN  512
 
 typedef enum tui_view_mode tui_view_mode_e;
 typedef struct tui_method_display tui_method_display_t;
@@ -22,69 +22,69 @@ typedef struct tui_memory_display tui_memory_display_t;
 typedef struct tui_terminal_info tui_terminal_info_t;
 typedef struct tui_context tui_context_t;
 
-enum tui_view_mode 
+enum tui_view_mode
 {
-    UI_VIEW_OVERVIEW = 0,
-    UI_VIEW_METHODS = 1,
-    UI_VIEW_MEMORY = 2,
-    UI_VIEW_OBJECTS = 3,
-    UI_VIEW_COUNT
+	UI_VIEW_OVERVIEW = 0,
+	UI_VIEW_METHODS  = 1,
+	UI_VIEW_MEMORY   = 2,
+	UI_VIEW_OBJECTS  = 3,
+	UI_VIEW_COUNT
 };
 
-struct tui_method_display 
+struct tui_method_display
 {
-    char signature[UI_MAX_SIGNATURE_LEN];
-    uint64_t call_count;
-    uint64_t sample_count;
-    uint64_t total_time_ns;
-    uint64_t min_time_ns;
-    uint64_t max_time_ns;
-    uint64_t avg_time_ns;
-    uint64_t alloc_bytes;
-    uint64_t peak_memory;
-    uint64_t cpu_cycles;
-    time_t last_updated;
+	char signature[UI_MAX_SIGNATURE_LEN];
+	uint64_t call_count;
+	uint64_t sample_count;
+	uint64_t total_time_ns;
+	uint64_t min_time_ns;
+	uint64_t max_time_ns;
+	uint64_t avg_time_ns;
+	uint64_t alloc_bytes;
+	uint64_t peak_memory;
+	uint64_t cpu_cycles;
+	time_t last_updated;
 };
 
-struct tui_object_display 
+struct tui_object_display
 {
-    char class_name[UI_MAX_SIGNATURE_LEN];
-    uint64_t allocation_count;
-    uint64_t total_bytes;
-    uint64_t current_instances;
-    uint64_t peak_instances;
-    uint64_t min_size;
-    uint64_t max_size;
-    uint64_t avg_size;
-    time_t last_updated;
+	char class_name[UI_MAX_SIGNATURE_LEN];
+	uint64_t allocation_count;
+	uint64_t total_bytes;
+	uint64_t current_instances;
+	uint64_t peak_instances;
+	uint64_t min_size;
+	uint64_t max_size;
+	uint64_t avg_size;
+	time_t last_updated;
 };
 
-struct tui_memory_display 
+struct tui_memory_display
 {
-    uint64_t process_memory;
-    uint64_t thread_memory[10]; /* Track up to 10 threads */
-    uint64_t thread_ids[10];
-    int active_threads;
-    uint64_t memory_history[UI_MAX_HISTORY_POINTS];
-    int history_count;
-    time_t last_updated;
+	uint64_t process_memory;
+	uint64_t thread_memory[10]; /* Track up to 10 threads */
+	uint64_t thread_ids[10];
+	int active_threads;
+	uint64_t memory_history[UI_MAX_HISTORY_POINTS];
+	int history_count;
+	time_t last_updated;
 };
 
 struct tui_terminal_info
 {
-    int width;
-    int height;
+	int width;
+	int height;
 };
 
-struct tui_context 
+struct tui_context
 {
-    tui_method_display_t *methods;
-    tui_object_display_t *objects;
-    tui_memory_display_t *memory_data;
-    tui_view_mode_e current_view;
-    tui_terminal_info_t terminal;
-    int method_count;
-    int object_count;
+	tui_method_display_t *methods;
+	tui_object_display_t *objects;
+	tui_memory_display_t *memory_data;
+	tui_view_mode_e current_view;
+	tui_terminal_info_t terminal;
+	int method_count;
+	int object_count;
 };
 
 /**
@@ -160,7 +160,12 @@ void tui_clear_screen(void);
  * @param max_val Maximum value for scaling
  * @param term_width Terminal width
  */
-void tui_draw_bar_chart(char *title, const char *items[], uint64_t values[], int count, uint64_t max_val, int term_width);
+void tui_draw_bar_chart(char *title,
+                        const char *items[],
+                        uint64_t values[],
+                        int count,
+                        uint64_t max_val,
+                        int term_width);
 
 /**
  * Draw memory history chart

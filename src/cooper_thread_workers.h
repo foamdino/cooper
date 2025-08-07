@@ -22,5 +22,4 @@ void *shm_export_thread_func(void *arg);
 /* Export functions that might be called from elsewhere */
 void export_to_file(agent_context_t *ctx);
 
-
 #endif /* COOPER_THREAD_WORKERS_H */

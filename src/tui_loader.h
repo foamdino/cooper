@@ -15,15 +15,15 @@ typedef struct tui_loader tui_loader_t;
 
 struct tui_loader
 {
-    char *library_path;
-    void *handle;
-    time_t last_mod_time;
-    /* Function pointers to UI library functions */
-    int (*tui_init)(void);
-    void (*tui_cleanup)(void);
-    char *(*tui_get_version)(void);
-    void (*tui_draw)(const tui_context_t *ctx);
-    void (*tui_clear_screen)(void);
+	char *library_path;
+	void *handle;
+	time_t last_mod_time;
+	/* Function pointers to UI library functions */
+	int (*tui_init)(void);
+	void (*tui_cleanup)(void);
+	char *(*tui_get_version)(void);
+	void (*tui_draw)(const tui_context_t *ctx);
+	void (*tui_clear_screen)(void);
 };
 
 /**
@@ -58,7 +58,7 @@ void tui_loader_draw(tui_loader_t *loader, const tui_context_t *ctx);
  * @param loader UI loader instance
  * @return Version string or NULL if not loaded
  */
-char* tui_loader_get_version(tui_loader_t *loader);
+char *tui_loader_get_version(tui_loader_t *loader);
 
 /**
  * Check if the UI library is currently loaded

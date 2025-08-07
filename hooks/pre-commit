@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# Exit immediately if a command exits with a non-zero status.
+set -e
+
+# Find staged .c and .h files in src/ that are added or modified
+FILES=$(git diff --cached --name-only --diff-filter=AM | grep '^src/.*\.[ch]$' || true)
+
+# Exit early if there are no relevant files
+[ -z "$FILES" ] && exit 0
+
+# Run clang-format on each file and check for changes
+FORMAT_FAILED=0
+for file in $FILES; do
+    # Format in-place, save a copy to compare
+    clang-format "$file" > "${file}.formatted"
+    if ! diff -q "$file" "${file}.formatted" >/dev/null; then
+        echo "File $file is not properly formatted."
+        mv "${file}.formatted" "$file"
+        git add "$file"
+        FORMAT_FAILED=1
+    else
+        rm "${file}.formatted"
+    fi
+done
+
+if [ "$FORMAT_FAILED" -eq 1 ]; then
+    echo "Some files were not formatted correctly. They have been updated and re-staged."
+    echo "Please review and commit again."
+    exit 1
+fi
+
+exit 0
+
+#format all the things: find src \( -iname "*.c" -o -iname "*.h" \) -exec clang-format -i --verbose {} +
