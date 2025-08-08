@@ -24,10 +24,6 @@
 /* Maximum size of the log queue */
 #define LOG_Q_SZ 1024
 
-/* Forward declarations to avoid circular dependencies */
-struct arena;
-typedef struct arena arena_t;
-
 typedef enum log_level log_level_e;
 typedef struct log_q log_q_t;
 typedef struct log_system log_system_t;
