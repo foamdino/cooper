@@ -91,6 +91,7 @@ int main(int argc, char **argv)
         SRC_FOLDER"ht.c",  
         SRC_FOLDER"cooper_thread_manager.c",
         SRC_FOLDER"cooper_thread_workers.c",
+        SRC_FOLDER"class_queue.c",
         SRC_FOLDER"cooper.c", "-pthread", "-lrt");
 
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
@@ -114,6 +115,7 @@ int main(int argc, char **argv)
         SRC_FOLDER"ht.c",
         SRC_FOLDER"cooper_thread_manager.c",
         SRC_FOLDER"cooper_thread_workers.c",
+        SRC_FOLDER"class_queue.c",
         SRC_FOLDER"cooper.c",
         SRC_FOLDER"test_cooper.c", "-pthread", "-lrt");
     

@@ -115,13 +115,13 @@ config_parse_metric_flags(const char *metrics_str)
  * Add a method filter to the configuration
  */
 static int
-config_add_filter(arena_t *arena,
-                  cooper_config_t *config,
-                  const char *class_sig,
-                  const char *method_name,
-                  const char *method_sig,
-                  int sample_rate,
-                  unsigned int metric_flags)
+config_add_method_filter(arena_t *arena,
+                         cooper_config_t *config,
+                         const char *class_sig,
+                         const char *method_name,
+                         const char *method_sig,
+                         int sample_rate,
+                         unsigned int metric_flags)
 {
 	assert(arena != NULL);
 	assert(config != NULL);
@@ -158,6 +158,99 @@ config_add_filter(arena_t *arena,
 	          method_sig,
 	          sample_rate,
 	          metric_flags);
+
+	return 0;
+}
+
+/**
+ * Parse package filter configuration
+ */
+static int
+config_parse_package_filter(arena_t *arena, cooper_config_t *config, const char *value)
+{
+	assert(arena != NULL);
+	assert(config != NULL);
+	assert(value != NULL);
+
+	/* Initialize package filter */
+	config->package_filter.include_packages =
+	    arena_alloc(arena, MAX_PACKAGE_FILTERS * sizeof(char *));
+	config->package_filter.package_lengths =
+	    arena_alloc(arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
+
+	if (!config->package_filter.include_packages
+	    || !config->package_filter.package_lengths)
+	{
+		LOG_ERROR("Failed to allocate package filter arrays\n");
+		return 1;
+	}
+
+	config->package_filter.num_packages = 0;
+
+	/* Parse the array of packages */
+	/* Expected format: ["Lcom/github/foamdino/", "Lorg/springframework/"] */
+	const char *p = value;
+
+	/* Skip whitespace and opening bracket */
+	while (*p && (*p == ' ' || *p == '\t' || *p == '['))
+		p++;
+
+	while (*p && *p != ']'
+	       && config->package_filter.num_packages < MAX_PACKAGE_FILTERS)
+	{
+		/* Skip whitespace and quotes */
+		while (*p && (*p == ' ' || *p == '\t' || *p == '"' || *p == ','))
+			p++;
+
+		if (*p == ']')
+			break;
+
+		/* Find end of package string */
+		const char *start = p;
+		while (*p && *p != '"' && *p != ',' && *p != ']')
+			p++;
+
+		size_t len = p - start;
+		if (len > 0)
+		{
+			/* Allocate and copy package prefix */
+			char *package = arena_alloc(arena, len + 1);
+			if (!package)
+			{
+				LOG_ERROR("Failed to allocate package string\n");
+				return 1;
+			}
+
+			memcpy(package, start, len);
+			package[len] = '\0';
+
+			/* Trim trailing whitespace */
+			while (len > 0
+			       && (package[len - 1] == ' ' || package[len - 1] == '\t'))
+			{
+				package[--len] = '\0';
+			}
+
+			/* Store package and its length */
+			config->package_filter
+			    .include_packages[config->package_filter.num_packages] =
+			    package;
+			config->package_filter
+			    .package_lengths[config->package_filter.num_packages] = len;
+			config->package_filter.num_packages++;
+			LOG_DEBUG("Added package filter: %s (len=%zu)\n", package, len);
+		}
+
+		/* Skip to next entry */
+		while (*p && *p != ',' && *p != ']')
+			p++;
+		if (*p == ',')
+			p++;
+	}
+
+	LOG_INFO("Configured %zu package filters (scan all=%s)\n",
+	         config->package_filter.num_packages,
+	         config->package_filter.num_packages > 0 ? "true" : "false");
 
 	return 0;
 }
@@ -306,13 +399,13 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 			unsigned int metric_flags = config_parse_metric_flags(metrics);
 
 			/* Add the filter */
-			if (config_add_filter(arena,
-			                      config,
-			                      class_sig,
-			                      method_name,
-			                      method_sig,
-			                      sample_rate,
-			                      metric_flags)
+			if (config_add_method_filter(arena,
+			                             config,
+			                             class_sig,
+			                             method_name,
+			                             method_sig,
+			                             sample_rate,
+			                             metric_flags)
 			    != 0)
 			{
 				LOG_ERROR("Failed to add method filter: %s\n", processed);
@@ -349,11 +442,31 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				}
 			}
 		}
+		else if (strcmp(current_section, "[packages]") == 0)
+		{
+			if (strstr(processed, "include"))
+			{
+				char *value =
+				    config_extract_and_trim_value(arena, processed);
+				if (value)
+				{
+					if (config_parse_package_filter(
+						arena, config, value)
+					    != 0)
+					{
+						LOG_ERROR(
+						    "Failed to parse package filter\n");
+						continue;
+					}
+				}
+			}
+		}
 	}
 
 	fclose(fp);
 
-	LOG_INFO("Config loaded: default_rate=%d, filters=%zu, path=%s, method=%s, "
+	LOG_INFO("Config loaded: default_rate=%d, method_filters=%zu, path=%s, "
+	         "export_method=%s, "
 	         "export_interval=%d\n",
 	         config->default_sample_rate,
 	         config->num_filters,

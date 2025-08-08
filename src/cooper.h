@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
+#include "cooper_types.h"
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
@@ -33,6 +34,7 @@
 #include "thread_util.h"
 #include "heap.h"
 #include "ht.h"
+#include "class_queue.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x)        (void)(x)
@@ -83,6 +85,7 @@
 #define MIN_HASH_SIZE            1000
 #define MAX_HASH_SIZE            20000
 
+typedef struct package_filter package_filter_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
@@ -299,10 +302,10 @@ struct thread_id_mapping
 
 struct config
 {
-	int rate;
-	char **filters;
-	int num_filters;
-	char *sample_file_path;
+	int rate;                // TODO check if this is actually used
+	char **filters;          // TODO check if this is actually used
+	int num_filters;         // TODO check if this is actually used
+	char *sample_file_path;  // TODO check if this is actually used
 	char *export_method;     /**< only support file for now */
 	int mem_sample_interval; /**< Interval between taking mem samples */
 	int export_interval;     /**< export to file every 60 seconds */
@@ -310,25 +313,27 @@ struct config
 
 struct agent_context
 {
-	int event_counter;             /**< Counter for nth samples */
-	jvmtiEnv *jvmti_env;           /**< JVMTI environment */
-	JavaVM *jvm;                   /**< JVM itself */
-	jclass java_thread_class;      /**< Global reference for java.lang.Thread class */
-	jmethodID getId_method;        /**< Cached Thread.getId() method ID */
-	callbacks_t callbacks;         /**< Centralized callback structures */
-	char **method_filters;         /**< Method filter list */
-	int num_filters;               /**< Number of filters */
-	FILE *log_file;                /**< Log output file */
-	pthread_t log_thread;          /**< Logging thread */
-	pthread_t export_thread;       /**< Export thread */
-	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
-	pthread_t shm_export_thread;   /**< Export via shared mem thread */
-	pthread_t heap_stats_thread;   /**< Heap stats background thread */
-	pthread_mutex_t samples_lock;  /**< Lock for sample arrays */
+	int event_counter;        /**< Counter for nth samples */
+	jvmtiEnv *jvmti_env;      /**< JVMTI environment */
+	JavaVM *jvm;              /**< JVM itself */
+	jclass java_thread_class; /**< Global reference for java.lang.Thread class */
+	jmethodID getId_method;   /**< Cached Thread.getId() method ID */
+	callbacks_t callbacks;    /**< Centralized callback structures */
+	char **method_filters;    /**< Method filter list */
+	int num_filters;          /**< Number of filters */
+	package_filter_t package_filter; /**< Set of packages to look for */
+	FILE *log_file;                  /**< Log output file */
+	pthread_t log_thread;            /**< Logging thread */
+	pthread_t export_thread;         /**< Export thread */
+	pthread_t mem_sampling_thread;   /**< Mem sampling background thread */
+	pthread_t shm_export_thread;     /**< Export via shared mem thread */
+	pthread_t heap_stats_thread;     /**< Heap stats background thread */
+	pthread_mutex_t samples_lock;    /**< Lock for sample arrays */
 	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
 	config_t config;               /**< Agent configuration */
+	class_q_t *class_queue;
 	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
 	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */

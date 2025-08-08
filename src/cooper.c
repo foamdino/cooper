@@ -1320,13 +1320,59 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	          safe_sz);
 }
 
+static inline int
+should_process_class(const package_filter_t *filter, const char *class_sig)
+{
+	/* If no filters configured, process everything */
+	if (filter->num_packages == 0)
+		return 1;
+
+	/* Linear search through package filters */
+	/* For 5-7 packages, this is faster than any complex structure */
+	for (size_t i = 0; i < filter->num_packages; i++)
+	{
+		if (strncmp(class_sig,
+		            filter->include_packages[i],
+		            filter->package_lengths[i])
+		    == 0)
+		{
+			return 1; /* Found a match */
+		}
+	}
+
+	return 0; /* No match found, skip this class */
+}
+
 static void JNICALL
 class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass klass)
 {
 	UNUSED(jni_env);
 	UNUSED(thread);
 
-	cache_class_info(jvmti_env, klass);
+	/* Get class signature for filtering */
+	char *class_sig = NULL;
+	jvmtiError err =
+	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+		return;
+
+	/* Fast filter check - no allocations */
+	if (!should_process_class(&global_ctx->package_filter, class_sig))
+	{
+		/* Class filtered out, skip processing */
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+		return;
+	}
+
+	/* Class passed filter, enqueue for background processing */
+	if (class_queue_enqueue(global_ctx->class_queue, klass, class_sig) != 0)
+	{
+		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+	}
+
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+
+	// cache_class_info(jvmti_env, klass);
 }
 
 static void JNICALL
@@ -1601,7 +1647,7 @@ load_config(agent_context_t *ctx, const char *cf)
 	ctx->config.mem_sample_interval = config.mem_sample_interval;
 	ctx->config.num_filters         = 0; /* We'll track this as we add methods */
 
-	/* Convert filters to metrics entries */
+	/* Convert method filters to metrics entries */
 	for (size_t i = 0; i < config.num_filters; i++)
 	{
 		method_filter_entry_t *filter = &config.filters[i];
@@ -1634,6 +1680,18 @@ load_config(agent_context_t *ctx, const char *cf)
 		}
 
 		ctx->config.num_filters++;
+	}
+
+	/* Copy data from the cooper_config package_filter to the ctx */
+	ctx->package_filter.num_packages = config.package_filter.num_packages;
+	LOG_INFO("Considering %d packages for filtering",
+	         ctx->package_filter.num_packages);
+	for (size_t i = 0; i < config.package_filter.num_packages; i++)
+	{
+		ctx->package_filter.include_packages[i] =
+		    arena_strdup(config_arena, config.package_filter.include_packages[i]);
+		ctx->package_filter.package_lengths[i] =
+		    config.package_filter.package_lengths[i];
 	}
 
 	return COOPER_OK;
@@ -1992,6 +2050,13 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
 	/* We start the logging thread as we initialise the system now */
 	if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
+	{
+		cleanup(global_ctx);
+		return JNI_ERR;
+	}
+
+	class_q_t *class_queue = malloc(sizeof(class_q_t));
+	if (class_queue_init(class_queue) != COOPER_OK)
 	{
 		cleanup(global_ctx);
 		return JNI_ERR;
