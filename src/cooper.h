@@ -120,7 +120,8 @@ enum thread_workers_status
 	EXPORT_RUNNING       = (1 << 0),
 	MEM_SAMPLING_RUNNING = (1 << 1),
 	SHM_EXPORT_RUNNING   = (1 << 2),
-	HEAP_STATS_RUNNING   = (1 << 3)
+	HEAP_STATS_RUNNING   = (1 << 3),
+	CLASS_CACHE_RUNNING  = (1 << 4)
 };
 
 /**
@@ -316,16 +317,17 @@ struct agent_context
 	package_filter_t package_filter; /**< Set of packages to look for */
 	FILE *log_file;                  /**< Log output file */
 	pthread_t log_thread;            /**< Logging thread */
-	pthread_t export_thread;         /**< Export thread */
+	pthread_t export_thread;         /**< Export background thread */
 	pthread_t mem_sampling_thread;   /**< Mem sampling background thread */
-	pthread_t shm_export_thread;     /**< Export via shared mem thread */
+	pthread_t shm_export_thread;     /**< Export via shared mem background thread */
 	pthread_t heap_stats_thread;     /**< Heap stats background thread */
+	pthread_t class_cache_thread;    /**< Class caching background thread */
 	pthread_mutex_t samples_lock;    /**< Lock for sample arrays */
 	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
 	config_t config;               /**< Agent configuration */
-	class_q_t *class_queue;
+	class_q_t *class_queue;        /**< q for class caching background thread */
 	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
 	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
@@ -362,6 +364,7 @@ void *export_thread_func(void *arg);
 
 uint64_t get_current_time_ns();
 
+// TODO move these to cooper_thread_ instead of here
 /* Set a specific worker status bit */
 static inline void
 set_worker_status(unsigned int *status, unsigned int flag)

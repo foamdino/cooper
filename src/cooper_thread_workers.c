@@ -964,6 +964,118 @@ cleanup_classes:
 	(*jvmti)->Deallocate(jvmti, (unsigned char *)classes);
 }
 
+/**
+ * Finds the index for a method in the metrics array based on filter rules.
+ * This is a read-only, non-locking function used during class loading.
+ *
+ * @return The index into the metrics array if a match is found, otherwise -1.
+ */
+static int
+find_method_filter_index(agent_context_t *ctx,
+                         const char *class_signature,
+                         const char *method_name,
+                         const char *method_signature)
+{
+	char full_sig[MAX_SIG_SZ];
+
+	/* Check for an exact match first */
+	snprintf(full_sig,
+	         sizeof(full_sig),
+	         "%s %s %s",
+	         class_signature,
+	         method_name,
+	         method_signature);
+	int method_index = find_method_index(ctx->metrics, full_sig);
+	if (method_index >= 0)
+		return method_index;
+
+	/* If no exact match, try a class-level wildcard match */
+	snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
+	method_index = find_method_index(ctx->metrics, full_sig);
+	if (method_index >= 0)
+		return method_index;
+
+	return -1; /* No matching filter found */
+}
+
+/* Caches class and method info using SetTag */
+static void
+cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jclass klass)
+{
+	assert(jvmti_env != NULL);
+
+	char *class_sig = NULL;
+	jvmtiError err =
+	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+		goto deallocate;
+
+	/* Allocate the main class_info struct from the class cache arena */
+	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
+	if (info == NULL)
+		goto deallocate;
+
+	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
+	info->in_heap_iteration = 0;
+
+	/* Get all methods for the class */
+	jint method_count  = 0;
+	jmethodID *methods = NULL;
+	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
+
+	if (err != JVMTI_ERROR_NONE)
+		goto deallocate;
+
+	if (method_count == 0)
+		goto deallocate;
+
+	/* Allocate space for the method info array in the same arena */
+	info->methods      = arena_alloc(arena, sizeof(method_info_t) * method_count);
+	info->method_count = method_count;
+
+	if (info->methods != NULL)
+	{
+		/* Loop through each method and cache its details */
+		for (int i = 0; i < method_count; i++)
+		{
+			char *method_name          = NULL;
+			char *method_sig           = NULL;
+			info->methods[i].method_id = methods[i];
+
+			if ((*jvmti_env)
+			        ->GetMethodName(jvmti_env,
+			                        methods[i],
+			                        &method_name,
+			                        &method_sig,
+			                        NULL)
+			    == JVMTI_ERROR_NONE)
+			{
+				/* Store arena-allocated copies of the names */
+				info->methods[i].method_name =
+				    arena_strdup(arena, method_name);
+				info->methods[i].method_signature =
+				    arena_strdup(arena, method_sig);
+
+				info->methods[i].sample_index = find_method_filter_index(
+				    ctx, class_sig, method_name, method_sig);
+
+				(*jvmti_env)
+				    ->Deallocate(jvmti_env, (unsigned char *)method_name);
+				(*jvmti_env)
+				    ->Deallocate(jvmti_env, (unsigned char *)method_sig);
+			}
+		}
+	}
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
+
+	/* Set the tag */
+	jlong tag = (jlong)(intptr_t)info;
+	(*jvmti_env)->SetTag(jvmti_env, klass, tag);
+
+deallocate:
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+}
+
 /* Thread functions */
 
 void *
@@ -1208,5 +1320,47 @@ heap_stats_thread_func(void *arg)
 	}
 
 	LOG_INFO("Heap statistics thread terminated\n");
+	return NULL;
+}
+
+/**
+ * Class caching thread function
+ */
+void *
+class_cache_thread_func(void *arg)
+{
+	assert(arg != NULL);
+
+	agent_context_t *ctx = (agent_context_t *)arg;
+
+	class_q_t *queue = ctx->class_queue;
+	arena_t *arena   = ctx->arenas[CLASS_CACHE_ARENA_ID];
+
+	while (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING))
+	{
+		pthread_mutex_lock(&queue->lock);
+
+		/* Should we exit? */
+		// if (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING) ==
+		// 0)
+		if (!queue->running)
+		{
+			pthread_mutex_unlock(&queue->lock);
+			break;
+		}
+
+		/* Wait for messages when queue is empty */
+		while (queue->running && queue->count == 0)
+			pthread_cond_wait(&queue->cond, &queue->lock);
+
+		if (queue->count > 0)
+		{
+			class_q_entry_t *entry = class_queue_dequeue(queue);
+			cache_class_info(ctx, arena, ctx->jvmti_env, entry->klass);
+		}
+		else /* Nothing to do so release lock */
+			pthread_mutex_unlock(&queue->lock);
+	}
+
 	return NULL;
 }

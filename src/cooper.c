@@ -672,86 +672,86 @@ find_method_filter_index(agent_context_t *ctx,
 	return -1; /* No matching filter found */
 }
 
-/* Caches class and method info using SetTag */
-static void
-cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
-{
-	assert(jvmti_env != NULL);
+// /* Caches class and method info using SetTag */
+// static void
+// cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
+// {
+// 	assert(jvmti_env != NULL);
 
-	char *class_sig = NULL;
-	jvmtiError err =
-	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
-		goto deallocate;
+// 	char *class_sig = NULL;
+// 	jvmtiError err =
+// 	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+// 	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+// 		goto deallocate;
 
-	/* Allocate the main class_info struct from the class cache arena */
-	class_info_t *info =
-	    arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(class_info_t));
-	if (info == NULL)
-		goto deallocate;
+// 	/* Allocate the main class_info struct from the class cache arena */
+// 	class_info_t *info =
+// 	    arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(class_info_t));
+// 	if (info == NULL)
+// 		goto deallocate;
 
-	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
-	info->in_heap_iteration = 0;
+// 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
+// 	info->in_heap_iteration = 0;
 
-	/* Get all methods for the class */
-	jint method_count  = 0;
-	jmethodID *methods = NULL;
-	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
+// 	/* Get all methods for the class */
+// 	jint method_count  = 0;
+// 	jmethodID *methods = NULL;
+// 	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
 
-	if (err != JVMTI_ERROR_NONE)
-		goto deallocate;
+// 	if (err != JVMTI_ERROR_NONE)
+// 		goto deallocate;
 
-	if (method_count == 0)
-		goto deallocate;
+// 	if (method_count == 0)
+// 		goto deallocate;
 
-	/* Allocate space for the method info array in the same arena */
-	info->methods      = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
-                                    sizeof(method_info_t) * method_count);
-	info->method_count = method_count;
+// 	/* Allocate space for the method info array in the same arena */
+// 	info->methods      = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
+//                                     sizeof(method_info_t) * method_count);
+// 	info->method_count = method_count;
 
-	if (info->methods != NULL)
-	{
-		/* Loop through each method and cache its details */
-		for (int i = 0; i < method_count; i++)
-		{
-			char *method_name          = NULL;
-			char *method_sig           = NULL;
-			info->methods[i].method_id = methods[i];
+// 	if (info->methods != NULL)
+// 	{
+// 		/* Loop through each method and cache its details */
+// 		for (int i = 0; i < method_count; i++)
+// 		{
+// 			char *method_name          = NULL;
+// 			char *method_sig           = NULL;
+// 			info->methods[i].method_id = methods[i];
 
-			if ((*jvmti_env)
-			        ->GetMethodName(jvmti_env,
-			                        methods[i],
-			                        &method_name,
-			                        &method_sig,
-			                        NULL)
-			    == JVMTI_ERROR_NONE)
-			{
-				/* Store arena-allocated copies of the names */
-				info->methods[i].method_name =
-				    arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
-				                 method_name);
-				info->methods[i].method_signature = arena_strdup(
-				    global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
+// 			if ((*jvmti_env)
+// 			        ->GetMethodName(jvmti_env,
+// 			                        methods[i],
+// 			                        &method_name,
+// 			                        &method_sig,
+// 			                        NULL)
+// 			    == JVMTI_ERROR_NONE)
+// 			{
+// 				/* Store arena-allocated copies of the names */
+// 				info->methods[i].method_name =
+// 				    arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
+// 				                 method_name);
+// 				info->methods[i].method_signature = arena_strdup(
+// 				    global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
 
-				info->methods[i].sample_index = find_method_filter_index(
-				    global_ctx, class_sig, method_name, method_sig);
+// 				info->methods[i].sample_index = find_method_filter_index(
+// 				    global_ctx, class_sig, method_name, method_sig);
 
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_name);
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_sig);
-			}
-		}
-	}
-	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
+// 				(*jvmti_env)
+// 				    ->Deallocate(jvmti_env, (unsigned char *)method_name);
+// 				(*jvmti_env)
+// 				    ->Deallocate(jvmti_env, (unsigned char *)method_sig);
+// 			}
+// 		}
+// 	}
+// 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
 
-	/* Set the tag */
-	jlong tag = (jlong)(intptr_t)info;
-	(*jvmti_env)->SetTag(jvmti_env, klass, tag);
+// 	/* Set the tag */
+// 	jlong tag = (jlong)(intptr_t)info;
+// 	(*jvmti_env)->SetTag(jvmti_env, klass, tag);
 
-deallocate:
-	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-}
+// deallocate:
+// 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+// }
 
 /*
  * Method entry callback
@@ -1807,7 +1807,19 @@ precache_loaded_classes(jvmtiEnv *jvmti_env)
 		if (existing_tag > 0)
 			continue;
 
-		cache_class_info(jvmti_env, classes[i]);
+		char *class_sig = NULL;
+		jvmtiError err =
+		    (*jvmti_env)
+			->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
+
+		if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+			continue;
+
+		// cache_class_info(jvmti_env, classes[i]);
+		/* Class filter passed enque to deal with in background thread */
+		if (class_queue_enqueue(global_ctx->class_queue, classes[i], class_sig)
+		    != 0)
+			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
 	}
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)classes);
@@ -1863,18 +1875,18 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
 	LOG_INFO("Successfully initialized Thread class and getId method");
 
-	if (precache_loaded_classes(jvmti_env) != COOPER_OK)
-	{
-		LOG_ERROR("Unable to precache loaded classes");
-		goto error;
-	}
-
 	/* Start all background threads */
 	if (start_all_threads(global_ctx) != COOPER_OK)
 	{
 		LOG_ERROR("Failed to start background threads");
 		goto error;
 	}
+
+	// if (precache_loaded_classes(jvmti_env) != COOPER_OK)
+	// {
+	// 	LOG_ERROR("Unable to precache loaded classes");
+	// 	goto error;
+	// }
 
 	LOG_INFO("Successfully completed vm_init_callback");
 	return;
@@ -2081,6 +2093,8 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
+	global_ctx->class_queue = class_queue;
+
 	arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
 	if (!class_cache_arena)
 	{
@@ -2192,6 +2206,10 @@ Agent_OnUnload(JavaVM *vm)
 {
 	if (global_ctx)
 	{
+
+		// /* Shutdown background thread for class caching */
+		// class_queue_cleanup(global_ctx->class_queue);
+
 		/* Stop all threads */
 		stop_all_threads(global_ctx);
 
