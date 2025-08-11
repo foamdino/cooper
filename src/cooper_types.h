@@ -11,6 +11,14 @@
 
 typedef struct package_filter package_filter_t;
 
+/* Metric flags for method sampling */
+enum metric_flags
+{
+	METRIC_FLAG_TIME   = (1 << 0), /* 1 */
+	METRIC_FLAG_MEMORY = (1 << 1), /* 2 */
+	METRIC_FLAG_CPU    = (1 << 2)  /* 4 */
+};
+
 /* Package filter configuration */
 struct package_filter
 {
@@ -18,7 +26,5 @@ struct package_filter
 	size_t *package_lengths;
 	size_t num_packages;
 };
-
-/* Other shared types can go here */
 
 #endif /* COOPER_TYPES_H */

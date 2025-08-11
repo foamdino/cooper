@@ -85,7 +85,6 @@ config_process_config_line(arena_t *arena, const char *line)
 	return trimmed;
 }
 
-// TODO this function ties this code directly to cooper.h as the flags are shared
 /**
  * Parse metrics string and return flags
  */
@@ -158,99 +157,6 @@ config_add_method_filter(arena_t *arena,
 	          method_sig,
 	          sample_rate,
 	          metric_flags);
-
-	return 0;
-}
-
-/**
- * Parse package filter configuration
- */
-static int
-config_parse_package_filter(arena_t *arena, cooper_config_t *config, const char *value)
-{
-	assert(arena != NULL);
-	assert(config != NULL);
-	assert(value != NULL);
-
-	/* Initialize package filter */
-	config->package_filter.include_packages =
-	    arena_alloc(arena, MAX_PACKAGE_FILTERS * sizeof(char *));
-	config->package_filter.package_lengths =
-	    arena_alloc(arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
-
-	if (!config->package_filter.include_packages
-	    || !config->package_filter.package_lengths)
-	{
-		LOG_ERROR("Failed to allocate package filter arrays\n");
-		return 1;
-	}
-
-	config->package_filter.num_packages = 0;
-
-	/* Parse the array of packages */
-	/* Expected format: ["Lcom/github/foamdino/", "Lorg/springframework/"] */
-	const char *p = value;
-
-	/* Skip whitespace and opening bracket */
-	while (*p && (*p == ' ' || *p == '\t' || *p == '['))
-		p++;
-
-	while (*p && *p != ']'
-	       && config->package_filter.num_packages < MAX_PACKAGE_FILTERS)
-	{
-		/* Skip whitespace and quotes */
-		while (*p && (*p == ' ' || *p == '\t' || *p == '"' || *p == ','))
-			p++;
-
-		if (*p == ']')
-			break;
-
-		/* Find end of package string */
-		const char *start = p;
-		while (*p && *p != '"' && *p != ',' && *p != ']')
-			p++;
-
-		size_t len = p - start;
-		if (len > 0)
-		{
-			/* Allocate and copy package prefix */
-			char *package = arena_alloc(arena, len + 1);
-			if (!package)
-			{
-				LOG_ERROR("Failed to allocate package string\n");
-				return 1;
-			}
-
-			memcpy(package, start, len);
-			package[len] = '\0';
-
-			/* Trim trailing whitespace */
-			while (len > 0
-			       && (package[len - 1] == ' ' || package[len - 1] == '\t'))
-			{
-				package[--len] = '\0';
-			}
-
-			/* Store package and its length */
-			config->package_filter
-			    .include_packages[config->package_filter.num_packages] =
-			    package;
-			config->package_filter
-			    .package_lengths[config->package_filter.num_packages] = len;
-			config->package_filter.num_packages++;
-			LOG_DEBUG("Added package filter: %s (len=%zu)\n", package, len);
-		}
-
-		/* Skip to next entry */
-		while (*p && *p != ',' && *p != ']')
-			p++;
-		if (*p == ',')
-			p++;
-	}
-
-	LOG_INFO("Configured %zu package filters (scan all=%s)\n",
-	         config->package_filter.num_packages,
-	         config->package_filter.num_packages > 0 ? "true" : "false");
 
 	return 0;
 }
@@ -444,32 +350,69 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 		}
 		else if (strcmp(current_section, "[packages]") == 0)
 		{
-			if (strstr(processed, "include"))
+			/* Skip filter array markers */
+			if (strncmp(processed, "include =", 9) == 0
+			    || processed[0] == ']')
+				continue;
+
+			/* Initialize arrays once on first package entry */
+			if (config->package_filter.include_packages == NULL)
 			{
-				char *value =
-				    config_extract_and_trim_value(arena, processed);
-				if (value)
+				config->package_filter.include_packages = arena_alloc(
+				    arena, MAX_PACKAGE_FILTERS * sizeof(char *));
+				config->package_filter.package_lengths = arena_alloc(
+				    arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
+				config->package_filter.num_packages = 0;
+
+				if (!config->package_filter.include_packages
+				    || !config->package_filter.package_lengths)
 				{
-					if (config_parse_package_filter(
-						arena, config, value)
-					    != 0)
+					LOG_ERROR(
+					    "Failed to allocate package filter arrays\n");
+					continue;
+				}
+			}
+
+			/* Parse package line */
+			if (config->package_filter.num_packages < MAX_PACKAGE_FILTERS)
+			{
+				char package[256];
+				if (sscanf(processed, "%255s", package) == 1)
+				{
+					size_t len     = strlen(package);
+					char *pkg_copy = arena_strdup(arena, package);
+					if (pkg_copy)
 					{
-						LOG_ERROR(
-						    "Failed to parse package filter\n");
-						continue;
+						config->package_filter.include_packages
+						    [config->package_filter
+						         .num_packages] = pkg_copy;
+						config->package_filter.package_lengths
+						    [config->package_filter
+						         .num_packages] = len;
+						config->package_filter.num_packages++;
+						LOG_DEBUG("Added package filter: %s "
+						          "(len=%zu)\n",
+						          package,
+						          len);
 					}
 				}
 			}
+			else
+				LOG_WARN(
+				    "Maximum package filters reached, ignoring: %s\n",
+				    processed);
 		}
 	}
 
 	fclose(fp);
 
-	LOG_INFO("Config loaded: default_rate=%d, method_filters=%zu, path=%s, "
+	LOG_INFO("Config loaded: default_rate=%d, method_filters=%zu, "
+	         "package_filters=%zu, path=%s, "
 	         "export_method=%s, "
 	         "export_interval=%d\n",
 	         config->default_sample_rate,
 	         config->num_filters,
+	         config->package_filter.num_packages,
 	         config->sample_file_path ? config->sample_file_path : "NULL",
 	         config->export_method ? config->export_method : "NULL",
 	         config->export_interval);

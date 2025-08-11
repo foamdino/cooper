@@ -115,14 +115,6 @@ enum arenas
 	ARENA_ID__LAST
 };
 
-/* Metric flags for method sampling */
-enum metric_flags
-{
-	METRIC_FLAG_TIME   = (1 << 0), /* 1 */
-	METRIC_FLAG_MEMORY = (1 << 1), /* 2 */
-	METRIC_FLAG_CPU    = (1 << 2)  /* 4 */
-};
-
 enum thread_workers_status
 {
 	EXPORT_RUNNING       = (1 << 0),

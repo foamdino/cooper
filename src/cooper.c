@@ -1686,6 +1686,25 @@ load_config(agent_context_t *ctx, const char *cf)
 	ctx->package_filter.num_packages = config.package_filter.num_packages;
 	LOG_INFO("Considering %d packages for filtering",
 	         ctx->package_filter.num_packages);
+
+	/* No packages to configure */
+	if (ctx->package_filter.num_packages == 0)
+		return COOPER_OK;
+
+	/* Allocate the arrays in ctx BEFORE copying */
+
+	ctx->package_filter.include_packages =
+	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(char *));
+	ctx->package_filter.package_lengths =
+	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
+
+	if (!ctx->package_filter.include_packages || !ctx->package_filter.package_lengths)
+	{
+		LOG_ERROR("Failed to allocate package filter arrays in context\n");
+		return COOPER_ERR;
+	}
+
+	/* Now safe to copy */
 	for (size_t i = 0; i < config.package_filter.num_packages; i++)
 	{
 		ctx->package_filter.include_packages[i] =

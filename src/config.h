@@ -14,7 +14,7 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
-#include "cooper.h"
+// #include "cooper.h"
 #include "cooper_types.h"
 
 #define DEFAULT_CFG_FILE    "trace.ini"
