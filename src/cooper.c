@@ -1514,7 +1514,10 @@ heap_object_callback(jvmtiHeapReferenceKind reference_kind,
 	/* class_tag should be a pointer to class_info_t struct */
 	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
 	if (!info->in_heap_iteration)
+	{
+		LOG_INFO("Class %s not in iteration", info->class_sig);
 		return JVMTI_VISIT_OBJECTS;
+	}
 
 	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
 
@@ -1882,11 +1885,11 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 		goto error;
 	}
 
-	// if (precache_loaded_classes(jvmti_env) != COOPER_OK)
-	// {
-	// 	LOG_ERROR("Unable to precache loaded classes");
-	// 	goto error;
-	// }
+	if (precache_loaded_classes(jvmti_env) != COOPER_OK)
+	{
+		LOG_ERROR("Unable to precache loaded classes");
+		goto error;
+	}
 
 	LOG_INFO("Successfully completed vm_init_callback");
 	return;

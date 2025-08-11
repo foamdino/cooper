@@ -14,7 +14,7 @@
 #include <jvmti.h>
 #include <pthread.h>
 
-#define CLASS_Q_SZ 256 /* Adjust based on expected load */
+#define CLASS_Q_SZ 1024 /* Adjust based on expected load */
 
 typedef struct class_q_entry class_q_entry_t;
 typedef struct class_q class_q_t;
