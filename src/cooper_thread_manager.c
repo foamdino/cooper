@@ -181,6 +181,15 @@ stop_all_threads(agent_context_t *ctx)
 
 	if (ctx->class_cache_thread)
 	{
+		if (ctx->class_queue)
+		{
+			/* Signal the queue to shutdown */
+			pthread_mutex_lock(&ctx->class_queue->lock);
+			ctx->class_queue->running = 0;
+			pthread_cond_broadcast(
+			    &ctx->class_queue->cond); /* Wake up waiting thread */
+			pthread_mutex_unlock(&ctx->class_queue->lock);
+		}
 		LOG_INFO("Waiting for class caching thread to terminate");
 		int res = safe_thread_join(ctx->class_cache_thread, 3);
 		if (res != 0)

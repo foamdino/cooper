@@ -1338,28 +1338,13 @@ class_cache_thread_func(void *arg)
 
 	while (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING))
 	{
-		pthread_mutex_lock(&queue->lock);
+		class_q_entry_t *entry = class_queue_dequeue(queue);
 
-		/* Should we exit? */
-		// if (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING) ==
-		// 0)
-		if (!queue->running)
-		{
-			pthread_mutex_unlock(&queue->lock);
+		/* Q shutdown or error */
+		if (entry == NULL)
 			break;
-		}
 
-		/* Wait for messages when queue is empty */
-		while (queue->running && queue->count == 0)
-			pthread_cond_wait(&queue->cond, &queue->lock);
-
-		if (queue->count > 0)
-		{
-			class_q_entry_t *entry = class_queue_dequeue(queue);
-			cache_class_info(ctx, arena, ctx->jvmti_env, entry->klass);
-		}
-		else /* Nothing to do so release lock */
-			pthread_mutex_unlock(&queue->lock);
+		cache_class_info(ctx, arena, ctx->jvmti_env, entry->klass);
 	}
 
 	return NULL;

@@ -77,12 +77,17 @@ class_queue_dequeue(class_q_t *queue)
 
 	/* Wait for entries */
 	while (queue->running && queue->count == 0)
-	{
 		pthread_cond_wait(&queue->cond, &queue->lock);
-	}
 
 	/* Check if we should exit */
-	if (!queue->running && queue->count == 0)
+	if (!queue->running)
+	{
+		pthread_mutex_unlock(&queue->lock);
+		return NULL;
+	}
+
+	/* Get entry if available */
+	if (queue->count == 0)
 	{
 		pthread_mutex_unlock(&queue->lock);
 		return NULL;
