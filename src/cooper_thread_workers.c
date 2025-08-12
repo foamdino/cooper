@@ -1013,7 +1013,6 @@ find_method_filter_index(agent_context_t *ctx,
 static void
 cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jclass klass)
 {
-	LOG_INFO("cache_class_info called");
 	assert(jvmti_env != NULL);
 
 	static int cache_call_count = 0;
@@ -1023,17 +1022,8 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	jvmtiError err =
 	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
 
-	if (err != JVMTI_ERROR_NONE)
-		LOG_INFO("Error with GetClassSignature");
-
-	if (!class_sig)
-		LOG_INFO("class_sig is null for klass: %p", klass);
-
 	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 		goto deallocate;
-
-	LOG_INFO(
-	    "cache_class_info called (#%d) for class: %s", cache_call_count, class_sig);
 
 	/* Allocate the main class_info struct from the class cache arena */
 	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
@@ -1097,14 +1087,7 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	jlong tag = (jlong)(intptr_t)info;
 	err       = (*jvmti_env)->SetTag(jvmti_env, klass, tag);
 	if (err != JVMTI_ERROR_NONE)
-	{
 		LOG_ERROR("Failed to set tag for class %s, error: %d", class_sig, err);
-	}
-	else
-	{
-		LOG_INFO(
-		    "Successfully tagged class %s with tag %p", class_sig, (void *)tag);
-	}
 
 deallocate:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1363,50 +1346,11 @@ heap_stats_thread_func(void *arg)
 void *
 class_cache_thread_func(void *arg)
 {
-	/* Log immediately to confirm thread started */
-	fprintf(stderr, "DEBUG: class_cache_thread_func entered\n");
-	fflush(stderr);
-
-	if (arg == NULL)
-	{
-		fprintf(stderr, "ERROR: class_cache_thread_func received NULL arg\n");
-		fflush(stderr);
-		return NULL;
-	}
-
 	assert(arg != NULL);
 
 	agent_context_t *ctx = (agent_context_t *)arg;
-
-	fprintf(stderr, "DEBUG: ctx = %p\n", ctx);
-	fflush(stderr);
-
-	if (ctx->class_queue == NULL)
-	{
-		fprintf(stderr, "ERROR: ctx->class_queue is NULL\n");
-		fflush(stderr);
-		return NULL;
-	}
-
-	class_q_t *queue = ctx->class_queue;
-	fprintf(stderr, "DEBUG: queue = %p, queue->count = %d\n", queue, queue->count);
-	fflush(stderr);
-
-	if (ctx->arenas == NULL)
-	{
-		fprintf(stderr, "ERROR: ctx->arenas is NULL\n");
-		fflush(stderr);
-		return NULL;
-	}
-
-	if (ctx->arenas[CLASS_CACHE_ARENA_ID] == NULL)
-	{
-		fprintf(stderr, "ERROR: CLASS_CACHE_ARENA is NULL\n");
-		fflush(stderr);
-		return NULL;
-	}
-
-	arena_t *arena = ctx->arenas[CLASS_CACHE_ARENA_ID];
+	class_q_t *queue     = ctx->class_queue;
+	arena_t *arena       = ctx->arenas[CLASS_CACHE_ARENA_ID];
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -1431,7 +1375,7 @@ class_cache_thread_func(void *arg)
 			break;
 
 		classes_processed++;
-		LOG_INFO("Processing class #%d from queue", classes_processed);
+		LOG_DEBUG("Processing class #%d from queue", classes_processed);
 		cache_class_info(ctx, arena, ctx->jvmti_env, entry->klass);
 
 		/* Delete the global reference after processing

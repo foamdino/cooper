@@ -91,9 +91,6 @@ start_all_threads(agent_context_t *ctx)
 	}
 
 	/* Start class caching background thread */
-	LOG_INFO("About to start class cache thread, ctx=%p, class_queue=%p",
-	         ctx,
-	         ctx->class_queue);
 	set_worker_status(&ctx->worker_statuses, CLASS_CACHE_RUNNING);
 	// TODO use atomic?
 	// simplify when extract queue from log/class_queue code
@@ -113,26 +110,7 @@ start_all_threads(agent_context_t *ctx)
 		return COOPER_ERR;
 	}
 	else
-	{
 		LOG_INFO("Class caching thread started");
-		/* Give thread a moment to start */
-		usleep(10000); /* 10ms */
-
-		/* Check if thread is still alive */
-		int kill_result = pthread_kill(ctx->class_cache_thread, 0);
-		if (kill_result == 0)
-		{
-			LOG_INFO("Class cache thread is alive");
-		}
-		else if (kill_result == ESRCH)
-		{
-			LOG_ERROR("Class cache thread has already terminated!");
-		}
-		else
-		{
-			LOG_ERROR("pthread_kill check failed: %s", strerror(kill_result));
-		}
-	}
 
 	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
