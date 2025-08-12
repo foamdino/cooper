@@ -42,6 +42,8 @@ class_queue_enqueue(class_q_t *queue, jclass klass, const char *class_sig)
 	assert(queue != NULL);
 	assert(klass != NULL);
 
+	LOG_INFO("Enqueing %s", class_sig);
+
 	pthread_mutex_lock(&queue->lock);
 
 	/* Check if queue is full */

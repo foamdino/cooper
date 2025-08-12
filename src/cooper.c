@@ -1242,13 +1242,12 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		return;
 
 	/* Fast filter check - no allocations */
-	// TODO retest with this
-	//  if (!should_process_class(&global_ctx->package_filter, class_sig))
-	//  {
-	//  	/* Class filtered out, skip processing */
-	//  	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-	//  	return;
-	//  }
+	if (!should_process_class(&global_ctx->package_filter, class_sig))
+	{
+		/* Class filtered out, skip processing */
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+		return;
+	}
 
 	/* Create global reference for the class */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
@@ -1269,8 +1268,6 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	}
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-
-	// cache_class_info(jvmti_env, klass);
 }
 
 static void JNICALL
@@ -1719,6 +1716,13 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 			continue;
 
+		if (!should_process_class(&global_ctx->package_filter, class_sig))
+		{
+			/* Class filtered out, skip processing */
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
 		/* Create a global reference for the class */
 		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
 		if (global_class_ref == NULL)
@@ -1742,14 +1746,6 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			enqueued_count++;
 
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-
-		// // cache_class_info(jvmti_env, classes[i]);
-		// /* Class filter passed enque to deal with in background thread */
-		// if (class_queue_enqueue(global_ctx->class_queue, classes[i], class_sig)
-		//     != 0)
-		// 	LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
-		// else
-		// 	enqueued_count++;
 	}
 
 	LOG_INFO("Successfully enqueued %d classes out of %d total",
@@ -1858,6 +1854,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 	capabilities.can_get_line_numbers                = 1;
 	capabilities.can_generate_vm_object_alloc_events = 1;
 	capabilities.can_tag_objects                     = 1;
+	capabilities.can_generate_all_class_hook_events  = 1;
 
 	err = (*global_ctx->jvmti_env)
 	          ->AddCapabilities(global_ctx->jvmti_env, &capabilities);
@@ -1901,7 +1898,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	                       JVMTI_EVENT_VM_OBJECT_ALLOC,
 	                       JVMTI_EVENT_THREAD_END,
 	                       JVMTI_EVENT_VM_INIT,
-	                       JVMTI_EVENT_CLASS_LOAD};
+	                       JVMTI_EVENT_CLASS_LOAD,
+	                       JVMTI_EVENT_CLASS_PREPARE};
 
 	for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i)
 	{
@@ -2140,10 +2138,6 @@ Agent_OnUnload(JavaVM *vm)
 {
 	if (global_ctx)
 	{
-
-		// /* Shutdown background thread for class caching */
-		// class_queue_cleanup(global_ctx->class_queue);
-
 		/* Stop all threads */
 		stop_all_threads(global_ctx);
 
