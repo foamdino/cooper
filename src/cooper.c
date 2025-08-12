@@ -1357,17 +1357,30 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		return;
 
 	/* Fast filter check - no allocations */
-	if (!should_process_class(&global_ctx->package_filter, class_sig))
+	// TODO retest with this
+	//  if (!should_process_class(&global_ctx->package_filter, class_sig))
+	//  {
+	//  	/* Class filtered out, skip processing */
+	//  	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+	//  	return;
+	//  }
+
+	/* Create global reference for the class */
+	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
+	if (global_class_ref == NULL)
 	{
-		/* Class filtered out, skip processing */
+		LOG_ERROR("Failed to create global reference for class: %s", class_sig);
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 		return;
 	}
 
 	/* Class passed filter, enqueue for background processing */
-	if (class_queue_enqueue(global_ctx->class_queue, klass, class_sig) != 0)
+	if (class_queue_enqueue(global_ctx->class_queue, global_class_ref, class_sig)
+	    != 0)
 	{
 		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		/* Clean up the global reference if we couldn't enqueue */
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 	}
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1780,7 +1793,7 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 }
 
 static int
-precache_loaded_classes(jvmtiEnv *jvmti_env)
+precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 {
 	int class_count;
 	jclass *classes;
@@ -1801,6 +1814,9 @@ precache_loaded_classes(jvmtiEnv *jvmti_env)
 
 	LOG_INFO("Pre-caching %d loaded classes", class_count);
 
+	// TODO remove after debugging
+	int enqueued_count = 0;
+
 	for (int i = 0; i < class_count; i++)
 	{
 		/* Check if already tagged */
@@ -1818,12 +1834,42 @@ precache_loaded_classes(jvmtiEnv *jvmti_env)
 		if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 			continue;
 
-		// cache_class_info(jvmti_env, classes[i]);
-		/* Class filter passed enque to deal with in background thread */
-		if (class_queue_enqueue(global_ctx->class_queue, classes[i], class_sig)
+		/* Create a global reference for the class */
+		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
+		if (global_class_ref == NULL)
+		{
+			LOG_ERROR("Failed to create global reference for class: %s",
+			          class_sig);
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
+		/* Enqueue the GLOBAL reference, not the local one */
+		if (class_queue_enqueue(
+			global_ctx->class_queue, global_class_ref, class_sig)
 		    != 0)
+		{
 			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+			/* Clean up the global reference if we couldn't enqueue */
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		}
+		else
+			enqueued_count++;
+
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+
+		// // cache_class_info(jvmti_env, classes[i]);
+		// /* Class filter passed enque to deal with in background thread */
+		// if (class_queue_enqueue(global_ctx->class_queue, classes[i], class_sig)
+		//     != 0)
+		// 	LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		// else
+		// 	enqueued_count++;
 	}
+
+	LOG_INFO("Successfully enqueued %d classes out of %d total",
+	         enqueued_count,
+	         class_count);
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)classes);
 	LOG_INFO("Completed pre-caching of loaded classes");
@@ -1885,7 +1931,7 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 		goto error;
 	}
 
-	if (precache_loaded_classes(jvmti_env) != COOPER_OK)
+	if (precache_loaded_classes(jvmti_env, jni_env) != COOPER_OK)
 	{
 		LOG_ERROR("Unable to precache loaded classes");
 		goto error;
