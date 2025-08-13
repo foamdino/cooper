@@ -27,7 +27,8 @@ static const arena_config_t arena_configs[] = {
     {CLASS_CACHE_ARENA_ID,
      CLASS_CACHE_ARENA_NAME,
      CLASS_CACHE_ARENA_SZ,
-     CLASS_CACHE_ARENA_BLOCKS}};
+     CLASS_CACHE_ARENA_BLOCKS},
+    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS}};
 
 /* Get current time in nanoseconds */
 uint64_t
@@ -1245,8 +1246,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (!should_process_class(&global_ctx->package_filter, class_sig))
 	{
 		/* Class filtered out, skip processing */
-		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-		return;
+		goto cleanup;
 	}
 
 	/* Create global reference for the class */
@@ -1254,19 +1254,38 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (global_class_ref == NULL)
 	{
 		LOG_ERROR("Failed to create global reference for class: %s", class_sig);
-		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-		return;
+		goto cleanup;
 	}
 
 	/* Class passed filter, enqueue for background processing */
-	if (class_queue_enqueue(global_ctx->class_queue, global_class_ref, class_sig)
-	    != 0)
+	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	class_q_entry_t *class_entry =
+	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+	if (!entry || !class_entry)
+	{
+		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		goto cleanup;
+	}
+
+	class_entry->class_sig = class_sig;
+	class_entry->klass     = global_class_ref;
+
+	entry->type = Q_ENTRY_CLASS;
+	entry->data = class_entry;
+
+	if (q_enq(global_ctx->class_queue, entry) != 0)
 	{
 		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
 		/* Clean up the global reference if we couldn't enqueue */
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		/* Release entry mem back to arena on enqueue failure */
+		arena_free(q_entry_arena, entry);
+		arena_free(q_entry_arena, class_entry);
 	}
 
+cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
@@ -1733,17 +1752,48 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			continue;
 		}
 
-		/* Enqueue the GLOBAL reference, not the local one */
-		if (class_queue_enqueue(
-			global_ctx->class_queue, global_class_ref, class_sig)
-		    != 0)
+		/* Class passed filter, enqueue for background processing */
+		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+		q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+		class_q_entry_t *class_entry =
+		    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+		if (!entry || !class_entry)
+		{
+			LOG_ERROR("Unable to allocate room from arena for q entries!");
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
+		class_entry->class_sig = class_sig;
+		class_entry->klass     = global_class_ref;
+
+		entry->type = Q_ENTRY_CLASS;
+		entry->data = class_entry;
+
+		if (q_enq(global_ctx->class_queue, entry) != 0)
 		{
 			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
 			/* Clean up the global reference if we couldn't enqueue */
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+			/* Release entry mem back to arena on enqueue failure */
+			arena_free(q_entry_arena, entry);
+			arena_free(q_entry_arena, class_entry);
 		}
 		else
 			enqueued_count++;
+
+		// /* Enqueue the GLOBAL reference, not the local one */
+		// if (class_queue_enqueue(
+		// 	global_ctx->class_queue, global_class_ref, class_sig)
+		//     != 0)
+		// {
+		// 	LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		// 	/* Clean up the global reference if we couldn't enqueue */
+		// 	(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		// }
+		// else
+		// 	enqueued_count++;
 
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 	}
@@ -1979,6 +2029,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		current_log_level = LOG_LEVEL_DEBUG;
 
 	log_q_t *log_queue = malloc(sizeof(log_q_t));
+	// q_t *log_queue = calloc(1, sizeof(q_t));
 
 	/*
 	  We initialise all the arenas we need in this function and we
@@ -2018,8 +2069,9 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
-	class_q_t *class_queue = malloc(sizeof(class_q_t));
-	if (class_queue_init(class_queue) != COOPER_OK)
+	// class_q_t *class_queue = malloc(sizeof(class_q_t));
+	q_t *class_queue = calloc(1, sizeof(q_t));
+	if (q_init(class_queue) != COOPER_OK)
 	{
 		cleanup(global_ctx);
 		return JNI_ERR;

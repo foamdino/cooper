@@ -7,6 +7,32 @@
 #include "q.h"
 
 /**
+ * Init the q, expects the q to be zero initialised already, caller responsible for that
+ *
+ * @param queue Pointer to queue
+ *
+ * @return 0 on success, 1 on failure
+ */
+int
+q_init(q_t *queue)
+{
+	assert(queue != NULL);
+
+	int err = pthread_mutex_init(&queue->lock, NULL);
+	if (err != 0)
+		return 1;
+
+	err = pthread_cond_init(&queue->cond, NULL);
+	if (err != 0)
+	{
+		pthread_mutex_destroy(&queue->lock);
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
  * Enqueue an entry for later processing
  *
  * @param queue Pointer to queue to enqueue the entry to
@@ -26,8 +52,6 @@ q_enq(q_t *queue, q_entry_t *entry)
 	if (queue->count >= Q_SZ)
 	{
 		pthread_mutex_unlock(&queue->lock);
-		// TODO remove this since the caller can check
-		LOG_WARN("Queue full, dropping entry\n");
 		return 1;
 	}
 

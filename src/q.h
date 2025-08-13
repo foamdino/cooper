@@ -42,6 +42,9 @@ struct q
 	int running;
 };
 
+/* Initialise the queue */
+int q_init(q_t *queue);
+
 /* Enqueue a q_entry for deferred processing */
 int q_enq(q_t *q, q_entry_t *entry);
 

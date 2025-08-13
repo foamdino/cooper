@@ -1349,7 +1349,7 @@ class_cache_thread_func(void *arg)
 	assert(arg != NULL);
 
 	agent_context_t *ctx = (agent_context_t *)arg;
-	class_q_t *queue     = ctx->class_queue;
+	q_t *queue           = ctx->class_queue;
 	arena_t *arena       = ctx->arenas[CLASS_CACHE_ARENA_ID];
 
 	/* Get JNI environment for this thread */
@@ -1368,21 +1368,31 @@ class_cache_thread_func(void *arg)
 	while (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING))
 	{
 		LOG_DEBUG("Waiting for class from queue...");
-		class_q_entry_t *entry = class_queue_dequeue(queue);
+		q_entry_t *entry = q_deq(queue);
 
 		/* Q shutdown or error */
 		if (entry == NULL)
 			break;
 
+		if (entry->type != Q_ENTRY_CLASS)
+		{
+			LOG_ERROR("Queue entry type: %d, not a class entry type in class "
+			          "queue!!",
+			          entry->type);
+			break;
+		}
+
+		class_q_entry_t *class_entry = (class_q_entry_t *)entry->data;
+
 		classes_processed++;
 		LOG_DEBUG("Processing class #%d from queue", classes_processed);
-		cache_class_info(ctx, arena, ctx->jvmti_env, entry->klass);
+		cache_class_info(ctx, arena, ctx->jvmti_env, class_entry->klass);
 
 		/* Delete the global reference after processing
-		entry->klass is a global ref assigned in precache_loaded_classes or
+		class_entry->klass is a global ref assigned in precache_loaded_classes or
 		class_load_callback
 		*/
-		(*jni)->DeleteGlobalRef(jni, entry->klass);
+		(*jni)->DeleteGlobalRef(jni, class_entry->klass);
 	}
 
 	/* Detach from JVM */

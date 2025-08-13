@@ -34,7 +34,10 @@
 #include "thread_util.h"
 #include "heap.h"
 #include "ht.h"
-#include "class_queue.h"
+// TODO remove this when refactoring complete
+//  #include "class_queue.h"
+//^--------------------
+#include "q.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x)        (void)(x)
@@ -54,6 +57,7 @@
 #define METRICS_ARENA_SZ     8 * 1024 * 1024
 #define SCRATCH_ARENA_SZ     16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
+#define Q_ENTRY_ARENA_SZ     2048 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS   1024
@@ -64,6 +68,7 @@
 #define METRICS_ARENA_BLOCKS     1024
 #define CLASS_CACHE_ARENA_BLOCKS 1024
 #define SCRATCH_ARENA_BLOCKS     1024
+#define Q_ENTRY_ARENA_BLOCKS     1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME   "exception_arena"
@@ -73,6 +78,7 @@
 #define METRICS_ARENA_NAME     "metrics_arena"
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
 #define SCRATCH_ARENA_NAME     "scratch_arena"
+#define Q_ENTRY_ARENA_NAME     "q_entry_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -112,6 +118,7 @@ enum arenas
 	METRICS_ARENA_ID,
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
+	Q_ENTRY_ARENA_ID,
 	ARENA_ID__LAST
 };
 
@@ -327,9 +334,10 @@ struct agent_context
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
 	config_t config;               /**< Agent configuration */
-	class_q_t *class_queue;        /**< q for class caching background thread */
-	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
-	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
+	// class_q_t *class_queue;        /**< q for class caching background thread */
+	q_t *class_queue;                /**< q for class caching background thread */
+	arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
+	method_metrics_soa_t *metrics;   /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
 	thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
 	object_allocation_metrics_t

@@ -8,8 +8,10 @@
 #define COOPER_TYPES_H
 
 #include <stddef.h>
+#include <jvmti.h>
 
 typedef struct package_filter package_filter_t;
+typedef struct class_q_entry class_q_entry_t;
 
 /* Metric flags for method sampling */
 enum metric_flags
@@ -25,6 +27,12 @@ struct package_filter
 	char **include_packages;
 	size_t *package_lengths;
 	size_t num_packages;
+};
+
+struct class_q_entry
+{
+	jclass klass;    /* Class reference to process */
+	char *class_sig; /* Class signature (for logging) */
 };
 
 #endif /* COOPER_TYPES_H */
