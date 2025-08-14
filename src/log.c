@@ -33,17 +33,19 @@ log_thread_func(void *arg)
 	while (1)
 	{
 		q_entry_t *entry = q_deq(queue);
-		if (entry)
+
+		/* Shutting down */
+		if (!entry)
+			break;
+
+		if (entry->type == Q_ENTRY_LOG)
 		{
-			if (entry->type == Q_ENTRY_LOG)
+			char *msg = (char *)entry->data;
+			/* Write message to log file */
+			if (msg)
 			{
-				char *msg = (char *)entry->data;
-				/* Write message to log file */
-				if (msg)
-				{
-					fprintf(log_file, "%s", msg);
-					fflush(log_file);
-				}
+				fprintf(log_file, "%s", msg);
+				fflush(log_file);
 			}
 		}
 	}
