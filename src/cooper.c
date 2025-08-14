@@ -14,20 +14,19 @@ static pthread_key_t context_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Arena configurations */
-static const arena_config_t arena_configs[] = {
-    {EXCEPTION_ARENA_ID,
-     EXCEPTION_ARENA_NAME,
-     EXCEPTION_ARENA_SZ,
-     EXCEPTION_ARENA_BLOCKS},
+/* clang-format off */
+static const arena_config_t arena_configs[] = 
+{
+    {EXCEPTION_ARENA_ID, EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
     {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
     {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {CLASS_CACHE_ARENA_ID,
-     CLASS_CACHE_ARENA_NAME,
-     CLASS_CACHE_ARENA_SZ,
-     CLASS_CACHE_ARENA_BLOCKS}};
+    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
+    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS}
+};
+/* clang-format on */
 
 /* Get current time in nanoseconds */
 uint64_t
@@ -319,7 +318,7 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 
 /**
  *
- * @return position in array of object allocation stats or -1 if no space left
+ * @return position in array of object allocation stats or -1 on failure
  */
 static int
 find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *class_sig)
@@ -636,121 +635,6 @@ find_method_index(method_metrics_soa_t *metrics, const char *signature)
 	}
 
 	return -1; /* Not found */
-}
-
-/**
- * Finds the index for a method in the metrics array based on filter rules.
- * This is a read-only, non-locking function used during class loading.
- *
- * @return The index into the metrics array if a match is found, otherwise -1.
- */
-static int
-find_method_filter_index(agent_context_t *ctx,
-                         const char *class_signature,
-                         const char *method_name,
-                         const char *method_signature)
-{
-	char full_sig[MAX_SIG_SZ];
-
-	/* Check for an exact match first */
-	snprintf(full_sig,
-	         sizeof(full_sig),
-	         "%s %s %s",
-	         class_signature,
-	         method_name,
-	         method_signature);
-	int method_index = find_method_index(ctx->metrics, full_sig);
-	if (method_index >= 0)
-		return method_index;
-
-	/* If no exact match, try a class-level wildcard match */
-	snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
-	method_index = find_method_index(ctx->metrics, full_sig);
-	if (method_index >= 0)
-		return method_index;
-
-	return -1; /* No matching filter found */
-}
-
-/* Caches class and method info using SetTag */
-static void
-cache_class_info(jvmtiEnv *jvmti_env, jclass klass)
-{
-	assert(jvmti_env != NULL);
-
-	char *class_sig = NULL;
-	jvmtiError err =
-	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
-	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
-		goto deallocate;
-
-	/* Allocate the main class_info struct from the class cache arena */
-	class_info_t *info =
-	    arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID], sizeof(class_info_t));
-	if (info == NULL)
-		goto deallocate;
-
-	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
-	info->in_heap_iteration = 0;
-
-	/* Get all methods for the class */
-	jint method_count  = 0;
-	jmethodID *methods = NULL;
-	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
-
-	if (err != JVMTI_ERROR_NONE)
-		goto deallocate;
-
-	if (method_count == 0)
-		goto deallocate;
-
-	/* Allocate space for the method info array in the same arena */
-	info->methods      = arena_alloc(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
-                                    sizeof(method_info_t) * method_count);
-	info->method_count = method_count;
-
-	if (info->methods != NULL)
-	{
-		/* Loop through each method and cache its details */
-		for (int i = 0; i < method_count; i++)
-		{
-			char *method_name          = NULL;
-			char *method_sig           = NULL;
-			info->methods[i].method_id = methods[i];
-
-			if ((*jvmti_env)
-			        ->GetMethodName(jvmti_env,
-			                        methods[i],
-			                        &method_name,
-			                        &method_sig,
-			                        NULL)
-			    == JVMTI_ERROR_NONE)
-			{
-				/* Store arena-allocated copies of the names */
-				info->methods[i].method_name =
-				    arena_strdup(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
-				                 method_name);
-				info->methods[i].method_signature = arena_strdup(
-				    global_ctx->arenas[CLASS_CACHE_ARENA_ID], method_sig);
-
-				info->methods[i].sample_index = find_method_filter_index(
-				    global_ctx, class_sig, method_name, method_sig);
-
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_name);
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_sig);
-			}
-		}
-	}
-	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
-
-	/* Set the tag */
-	jlong tag = (jlong)(intptr_t)info;
-	(*jvmti_env)->SetTag(jvmti_env, klass, tag);
-
-deallocate:
-	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
 /*
@@ -1320,13 +1204,87 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	          safe_sz);
 }
 
+static inline int
+should_process_class(const package_filter_t *filter, const char *class_sig)
+{
+	/* If no filters configured, process everything */
+	if (filter->num_packages == 0)
+		return 1;
+
+	/* Linear search through package filters */
+	/* For 5-7 packages, this is faster than any complex structure */
+	for (size_t i = 0; i < filter->num_packages; i++)
+	{
+		if (strncmp(class_sig,
+		            filter->include_packages[i],
+		            filter->package_lengths[i])
+		    == 0)
+		{
+			return 1; /* Found a match */
+		}
+	}
+
+	return 0; /* No match found, skip this class */
+}
+
 static void JNICALL
 class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass klass)
 {
 	UNUSED(jni_env);
 	UNUSED(thread);
 
-	cache_class_info(jvmti_env, klass);
+	/* Get class signature for filtering */
+	char *class_sig = NULL;
+	jvmtiError err =
+	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+		return;
+
+	/* Fast filter check - no allocations */
+	if (!should_process_class(&global_ctx->package_filter, class_sig))
+	{
+		/* Class filtered out, skip processing */
+		goto cleanup;
+	}
+
+	/* Create global reference for the class */
+	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
+	if (global_class_ref == NULL)
+	{
+		LOG_ERROR("Failed to create global reference for class: %s", class_sig);
+		goto cleanup;
+	}
+
+	/* Class passed filter, enqueue for background processing */
+	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	class_q_entry_t *class_entry =
+	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+	if (!entry || !class_entry)
+	{
+		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		goto cleanup;
+	}
+
+	class_entry->class_sig = class_sig;
+	class_entry->klass     = global_class_ref;
+
+	entry->type = Q_ENTRY_CLASS;
+	entry->data = class_entry;
+
+	if (q_enq(global_ctx->class_queue, entry) != 0)
+	{
+		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		/* Clean up the global reference if we couldn't enqueue */
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		/* Release entry mem back to arena on enqueue failure */
+		arena_free(q_entry_arena, entry);
+		arena_free(q_entry_arena, class_entry);
+	}
+
+cleanup:
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
 static void JNICALL
@@ -1468,7 +1426,10 @@ heap_object_callback(jvmtiHeapReferenceKind reference_kind,
 	/* class_tag should be a pointer to class_info_t struct */
 	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
 	if (!info->in_heap_iteration)
+	{
+		LOG_INFO("Class %s not in iteration", info->class_sig);
 		return JVMTI_VISIT_OBJECTS;
+	}
 
 	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
 
@@ -1601,7 +1562,7 @@ load_config(agent_context_t *ctx, const char *cf)
 	ctx->config.mem_sample_interval = config.mem_sample_interval;
 	ctx->config.num_filters         = 0; /* We'll track this as we add methods */
 
-	/* Convert filters to metrics entries */
+	/* Convert method filters to metrics entries */
 	for (size_t i = 0; i < config.num_filters; i++)
 	{
 		method_filter_entry_t *filter = &config.filters[i];
@@ -1634,6 +1595,37 @@ load_config(agent_context_t *ctx, const char *cf)
 		}
 
 		ctx->config.num_filters++;
+	}
+
+	/* Copy data from the cooper_config package_filter to the ctx */
+	ctx->package_filter.num_packages = config.package_filter.num_packages;
+	LOG_INFO("Considering %d packages for filtering",
+	         ctx->package_filter.num_packages);
+
+	/* No packages to configure */
+	if (ctx->package_filter.num_packages == 0)
+		return COOPER_OK;
+
+	/* Allocate the arrays in ctx BEFORE copying */
+
+	ctx->package_filter.include_packages =
+	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(char *));
+	ctx->package_filter.package_lengths =
+	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
+
+	if (!ctx->package_filter.include_packages || !ctx->package_filter.package_lengths)
+	{
+		LOG_ERROR("Failed to allocate package filter arrays in context\n");
+		return COOPER_ERR;
+	}
+
+	/* Now safe to copy */
+	for (size_t i = 0; i < config.package_filter.num_packages; i++)
+	{
+		ctx->package_filter.include_packages[i] =
+		    arena_strdup(config_arena, config.package_filter.include_packages[i]);
+		ctx->package_filter.package_lengths[i] =
+		    config.package_filter.package_lengths[i];
 	}
 
 	return COOPER_OK;
@@ -1700,7 +1692,7 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 }
 
 static int
-precache_loaded_classes(jvmtiEnv *jvmti_env)
+precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 {
 	int class_count;
 	jclass *classes;
@@ -1721,6 +1713,9 @@ precache_loaded_classes(jvmtiEnv *jvmti_env)
 
 	LOG_INFO("Pre-caching %d loaded classes", class_count);
 
+	// TODO remove after debugging
+	int enqueued_count = 0;
+
 	for (int i = 0; i < class_count; i++)
 	{
 		/* Check if already tagged */
@@ -1730,8 +1725,80 @@ precache_loaded_classes(jvmtiEnv *jvmti_env)
 		if (existing_tag > 0)
 			continue;
 
-		cache_class_info(jvmti_env, classes[i]);
+		char *class_sig = NULL;
+		jvmtiError err =
+		    (*jvmti_env)
+			->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
+
+		if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+			continue;
+
+		if (!should_process_class(&global_ctx->package_filter, class_sig))
+		{
+			/* Class filtered out, skip processing */
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
+		/* Create a global reference for the class */
+		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
+		if (global_class_ref == NULL)
+		{
+			LOG_ERROR("Failed to create global reference for class: %s",
+			          class_sig);
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
+		/* Class passed filter, enqueue for background processing */
+		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+		q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+		class_q_entry_t *class_entry =
+		    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+		if (!entry || !class_entry)
+		{
+			LOG_ERROR("Unable to allocate room from arena for q entries!");
+			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+			continue;
+		}
+
+		class_entry->class_sig = class_sig;
+		class_entry->klass     = global_class_ref;
+
+		entry->type = Q_ENTRY_CLASS;
+		entry->data = class_entry;
+
+		if (q_enq(global_ctx->class_queue, entry) != 0)
+		{
+			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+			/* Clean up the global reference if we couldn't enqueue */
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+			/* Release entry mem back to arena on enqueue failure */
+			arena_free(q_entry_arena, entry);
+			arena_free(q_entry_arena, class_entry);
+		}
+		else
+			enqueued_count++;
+
+		// /* Enqueue the GLOBAL reference, not the local one */
+		// if (class_queue_enqueue(
+		// 	global_ctx->class_queue, global_class_ref, class_sig)
+		//     != 0)
+		// {
+		// 	LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		// 	/* Clean up the global reference if we couldn't enqueue */
+		// 	(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		// }
+		// else
+		// 	enqueued_count++;
+
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 	}
+
+	LOG_INFO("Successfully enqueued %d classes out of %d total",
+	         enqueued_count,
+	         class_count);
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)classes);
 	LOG_INFO("Completed pre-caching of loaded classes");
@@ -1786,16 +1853,16 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
 	LOG_INFO("Successfully initialized Thread class and getId method");
 
-	if (precache_loaded_classes(jvmti_env) != COOPER_OK)
-	{
-		LOG_ERROR("Unable to precache loaded classes");
-		goto error;
-	}
-
 	/* Start all background threads */
 	if (start_all_threads(global_ctx) != COOPER_OK)
 	{
 		LOG_ERROR("Failed to start background threads");
+		goto error;
+	}
+
+	if (precache_loaded_classes(jvmti_env, jni_env) != COOPER_OK)
+	{
+		LOG_ERROR("Unable to precache loaded classes");
 		goto error;
 	}
 
@@ -1835,6 +1902,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 	capabilities.can_get_line_numbers                = 1;
 	capabilities.can_generate_vm_object_alloc_events = 1;
 	capabilities.can_tag_objects                     = 1;
+	capabilities.can_generate_all_class_hook_events  = 1;
 
 	err = (*global_ctx->jvmti_env)
 	          ->AddCapabilities(global_ctx->jvmti_env, &capabilities);
@@ -1878,7 +1946,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	                       JVMTI_EVENT_VM_OBJECT_ALLOC,
 	                       JVMTI_EVENT_THREAD_END,
 	                       JVMTI_EVENT_VM_INIT,
-	                       JVMTI_EVENT_CLASS_LOAD};
+	                       JVMTI_EVENT_CLASS_LOAD,
+	                       JVMTI_EVENT_CLASS_PREPARE};
 
 	for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i)
 	{
@@ -1957,7 +2026,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	if (options && strstr(options, "loglevel=debug"))
 		current_log_level = LOG_LEVEL_DEBUG;
 
-	log_q_t *log_queue = malloc(sizeof(log_q_t));
+	q_t *log_queue = calloc(1, sizeof(q_t));
 
 	/*
 	  We initialise all the arenas we need in this function and we
@@ -1996,6 +2065,15 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
+
+	q_t *class_queue = calloc(1, sizeof(q_t));
+	if (q_init(class_queue) != COOPER_OK)
+	{
+		cleanup(global_ctx);
+		return JNI_ERR;
+	}
+
+	global_ctx->class_queue = class_queue;
 
 	arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
 	if (!class_cache_arena)

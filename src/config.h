@@ -14,10 +14,12 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
-#include "cooper.h"
+// #include "cooper.h"
+#include "cooper_types.h"
 
-#define DEFAULT_CFG_FILE   "trace.ini"
-#define MAX_FILTER_ENTRIES 256
+#define DEFAULT_CFG_FILE    "trace.ini"
+#define MAX_FILTER_ENTRIES  256
+#define MAX_PACKAGE_FILTERS 32
 
 typedef struct method_filter_entry method_filter_entry_t;
 typedef struct cooper_config cooper_config_t;
@@ -50,6 +52,8 @@ struct cooper_config
 	method_filter_entry_t *filters; /**< Array of method filters */
 	size_t num_filters;             /**< Number of filters */
 	size_t filters_capacity;        /**< Capacity of filters array */
+	package_filter_t
+	    package_filter; /**< Filter to only worry about specific packages */
 };
 
 /**

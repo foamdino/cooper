@@ -18,6 +18,7 @@ void *export_thread_func(void *arg);
 void *mem_sampling_thread_func(void *arg);
 void *heap_stats_thread_func(void *arg);
 void *shm_export_thread_func(void *arg);
+void *class_cache_thread_func(void *arg);
 
 /* Export functions that might be called from elsewhere */
 void export_to_file(agent_context_t *ctx);

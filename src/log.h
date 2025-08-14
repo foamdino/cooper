@@ -18,18 +18,12 @@
 #include "arena.h"
 #include "arena_str.h"
 #include "thread_util.h"
+#include "q.h"
 
 /* Maximum size of a log message */
 #define MAX_LOG_MSG_SZ 1024
-/* Maximum size of the log queue */
-#define LOG_Q_SZ 1024
-
-/* Forward declarations to avoid circular dependencies */
-struct arena;
-typedef struct arena arena_t;
 
 typedef enum log_level log_level_e;
-typedef struct log_q log_q_t;
 typedef struct log_system log_system_t;
 typedef struct log_thread_params log_thread_params_t;
 
@@ -42,20 +36,9 @@ enum log_level
 	LOG_LEVEL_NONE  = 4 /* Disable all logging */
 };
 
-struct log_q
-{
-	char *messages[LOG_Q_SZ];
-	int hd;
-	int tl;
-	int count;
-	pthread_mutex_t lock;
-	pthread_cond_t cond;
-	int running;
-};
-
 struct log_system
 {
-	log_q_t *queue;
+	q_t *queue;
 	arena_t *arena;
 	FILE *log_file;
 	pthread_t log_thread;
@@ -64,14 +47,14 @@ struct log_system
 
 struct log_thread_params
 {
-	log_q_t *queue;
+	q_t *queue;
 	FILE *log_file;
 };
 
 extern log_level_e current_log_level;
 
 /* Initialize the logging system */
-int init_log_system(log_q_t *queue, arena_t *arena, FILE *log_file);
+int init_log_system(q_t *queue, arena_t *arena, FILE *log_file);
 
 /* Clean up the logging system
 Assumes that the log system has been correct initialised via init_log_system
@@ -80,15 +63,6 @@ void cleanup_log_system();
 
 /* Core logging function that users don't need to call directly */
 void log_message(log_level_e level, const char *file, int line, const char *fmt, ...);
-
-/* For internal use or when you need to specify queue and arena */
-void log_message_internal(log_q_t *queue,
-                          arena_t *arena,
-                          log_level_e level,
-                          const char *file,
-                          int line,
-                          const char *fmt,
-                          ...);
 
 /* Log thread function - exported so can control when the thread starts/stops */
 void *log_thread_func(void *arg);

@@ -85,7 +85,6 @@ config_process_config_line(arena_t *arena, const char *line)
 	return trimmed;
 }
 
-// TODO this function ties this code directly to cooper.h as the flags are shared
 /**
  * Parse metrics string and return flags
  */
@@ -115,13 +114,13 @@ config_parse_metric_flags(const char *metrics_str)
  * Add a method filter to the configuration
  */
 static int
-config_add_filter(arena_t *arena,
-                  cooper_config_t *config,
-                  const char *class_sig,
-                  const char *method_name,
-                  const char *method_sig,
-                  int sample_rate,
-                  unsigned int metric_flags)
+config_add_method_filter(arena_t *arena,
+                         cooper_config_t *config,
+                         const char *class_sig,
+                         const char *method_name,
+                         const char *method_sig,
+                         int sample_rate,
+                         unsigned int metric_flags)
 {
 	assert(arena != NULL);
 	assert(config != NULL);
@@ -306,13 +305,13 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 			unsigned int metric_flags = config_parse_metric_flags(metrics);
 
 			/* Add the filter */
-			if (config_add_filter(arena,
-			                      config,
-			                      class_sig,
-			                      method_name,
-			                      method_sig,
-			                      sample_rate,
-			                      metric_flags)
+			if (config_add_method_filter(arena,
+			                             config,
+			                             class_sig,
+			                             method_name,
+			                             method_sig,
+			                             sample_rate,
+			                             metric_flags)
 			    != 0)
 			{
 				LOG_ERROR("Failed to add method filter: %s\n", processed);
@@ -349,14 +348,71 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				}
 			}
 		}
+		else if (strcmp(current_section, "[packages]") == 0)
+		{
+			/* Skip filter array markers */
+			if (strncmp(processed, "include =", 9) == 0
+			    || processed[0] == ']')
+				continue;
+
+			/* Initialize arrays once on first package entry */
+			if (config->package_filter.include_packages == NULL)
+			{
+				config->package_filter.include_packages = arena_alloc(
+				    arena, MAX_PACKAGE_FILTERS * sizeof(char *));
+				config->package_filter.package_lengths = arena_alloc(
+				    arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
+				config->package_filter.num_packages = 0;
+
+				if (!config->package_filter.include_packages
+				    || !config->package_filter.package_lengths)
+				{
+					LOG_ERROR(
+					    "Failed to allocate package filter arrays\n");
+					continue;
+				}
+			}
+
+			/* Parse package line */
+			if (config->package_filter.num_packages < MAX_PACKAGE_FILTERS)
+			{
+				char package[256];
+				if (sscanf(processed, "%255s", package) == 1)
+				{
+					size_t len     = strlen(package);
+					char *pkg_copy = arena_strdup(arena, package);
+					if (pkg_copy)
+					{
+						config->package_filter.include_packages
+						    [config->package_filter
+						         .num_packages] = pkg_copy;
+						config->package_filter.package_lengths
+						    [config->package_filter
+						         .num_packages] = len;
+						config->package_filter.num_packages++;
+						LOG_DEBUG("Added package filter: %s "
+						          "(len=%zu)\n",
+						          package,
+						          len);
+					}
+				}
+			}
+			else
+				LOG_WARN(
+				    "Maximum package filters reached, ignoring: %s\n",
+				    processed);
+		}
 	}
 
 	fclose(fp);
 
-	LOG_INFO("Config loaded: default_rate=%d, filters=%zu, path=%s, method=%s, "
+	LOG_INFO("Config loaded: default_rate=%d, method_filters=%zu, "
+	         "package_filters=%zu, path=%s, "
+	         "export_method=%s, "
 	         "export_interval=%d\n",
 	         config->default_sample_rate,
 	         config->num_filters,
+	         config->package_filter.num_packages,
 	         config->sample_file_path ? config->sample_file_path : "NULL",
 	         config->export_method ? config->export_method : "NULL",
 	         config->export_interval);

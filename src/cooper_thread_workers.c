@@ -853,6 +853,10 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 		goto cleanup_classes;
 	}
 
+	// TODO remove these after debugging
+	int tagged_count = 0;
+	int marked_count = 0;
+
 	/* Tag classes for heap iteration */
 	for (int i = 0; i < class_count; i++)
 	{
@@ -861,10 +865,17 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 		if (tag != 0)
 		{
+			tagged_count++;
 			class_info_t *info      = (class_info_t *)(intptr_t)tag;
 			info->in_heap_iteration = 1;
+			marked_count++;
 		}
 	}
+
+	LOG_INFO("Found %d tagged classes out of %d total, marked %d for iteration",
+	         tagged_count,
+	         class_count,
+	         marked_count);
 
 	/* Use centralized heap callbacks */
 	LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
@@ -962,6 +973,124 @@ cleanup_tags:
 
 cleanup_classes:
 	(*jvmti)->Deallocate(jvmti, (unsigned char *)classes);
+}
+
+/**
+ * Finds the index for a method in the metrics array based on filter rules.
+ * This is a read-only, non-locking function used during class loading.
+ *
+ * @return The index into the metrics array if a match is found, otherwise -1.
+ */
+static int
+find_method_filter_index(agent_context_t *ctx,
+                         const char *class_signature,
+                         const char *method_name,
+                         const char *method_signature)
+{
+	char full_sig[MAX_SIG_SZ];
+
+	/* Check for an exact match first */
+	snprintf(full_sig,
+	         sizeof(full_sig),
+	         "%s %s %s",
+	         class_signature,
+	         method_name,
+	         method_signature);
+	int method_index = find_method_index(ctx->metrics, full_sig);
+	if (method_index >= 0)
+		return method_index;
+
+	/* If no exact match, try a class-level wildcard match */
+	snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
+	method_index = find_method_index(ctx->metrics, full_sig);
+	if (method_index >= 0)
+		return method_index;
+
+	return -1; /* No matching filter found */
+}
+
+/* Caches class and method info using SetTag */
+static void
+cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jclass klass)
+{
+	assert(jvmti_env != NULL);
+
+	static int cache_call_count = 0;
+	cache_call_count++;
+
+	char *class_sig = NULL;
+	jvmtiError err =
+	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
+
+	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
+		goto deallocate;
+
+	/* Get all methods for the class */
+	jint method_count  = 0;
+	jmethodID *methods = NULL;
+	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
+
+	if (err != JVMTI_ERROR_NONE)
+		goto deallocate;
+
+	/* We only care about classes with methods */
+	if (method_count == 0)
+		goto deallocate;
+
+	/* Allocate the main class_info struct from the class cache arena */
+	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
+	if (info == NULL)
+		goto deallocate;
+
+	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
+	info->in_heap_iteration = 0;
+
+	/* Allocate space for the method info array in the same arena */
+	info->methods      = arena_alloc(arena, sizeof(method_info_t) * method_count);
+	info->method_count = method_count;
+
+	/* If we are unable to allocate mem for methods,
+	free the class_info mem and stop processing this class */
+	if (!info->methods)
+	{
+		arena_free(arena, info);
+		goto deallocate;
+	}
+
+	/* Loop through each method and cache its details */
+	for (int i = 0; i < method_count; i++)
+	{
+		char *method_name          = NULL;
+		char *method_sig           = NULL;
+		info->methods[i].method_id = methods[i];
+
+		/* Skip any method where we cannot get name */
+		if ((*jvmti_env)
+		        ->GetMethodName(
+			    jvmti_env, methods[i], &method_name, &method_sig, NULL)
+		    != JVMTI_ERROR_NONE)
+			continue;
+
+		/* Store arena-allocated copies of the names */
+		info->methods[i].method_name      = arena_strdup(arena, method_name);
+		info->methods[i].method_signature = arena_strdup(arena, method_sig);
+
+		info->methods[i].sample_index =
+		    find_method_filter_index(ctx, class_sig, method_name, method_sig);
+
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_name);
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_sig);
+	}
+
+	/* Set the tag */
+	jlong tag = (jlong)(intptr_t)info;
+	err       = (*jvmti_env)->SetTag(jvmti_env, klass, tag);
+	if (err != JVMTI_ERROR_NONE)
+		LOG_ERROR("Failed to set tag for class %s, error: %d", class_sig, err);
+
+deallocate:
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
 }
 
 /* Thread functions */
@@ -1208,5 +1337,67 @@ heap_stats_thread_func(void *arg)
 	}
 
 	LOG_INFO("Heap statistics thread terminated\n");
+	return NULL;
+}
+
+/**
+ * Class caching thread function
+ */
+void *
+class_cache_thread_func(void *arg)
+{
+	assert(arg != NULL);
+
+	agent_context_t *ctx = (agent_context_t *)arg;
+	q_t *queue           = ctx->class_queue;
+	arena_t *arena       = ctx->arenas[CLASS_CACHE_ARENA_ID];
+
+	/* Get JNI environment for this thread */
+	JNIEnv *jni = NULL;
+	jint res =
+	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
+	if (res != JNI_OK || jni == NULL)
+	{
+		LOG_ERROR("Failed to attach class cache thread to JVM");
+		return NULL;
+	}
+
+	int classes_processed = 0;
+	LOG_INFO("Class cache thread started, queue has %d entries", queue->count);
+
+	while (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING))
+	{
+		LOG_DEBUG("Waiting for class from queue...");
+		q_entry_t *entry = q_deq(queue);
+
+		/* Q shutdown or error */
+		if (entry == NULL)
+			break;
+
+		if (entry->type != Q_ENTRY_CLASS)
+		{
+			LOG_ERROR("Queue entry type: %d, not a class entry type in class "
+			          "queue!!",
+			          entry->type);
+			break;
+		}
+
+		class_q_entry_t *class_entry = (class_q_entry_t *)entry->data;
+
+		classes_processed++;
+		LOG_DEBUG("Processing class #%d from queue", classes_processed);
+		cache_class_info(ctx, arena, ctx->jvmti_env, class_entry->klass);
+
+		/* Delete the global reference after processing
+		class_entry->klass is a global ref assigned in precache_loaded_classes or
+		class_load_callback
+		*/
+		(*jni)->DeleteGlobalRef(jni, class_entry->klass);
+	}
+
+	/* Detach from JVM */
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+
+	LOG_INFO("Class cache thread exiting, processed %d classes", classes_processed);
 	return NULL;
 }

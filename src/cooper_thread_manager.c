@@ -6,6 +6,7 @@
 
 #include "cooper_thread_manager.h"
 #include "cooper_thread_workers.h"
+// TODO move things into cooper_types to decouple
 #include "cooper.h"
 #include "log.h"
 #include "thread_util.h"
@@ -89,6 +90,28 @@ start_all_threads(agent_context_t *ctx)
 		}
 	}
 
+	/* Start class caching background thread */
+	set_worker_status(&ctx->worker_statuses, CLASS_CACHE_RUNNING);
+	// TODO use atomic?
+	// simplify when extract queue from log/class_queue code
+	pthread_mutex_lock(&ctx->class_queue->lock);
+	ctx->class_queue->running = 1;
+	pthread_mutex_unlock(&ctx->class_queue->lock);
+
+	LOG_INFO("Creating class cache thread...");
+	if (pthread_create(&ctx->class_cache_thread, NULL, class_cache_thread_func, ctx)
+	    != 0)
+	{
+		LOG_ERROR("Failed to start class caching thread: %s", strerror(errno));
+		clear_worker_status(&ctx->worker_statuses, CLASS_CACHE_RUNNING);
+		pthread_mutex_lock(&ctx->class_queue->lock);
+		ctx->class_queue->running = 0;
+		pthread_mutex_unlock(&ctx->class_queue->lock);
+		return COOPER_ERR;
+	}
+	else
+		LOG_INFO("Class caching thread started");
+
 	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
 }
@@ -156,6 +179,24 @@ stop_all_threads(agent_context_t *ctx)
 
 		/* Cleanup shared memory */
 		cooper_shm_cleanup_agent(ctx->shm_ctx);
+	}
+
+	if (ctx->class_cache_thread)
+	{
+		if (ctx->class_queue)
+		{
+			/* Signal the queue to shutdown */
+			pthread_mutex_lock(&ctx->class_queue->lock);
+			ctx->class_queue->running = 0;
+			pthread_cond_broadcast(
+			    &ctx->class_queue->cond); /* Wake up waiting thread */
+			pthread_mutex_unlock(&ctx->class_queue->lock);
+		}
+		LOG_INFO("Waiting for class caching thread to terminate");
+		int res = safe_thread_join(ctx->class_cache_thread, 3);
+		if (res != 0)
+			LOG_WARN("Class caching thread did not terminate cleanly: %d",
+			         res);
 	}
 
 	LOG_INFO("All background threads stopped");

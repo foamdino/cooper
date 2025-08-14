@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
+#include "cooper_types.h"
 #include "arena.h"
 #include "arena_str.h"
 #include "log.h"
@@ -33,6 +34,10 @@
 #include "thread_util.h"
 #include "heap.h"
 #include "ht.h"
+// TODO remove this when refactoring complete
+//  #include "class_queue.h"
+//^--------------------
+#include "q.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x)        (void)(x)
@@ -52,6 +57,7 @@
 #define METRICS_ARENA_SZ     8 * 1024 * 1024
 #define SCRATCH_ARENA_SZ     16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
+#define Q_ENTRY_ARENA_SZ     2048 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS   1024
@@ -62,6 +68,7 @@
 #define METRICS_ARENA_BLOCKS     1024
 #define CLASS_CACHE_ARENA_BLOCKS 1024
 #define SCRATCH_ARENA_BLOCKS     1024
+#define Q_ENTRY_ARENA_BLOCKS     1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME   "exception_arena"
@@ -71,6 +78,7 @@
 #define METRICS_ARENA_NAME     "metrics_arena"
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
 #define SCRATCH_ARENA_NAME     "scratch_arena"
+#define Q_ENTRY_ARENA_NAME     "q_entry_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -83,6 +91,7 @@
 #define MIN_HASH_SIZE            1000
 #define MAX_HASH_SIZE            20000
 
+typedef struct package_filter package_filter_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
 typedef struct class_stats class_stats_t;
@@ -109,15 +118,8 @@ enum arenas
 	METRICS_ARENA_ID,
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
+	Q_ENTRY_ARENA_ID,
 	ARENA_ID__LAST
-};
-
-/* Metric flags for method sampling */
-enum metric_flags
-{
-	METRIC_FLAG_TIME   = (1 << 0), /* 1 */
-	METRIC_FLAG_MEMORY = (1 << 1), /* 2 */
-	METRIC_FLAG_CPU    = (1 << 2)  /* 4 */
 };
 
 enum thread_workers_status
@@ -125,7 +127,8 @@ enum thread_workers_status
 	EXPORT_RUNNING       = (1 << 0),
 	MEM_SAMPLING_RUNNING = (1 << 1),
 	SHM_EXPORT_RUNNING   = (1 << 2),
-	HEAP_STATS_RUNNING   = (1 << 3)
+	HEAP_STATS_RUNNING   = (1 << 3),
+	CLASS_CACHE_RUNNING  = (1 << 4)
 };
 
 /**
@@ -299,10 +302,10 @@ struct thread_id_mapping
 
 struct config
 {
-	int rate;
-	char **filters;
-	int num_filters;
-	char *sample_file_path;
+	int rate;                // TODO check if this is actually used
+	char **filters;          // TODO check if this is actually used
+	int num_filters;         // TODO check if this is actually used
+	char *sample_file_path;  // TODO check if this is actually used
 	char *export_method;     /**< only support file for now */
 	int mem_sample_interval; /**< Interval between taking mem samples */
 	int export_interval;     /**< export to file every 60 seconds */
@@ -310,27 +313,31 @@ struct config
 
 struct agent_context
 {
-	int event_counter;             /**< Counter for nth samples */
-	jvmtiEnv *jvmti_env;           /**< JVMTI environment */
-	JavaVM *jvm;                   /**< JVM itself */
-	jclass java_thread_class;      /**< Global reference for java.lang.Thread class */
-	jmethodID getId_method;        /**< Cached Thread.getId() method ID */
-	callbacks_t callbacks;         /**< Centralized callback structures */
-	char **method_filters;         /**< Method filter list */
-	int num_filters;               /**< Number of filters */
-	FILE *log_file;                /**< Log output file */
-	pthread_t log_thread;          /**< Logging thread */
-	pthread_t export_thread;       /**< Export thread */
-	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
-	pthread_t shm_export_thread;   /**< Export via shared mem thread */
-	pthread_t heap_stats_thread;   /**< Heap stats background thread */
-	pthread_mutex_t samples_lock;  /**< Lock for sample arrays */
+	int event_counter;        /**< Counter for nth samples */
+	jvmtiEnv *jvmti_env;      /**< JVMTI environment */
+	JavaVM *jvm;              /**< JVM itself */
+	jclass java_thread_class; /**< Global reference for java.lang.Thread class */
+	jmethodID getId_method;   /**< Cached Thread.getId() method ID */
+	callbacks_t callbacks;    /**< Centralized callback structures */
+	char **method_filters;    /**< Method filter list */
+	int num_filters;          /**< Number of filters */
+	package_filter_t package_filter; /**< Set of packages to look for */
+	FILE *log_file;                  /**< Log output file */
+	pthread_t log_thread;            /**< Logging thread */
+	pthread_t export_thread;         /**< Export background thread */
+	pthread_t mem_sampling_thread;   /**< Mem sampling background thread */
+	pthread_t shm_export_thread;     /**< Export via shared mem background thread */
+	pthread_t heap_stats_thread;     /**< Heap stats background thread */
+	pthread_t class_cache_thread;    /**< Class caching background thread */
+	pthread_mutex_t samples_lock;    /**< Lock for sample arrays */
 	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
 	config_t config;               /**< Agent configuration */
-	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
-	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
+	// class_q_t *class_queue;        /**< q for class caching background thread */
+	q_t *class_queue;                /**< q for class caching background thread */
+	arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
+	method_metrics_soa_t *metrics;   /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
 	thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
 	object_allocation_metrics_t
@@ -365,6 +372,7 @@ void *export_thread_func(void *arg);
 
 uint64_t get_current_time_ns();
 
+// TODO move these to cooper_thread_ instead of here
 /* Set a specific worker status bit */
 static inline void
 set_worker_status(unsigned int *status, unsigned int flag)
