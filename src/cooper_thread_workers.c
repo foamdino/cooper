@@ -1025,14 +1025,6 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 		goto deallocate;
 
-	/* Allocate the main class_info struct from the class cache arena */
-	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
-	if (info == NULL)
-		goto deallocate;
-
-	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
-	info->in_heap_iteration = 0;
-
 	/* Get all methods for the class */
 	jint method_count  = 0;
 	jmethodID *methods = NULL;
@@ -1041,47 +1033,54 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	if (err != JVMTI_ERROR_NONE)
 		goto deallocate;
 
+	/* We only care about classes with methods */
 	if (method_count == 0)
 		goto deallocate;
+
+	/* Allocate the main class_info struct from the class cache arena */
+	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
+	if (info == NULL)
+		goto deallocate;
+
+	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
+	info->in_heap_iteration = 0;
 
 	/* Allocate space for the method info array in the same arena */
 	info->methods      = arena_alloc(arena, sizeof(method_info_t) * method_count);
 	info->method_count = method_count;
 
-	if (info->methods != NULL)
+	/* If we are unable to allocate mem for methods,
+	free the class_info mem and stop processing this class */
+	if (!info->methods)
 	{
-		/* Loop through each method and cache its details */
-		for (int i = 0; i < method_count; i++)
-		{
-			char *method_name          = NULL;
-			char *method_sig           = NULL;
-			info->methods[i].method_id = methods[i];
-
-			if ((*jvmti_env)
-			        ->GetMethodName(jvmti_env,
-			                        methods[i],
-			                        &method_name,
-			                        &method_sig,
-			                        NULL)
-			    == JVMTI_ERROR_NONE)
-			{
-				/* Store arena-allocated copies of the names */
-				info->methods[i].method_name =
-				    arena_strdup(arena, method_name);
-				info->methods[i].method_signature =
-				    arena_strdup(arena, method_sig);
-
-				info->methods[i].sample_index = find_method_filter_index(
-				    ctx, class_sig, method_name, method_sig);
-
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_name);
-				(*jvmti_env)
-				    ->Deallocate(jvmti_env, (unsigned char *)method_sig);
-			}
-		}
+		arena_free(arena, info);
+		goto deallocate;
 	}
-	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
+
+	/* Loop through each method and cache its details */
+	for (int i = 0; i < method_count; i++)
+	{
+		char *method_name          = NULL;
+		char *method_sig           = NULL;
+		info->methods[i].method_id = methods[i];
+
+		/* Skip any method where we cannot get name */
+		if ((*jvmti_env)
+		        ->GetMethodName(
+			    jvmti_env, methods[i], &method_name, &method_sig, NULL)
+		    != JVMTI_ERROR_NONE)
+			continue;
+
+		/* Store arena-allocated copies of the names */
+		info->methods[i].method_name      = arena_strdup(arena, method_name);
+		info->methods[i].method_signature = arena_strdup(arena, method_sig);
+
+		info->methods[i].sample_index =
+		    find_method_filter_index(ctx, class_sig, method_name, method_sig);
+
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_name);
+		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_sig);
+	}
 
 	/* Set the tag */
 	jlong tag = (jlong)(intptr_t)info;
@@ -1091,6 +1090,7 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 
 deallocate:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)methods);
 }
 
 /* Thread functions */

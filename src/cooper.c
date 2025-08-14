@@ -14,21 +14,19 @@ static pthread_key_t context_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Arena configurations */
-static const arena_config_t arena_configs[] = {
-    {EXCEPTION_ARENA_ID,
-     EXCEPTION_ARENA_NAME,
-     EXCEPTION_ARENA_SZ,
-     EXCEPTION_ARENA_BLOCKS},
+/* clang-format off */
+static const arena_config_t arena_configs[] = 
+{
+    {EXCEPTION_ARENA_ID, EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
     {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
     {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
     {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {CLASS_CACHE_ARENA_ID,
-     CLASS_CACHE_ARENA_NAME,
-     CLASS_CACHE_ARENA_SZ,
-     CLASS_CACHE_ARENA_BLOCKS},
-    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS}};
+    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
+    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS}
+};
+/* clang-format on */
 
 /* Get current time in nanoseconds */
 uint64_t
@@ -320,7 +318,7 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 
 /**
  *
- * @return position in array of object allocation stats or -1 if no space left
+ * @return position in array of object allocation stats or -1 on failure
  */
 static int
 find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *class_sig)
@@ -2028,8 +2026,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	if (options && strstr(options, "loglevel=debug"))
 		current_log_level = LOG_LEVEL_DEBUG;
 
-	log_q_t *log_queue = malloc(sizeof(log_q_t));
-	// q_t *log_queue = calloc(1, sizeof(q_t));
+	q_t *log_queue = calloc(1, sizeof(q_t));
 
 	/*
 	  We initialise all the arenas we need in this function and we
@@ -2069,7 +2066,6 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
-	// class_q_t *class_queue = malloc(sizeof(class_q_t));
 	q_t *class_queue = calloc(1, sizeof(q_t));
 	if (q_init(class_queue) != COOPER_OK)
 	{

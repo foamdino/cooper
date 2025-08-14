@@ -7,9 +7,8 @@
 #ifndef Q_H
 #define Q_H
 
+#include <assert.h>
 #include <pthread.h>
-
-#include "log.h"
 
 #define Q_SZ 1024
 
@@ -19,7 +18,7 @@ typedef struct q q_t;
 
 enum q_entry_type
 {
-	Q_ENTRY_CLASS,
+	Q_ENTRY_CLASS = 1,
 	Q_ENTRY_LOG,
 	Q_ENTRY__LAST
 };
