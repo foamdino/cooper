@@ -34,9 +34,6 @@
 #include "thread_util.h"
 #include "heap.h"
 #include "ht.h"
-// TODO remove this when refactoring complete
-//  #include "class_queue.h"
-//^--------------------
 #include "q.h"
 
 /* Macro to tag callback function params that we don't use */

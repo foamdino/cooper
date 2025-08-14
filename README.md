@@ -36,19 +36,9 @@ java -agentpath:/home/kev/projects/async-profiler/build/lib/libasyncProfiler.so=
 * cleanup config file handling
 * add assertions where appropriate
 * add iterator to hashtable impl (maybe)
-* only scan packages declared in config file (leave full scan as an option as it is a great way of revealing issues)
 
 ## Next steps
 
-* update config format to allow for declaring interesting packages (filter out rest)
-```
-[packages]
-  # Only scan these packages (empty = scan all)
-  include = [
-      "Lcom/github/foamdino/",
-      "Lorg/springframework/"
-  ]
-```
 * call stack sampling:
 - use jvmtiEnv->GetStackTrace.
 - Can be sampled at intervals in a background thread (e.g. 100ms).

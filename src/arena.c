@@ -219,6 +219,7 @@ arena_free(arena_t *arena, void *ptr)
 {
 	assert(arena != NULL);
 
+	/* Nothing to do */
 	if (!ptr)
 		return 0;
 
@@ -227,10 +228,7 @@ arena_free(arena_t *arena, void *ptr)
 
 	/* Validate the header */
 	if (header->magic != ARENA_BLOCK_MAGIC)
-	{
-		/* Invalid pointer or corrupted memory */
 		return 0;
-	}
 
 	/* Check if we can track more free blocks */
 	if (arena->free_count >= arena->max_free_blocks)

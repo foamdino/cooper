@@ -8,8 +8,6 @@
 #define COOPER_THREAD_MANAGER_H
 
 #include <pthread.h>
-// TODO remove after debugging
-#include <signal.h>
 #include <string.h>
 #include <errno.h>
 

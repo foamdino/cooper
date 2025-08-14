@@ -886,7 +886,6 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 		LOG_ERROR("Heap iteration failed: %d", err);
 		goto cleanup_tags;
 	}
-
 	LOG_INFO("Heap iteration completed, processing %zu unique classes",
 	         iter_ctx.class_table->count);
 
@@ -904,46 +903,49 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			continue; /* Skip empty slots */
 
 		class_stats_t *stats = (class_stats_t *)entry->value;
-		if (stats->instance_count > 0)
+
+		if (stats->instance_count == 0)
+			continue; /* Nothing to do here */
+
+		processed++;
+
+		/* Only resolve names for potential top-N entries */
+		if (heap->size < TOP_N
+		    || stats->total_size
+		           > ((class_stats_t *)heap->elements[0])->total_size)
 		{
-			processed++;
-
-			/* Only resolve names for potential top-N entries */
-			if (heap->size < TOP_N
-			    || stats->total_size
-			           > ((class_stats_t *)heap->elements[0])->total_size)
+			class_stats_t *heap_entry =
+			    arena_alloc(scratch_arena, sizeof(class_stats_t));
+			if (!heap_entry)
 			{
-				class_stats_t *heap_entry =
-				    arena_alloc(scratch_arena, sizeof(class_stats_t));
-				if (!heap_entry)
-				{
-					LOG_WARN("Failed to allocate heap entry %zu", i);
-					continue;
-				}
+				LOG_WARN("Failed to allocate heap entry %zu", i);
+				continue;
+			}
 
-				/* Copy stats */
-				*heap_entry = *stats;
-				heap_entry->class_name =
-				    arena_strdup(scratch_arena, entry->key);
-				if (!heap_entry->class_name)
-					continue;
+			/* Copy stats */
+			*heap_entry            = *stats;
+			heap_entry->class_name = arena_strdup(scratch_arena, entry->key);
 
-				/* Insert into min heap */
-				if (!min_heap_insert_or_replace(heap, heap_entry))
-				{
-					LOG_DEBUG("Failed to insert into heap (likely "
-					          "not top-N)");
-				}
-				else
-				{
-					LOG_DEBUG(
-					    "Added to heap: %s (%llu instances, %llu "
-					    "bytes)",
-					    heap_entry->class_name,
-					    (unsigned long long)
-						heap_entry->instance_count,
-					    (unsigned long long)heap_entry->total_size);
-				}
+			if (!heap_entry->class_name)
+			{
+				/* Without a class name nothing to do */
+				arena_free(scratch_arena, heap_entry);
+				continue;
+			}
+
+			/* Insert into min heap */
+			if (!min_heap_insert_or_replace(heap, heap_entry))
+			{
+				LOG_DEBUG("Failed to insert into heap (likely "
+				          "not top-N)");
+			}
+			else
+			{
+				LOG_DEBUG("Added to heap: %s (%llu instances, %llu "
+				          "bytes)",
+				          heap_entry->class_name,
+				          (unsigned long long)heap_entry->instance_count,
+				          (unsigned long long)heap_entry->total_size);
 			}
 		}
 	}

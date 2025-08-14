@@ -1713,9 +1713,6 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 
 	LOG_INFO("Pre-caching %d loaded classes", class_count);
 
-	// TODO remove after debugging
-	int enqueued_count = 0;
-
 	for (int i = 0; i < class_count; i++)
 	{
 		/* Check if already tagged */
@@ -1730,15 +1727,13 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		    (*jvmti_env)
 			->GetClassSignature(jvmti_env, classes[i], &class_sig, NULL);
 
+		/* No class sig, we cannot process this one */
 		if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 			continue;
 
+		/* Class filtered out, skip processing */
 		if (!should_process_class(&global_ctx->package_filter, class_sig))
-		{
-			/* Class filtered out, skip processing */
-			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-			continue;
-		}
+			goto deallocate;
 
 		/* Create a global reference for the class */
 		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
@@ -1746,11 +1741,10 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		{
 			LOG_ERROR("Failed to create global reference for class: %s",
 			          class_sig);
-			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-			continue;
+			goto deallocate;
 		}
 
-		/* Class passed filter, enqueue for background processing */
+		/* Passed filter, enqueue for background processing */
 		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
 		q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 		class_q_entry_t *class_entry =
@@ -1759,12 +1753,12 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		if (!entry || !class_entry)
 		{
 			LOG_ERROR("Unable to allocate room from arena for q entries!");
-			(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
-			continue;
+			goto deallocate;
 		}
 
 		class_entry->class_sig = class_sig;
-		class_entry->klass     = global_class_ref;
+		/* Use the GLOBAL reference, not the local one */
+		class_entry->klass = global_class_ref;
 
 		entry->type = Q_ENTRY_CLASS;
 		entry->data = class_entry;
@@ -1778,27 +1772,10 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			arena_free(q_entry_arena, entry);
 			arena_free(q_entry_arena, class_entry);
 		}
-		else
-			enqueued_count++;
 
-		// /* Enqueue the GLOBAL reference, not the local one */
-		// if (class_queue_enqueue(
-		// 	global_ctx->class_queue, global_class_ref, class_sig)
-		//     != 0)
-		// {
-		// 	LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
-		// 	/* Clean up the global reference if we couldn't enqueue */
-		// 	(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-		// }
-		// else
-		// 	enqueued_count++;
-
+	deallocate:
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 	}
-
-	LOG_INFO("Successfully enqueued %d classes out of %d total",
-	         enqueued_count,
-	         class_count);
 
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)classes);
 	LOG_INFO("Completed pre-caching of loaded classes");
