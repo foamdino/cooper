@@ -55,6 +55,7 @@
 #define SCRATCH_ARENA_SZ     16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 #define Q_ENTRY_ARENA_SZ     2048 * 1024
+#define CALL_STACK_ARENA_SZ  64 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS   1024
@@ -66,6 +67,7 @@
 #define CLASS_CACHE_ARENA_BLOCKS 1024
 #define SCRATCH_ARENA_BLOCKS     1024
 #define Q_ENTRY_ARENA_BLOCKS     1024
+#define CALL_STACK_ARENA_BLOCKS  1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME   "exception_arena"
@@ -76,6 +78,7 @@
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
 #define SCRATCH_ARENA_NAME     "scratch_arena"
 #define Q_ENTRY_ARENA_NAME     "q_entry_arena"
+#define CALL_STACK_ARENA_NAME  "call_stack_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -88,9 +91,12 @@
 #define MIN_HASH_SIZE            1000
 #define MAX_HASH_SIZE            20000
 
+#define MAX_STACK_FRAMES         64
+
 typedef struct package_filter package_filter_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct call_stack_sample call_stack_sample_t;
 typedef struct class_stats class_stats_t;
 typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
@@ -116,6 +122,7 @@ enum arenas
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
 	Q_ENTRY_ARENA_ID,
+	CALL_STACK_ARENA_ID,
 	ARENA_ID__LAST
 };
 
@@ -125,7 +132,16 @@ enum thread_workers_status
 	MEM_SAMPLING_RUNNING = (1 << 1),
 	SHM_EXPORT_RUNNING   = (1 << 2),
 	HEAP_STATS_RUNNING   = (1 << 3),
-	CLASS_CACHE_RUNNING  = (1 << 4)
+	CLASS_CACHE_RUNNING  = (1 << 4),
+	CALL_STACK_RUNNNG    = (1 << 5)
+};
+
+struct call_stack_sample
+{
+	uint64_t timestamp_ns;              /**< sample time */
+	jlong thread_id;                    /**< Java thread ID */
+	int frame_count;                    /**< number of captured frames */
+	jmethodID frames[MAX_STACK_FRAMES]; /**< top-of-stack first */
 };
 
 /**
@@ -158,6 +174,8 @@ struct method_metrics_soa
 
 	/* CPU metrics */
 	uint64_t *cpu_cycles; /**< CPU cycles used */
+
+	uint64_t *call_sample_counts; /**< Call stack sample counts */
 
 	/* Flags for which metrics are collected for each method */
 	unsigned int *metric_flags;
@@ -326,7 +344,8 @@ struct agent_context
 	pthread_t shm_export_thread;     /**< Export via shared mem background thread */
 	pthread_t heap_stats_thread;     /**< Heap stats background thread */
 	pthread_t class_cache_thread;    /**< Class caching background thread */
-	pthread_mutex_t samples_lock;    /**< Lock for sample arrays */
+	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
+	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
 	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
