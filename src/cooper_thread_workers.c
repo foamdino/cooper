@@ -853,10 +853,6 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 		goto cleanup_classes;
 	}
 
-	// TODO remove these after debugging
-	int tagged_count = 0;
-	int marked_count = 0;
-
 	/* Tag classes for heap iteration */
 	for (int i = 0; i < class_count; i++)
 	{
@@ -865,17 +861,10 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 		if (tag != 0)
 		{
-			tagged_count++;
 			class_info_t *info      = (class_info_t *)(intptr_t)tag;
 			info->in_heap_iteration = 1;
-			marked_count++;
 		}
 	}
-
-	LOG_INFO("Found %d tagged classes out of %d total, marked %d for iteration",
-	         tagged_count,
-	         class_count,
-	         marked_count);
 
 	/* Use centralized heap callbacks */
 	LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
