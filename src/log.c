@@ -67,7 +67,6 @@ init_log_system(q_t *queue, arena_t *arena, FILE *log_file)
 	assert(queue != NULL);
 
 	/* Initialize the queue */
-	// TODO move this running flag into the worker status flags
 	queue->running = 1;
 
 	int err = q_init(queue);

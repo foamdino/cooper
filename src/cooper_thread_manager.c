@@ -92,11 +92,7 @@ start_all_threads(agent_context_t *ctx)
 
 	/* Start class caching background thread */
 	set_worker_status(&ctx->worker_statuses, CLASS_CACHE_RUNNING);
-	// TODO use atomic?
-	// simplify when extract queue from log/class_queue code
-	pthread_mutex_lock(&ctx->class_queue->lock);
 	ctx->class_queue->running = 1;
-	pthread_mutex_unlock(&ctx->class_queue->lock);
 
 	LOG_INFO("Creating class cache thread...");
 	if (pthread_create(&ctx->class_cache_thread, NULL, class_cache_thread_func, ctx)
@@ -104,9 +100,7 @@ start_all_threads(agent_context_t *ctx)
 	{
 		LOG_ERROR("Failed to start class caching thread: %s", strerror(errno));
 		clear_worker_status(&ctx->worker_statuses, CLASS_CACHE_RUNNING);
-		pthread_mutex_lock(&ctx->class_queue->lock);
 		ctx->class_queue->running = 0;
-		pthread_mutex_unlock(&ctx->class_queue->lock);
 		return COOPER_ERR;
 	}
 	else

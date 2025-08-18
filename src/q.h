@@ -37,7 +37,6 @@ struct q
 	int count;
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
-	// TODO Do we need this flag?
 	int running;
 };
 
