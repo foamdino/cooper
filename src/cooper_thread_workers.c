@@ -1392,3 +1392,109 @@ class_cache_thread_func(void *arg)
 	LOG_INFO("Class cache thread exiting, processed %d classes", classes_processed);
 	return NULL;
 }
+
+/**
+ *
+ */
+void *
+call_stack_sampling_thread_func(void *arg)
+{
+	agent_context_t *ctx = (agent_context_t *)arg;
+	jvmtiEnv *jvmti      = ctx->jvmti_env;
+
+	/* Get JNI environment for this thread */
+	JNIEnv *jni = NULL;
+	jint res =
+	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
+	if (res != JNI_OK || jni == NULL)
+	{
+		LOG_ERROR("Failed to attach call stack sampling thread to JVM");
+		return NULL;
+	}
+
+	arena_t *arena = ctx->arenas[CALL_STACK_ARENA_ID];
+
+	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
+	{
+		// sleep for configured interval
+		// usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
+		usleep(100 * 1000); // TODO move this to config - right now 100ms seems
+		                    // reasonable
+
+		// 1. Get all threads
+		jint thread_count = 0;
+		jthread *threads  = NULL;
+		if ((*jvmti)->GetAllThreads(jvmti, &thread_count, &threads)
+		    != JVMTI_ERROR_NONE)
+			continue;
+
+		uint64_t now = get_current_time_ns();
+
+		for (int i = 0; i < thread_count; i++)
+		{
+			jvmtiFrameInfo frames[MAX_STACK_FRAMES];
+			jint count = 0;
+
+			if ((*jvmti)->GetStackTrace(
+				jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count)
+			        == JVMTI_ERROR_NONE
+			    && count > 0)
+			{
+				// 2. Allocate sample
+
+				call_stack_sample_t *sample =
+				    arena_alloc(arena, sizeof(call_stack_sample_t));
+				if (!sample)
+					continue;
+
+				sample->timestamp_ns = now;
+				sample->frame_count  = count;
+
+				// get thread id (cached Thread.getId)
+				jlong tid = (*jni)->CallLongMethod(
+				    jni, threads[i], ctx->getId_method);
+				sample->thread_id = tid;
+
+				for (int f = 0; f < count; f++)
+					sample->frames[f] = frames[f].method;
+
+				// 3. Optional: aggregate immediately
+				for (int f = 0; f < count; f++)
+				{
+					jmethodID mid = sample->frames[f];
+
+					// find cached info
+					jclass declaring_class;
+					(*jvmti)->GetMethodDeclaringClass(
+					    jvmti, mid, &declaring_class);
+
+					jlong tag;
+					(*jvmti)->GetTag(jvmti, declaring_class, &tag);
+					if (tag == 0)
+						continue;
+
+					class_info_t *info =
+					    (class_info_t *)(intptr_t)tag;
+					for (uint32_t m = 0; m < info->method_count; m++)
+					{
+						if (info->methods[m].method_id == mid
+						    && info->methods[m].sample_index >= 0)
+						{
+							__atomic_add_fetch(
+							    &ctx->metrics
+								 ->call_sample_counts
+								     [info->methods[m]
+							                  .sample_index],
+							    1,
+							    __ATOMIC_RELAXED);
+						}
+					}
+				}
+			}
+		}
+
+		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);
+	}
+
+	return NULL;
+}
