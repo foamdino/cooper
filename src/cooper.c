@@ -224,8 +224,8 @@ record_method_execution(agent_context_t *ctx,
 		return;
 	}
 
-	/* Update sample count */
-	__atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
+	// /* Update sample count */
+	// __atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
 
 	/* Update timing metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
@@ -265,12 +265,12 @@ record_method_execution(agent_context_t *ctx,
 		__atomic_add_fetch(
 		    &metrics->cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
 
-	LOG_DEBUG(
-	    "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
-	    method_index,
-	    (unsigned long)metrics->sample_counts[method_index],
-	    (unsigned long)metrics->total_time_ns[method_index],
-	    (unsigned long)metrics->alloc_bytes[method_index]);
+	// LOG_DEBUG(
+	//     "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
+	//     method_index,
+	//     (unsigned long)metrics->sample_counts[method_index],
+	//     (unsigned long)metrics->total_time_ns[method_index],
+	//     (unsigned long)metrics->alloc_bytes[method_index]);
 }
 
 static object_allocation_metrics_t *
@@ -753,12 +753,12 @@ method_exit_callback(jvmtiEnv *jvmti,
 	if (!context)
 		return;
 
-	if (!context->sample || context->sample->method_index < 0)
-	{
-		LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
-		          context,
-		          context->sample);
-	}
+	// if (!context->sample || context->sample->method_index < 0)
+	// {
+	// 	LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
+	// 	          context,
+	// 	          context->sample);
+	// }
 
 	/* We need to look in our stack to find a corresponding method entry
 	Note that the JVM doesn't guarantee ordering of method entry/exits for a variety
@@ -1659,8 +1659,8 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 	    arena_alloc_aligned(arena, initial_capacity * sizeof(int), CACHE_LINE_SZ);
 	metrics->call_counts = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
-	metrics->sample_counts = arena_alloc_aligned(
-	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+	// metrics->sample_counts = arena_alloc_aligned(
+	//     arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->total_time_ns = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->min_time_ns = arena_alloc_aligned(
@@ -1673,14 +1673,18 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->cpu_cycles = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+	metrics->call_sample_counts = arena_alloc_aligned(
+	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->metric_flags = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(unsigned int), CACHE_LINE_SZ);
 
 	/* Check if all allocations succeeded */
-	if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts
-	    || !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns
-	    || !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory
-	    || !metrics->cpu_cycles || !metrics->metric_flags)
+	if (!metrics->signatures || !metrics->sample_rates
+	    || !metrics->call_counts
+	    /*|| !metrics->sample_counts*/
+	    || !metrics->total_time_ns || !metrics->min_time_ns || !metrics->max_time_ns
+	    || !metrics->alloc_bytes || !metrics->peak_memory || !metrics->cpu_cycles
+	    || !metrics->call_sample_counts || !metrics->metric_flags)
 	{
 		return NULL;
 	}

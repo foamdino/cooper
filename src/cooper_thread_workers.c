@@ -275,27 +275,29 @@ export_to_file(agent_context_t *ctx)
 		{
 			/* Calculate avg time if samples exist */
 			uint64_t avg_time = 0;
-			if (ctx->metrics->sample_counts[i] > 0)
-				avg_time = ctx->metrics->total_time_ns[i]
-				           / ctx->metrics->sample_counts[i];
+			// if (ctx->metrics->sample_counts[i] > 0)
+			// 	avg_time = ctx->metrics->total_time_ns[i]
+			// 	           / ctx->metrics->sample_counts[i];
 
 			total_calls += ctx->metrics->call_counts[i];
-			total_samples += ctx->metrics->sample_counts[i];
+			// total_samples += ctx->metrics->sample_counts[i];
 
 			/* Debug output to verify each method's metrics */
 			LOG_DEBUG("Method[%zu]: %s, calls=%lu, samples=%lu, time=%lu\n",
 			          i,
 			          ctx->metrics->signatures[i],
 			          (unsigned long)ctx->metrics->call_counts[i],
-			          (unsigned long)ctx->metrics->sample_counts[i],
+			          0,
+			          //   (unsigned long)ctx->metrics->sample_counts[i],
 			          (unsigned long)ctx->metrics->total_time_ns[i]);
 
 			/* Print out the details */
 			fprintf(fp,
-			        "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+			        "%s,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
 			        ctx->metrics->signatures[i],
 			        (unsigned long)ctx->metrics->call_counts[i],
-			        (unsigned long)ctx->metrics->sample_counts[i],
+			        0,
+			        // (unsigned long)ctx->metrics->sample_counts[i],
 			        (unsigned long)ctx->metrics->total_time_ns[i],
 			        (unsigned long)avg_time,
 			        (unsigned long)(ctx->metrics->min_time_ns[i] == UINT64_MAX
@@ -377,8 +379,8 @@ export_method_to_shm(agent_context_t *ctx)
 			method_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
 
 			/* Direct field assignment */
-			method_data.call_count    = ctx->metrics->call_counts[i];
-			method_data.sample_count  = ctx->metrics->sample_counts[i];
+			method_data.call_count = ctx->metrics->call_counts[i];
+			// method_data.sample_count  = ctx->metrics->sample_counts[i];
 			method_data.total_time_ns = ctx->metrics->total_time_ns[i];
 			method_data.min_time_ns   = ctx->metrics->min_time_ns[i];
 			method_data.max_time_ns   = ctx->metrics->max_time_ns[i];
@@ -1401,6 +1403,8 @@ call_stack_sampling_thread_func(void *arg)
 {
 	agent_context_t *ctx = (agent_context_t *)arg;
 	jvmtiEnv *jvmti      = ctx->jvmti_env;
+	jvmtiPhase jvm_phase;
+	jvmtiError err;
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -1413,84 +1417,123 @@ call_stack_sampling_thread_func(void *arg)
 	}
 
 	arena_t *arena = ctx->arenas[CALL_STACK_ARENA_ID];
+	if (!arena)
+	{
+		LOG_ERROR("Call stack arena is not initialised");
+		return NULL;
+	}
 
 	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
 	{
+		// err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+		// if (err != JVMTI_ERROR_NONE)
+		// {
+		// 	LOG_ERROR("Error getting JVM phase in call stack sampling thread:
+		// %d", 	          err);
+		// 	// goto cleanup;
+		// 	sleep(10);
+		// 	continue;
+		// }
+
+		// if (jvm_phase != JVMTI_PHASE_LIVE)
+		// {
+		// 	LOG_INFO(
+		// 	    "JVM not in live phase, skipping call stack sampling");
+		// 	sleep(10);
+		// 	continue;
+		// }
+
 		// sleep for configured interval
 		// usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
-		usleep(100 * 1000); // TODO move this to config - right now 100ms seems
-		                    // reasonable
+		usleep(10000); // TODO move this to config - right now 100ms seems
+		               // reasonable
 
-		// 1. Get all threads
+		/* Get all threads */
 		jint thread_count = 0;
 		jthread *threads  = NULL;
 		if ((*jvmti)->GetAllThreads(jvmti, &thread_count, &threads)
 		    != JVMTI_ERROR_NONE)
 			continue;
 
+		/* We get the time before looping so that all the samples
+		are taken "at the same time"...
+		*/
 		uint64_t now = get_current_time_ns();
+		jvmtiFrameInfo frames[MAX_STACK_FRAMES];
 
 		for (int i = 0; i < thread_count; i++)
 		{
-			jvmtiFrameInfo frames[MAX_STACK_FRAMES];
 			jint count = 0;
 
+			/* If we cannot get the stack trace or count we just continue */
 			if ((*jvmti)->GetStackTrace(
 				jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count)
-			        == JVMTI_ERROR_NONE
-			    && count > 0)
-			{
-				// 2. Allocate sample
+			    != JVMTI_ERROR_NONE)
+				continue;
 
-				call_stack_sample_t *sample =
-				    arena_alloc(arena, sizeof(call_stack_sample_t));
-				if (!sample)
-					continue;
+			if (count == 0)
+				continue;
 
-				sample->timestamp_ns = now;
-				sample->frame_count  = count;
+			// if ((*jvmti)->GetStackTrace(
+			// 	jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count)
+			//         == JVMTI_ERROR_NONE
+			//     && count > 0)
+			// {
+			/* Allocate sample */
 
-				// get thread id (cached Thread.getId)
-				jlong tid = (*jni)->CallLongMethod(
-				    jni, threads[i], ctx->getId_method);
-				sample->thread_id = tid;
+			// LOG_INFO("Before alloc sample");
 
-				for (int f = 0; f < count; f++)
-					sample->frames[f] = frames[f].method;
+			// call_stack_sample_t *sample =
+			// 	arena_alloc(arena, sizeof(call_stack_sample_t));
 
-				// 3. Optional: aggregate immediately
-				for (int f = 0; f < count; f++)
-				{
-					jmethodID mid = sample->frames[f];
+			// LOG_INFO("After alloc sample %p", sample);
+			// if (!sample)
+			// 	continue;
 
-					// find cached info
-					jclass declaring_class;
-					(*jvmti)->GetMethodDeclaringClass(
-					    jvmti, mid, &declaring_class);
+			// sample->timestamp_ns = now;
+			// sample->frame_count  = count;
 
-					jlong tag;
-					(*jvmti)->GetTag(jvmti, declaring_class, &tag);
-					if (tag == 0)
-						continue;
+			// // get thread id (cached Thread.getId)
+			// jlong tid = (*jni)->CallLongMethod(
+			// 	jni, threads[i], ctx->getId_method);
+			// sample->thread_id = tid;
 
-					class_info_t *info =
-					    (class_info_t *)(intptr_t)tag;
-					for (uint32_t m = 0; m < info->method_count; m++)
-					{
-						if (info->methods[m].method_id == mid
-						    && info->methods[m].sample_index >= 0)
-						{
-							__atomic_add_fetch(
-							    &ctx->metrics
-								 ->call_sample_counts
-								     [info->methods[m]
-							                  .sample_index],
-							    1,
-							    __ATOMIC_RELAXED);
-						}
-					}
-				}
-			}
+			// for (int f = 0; f < count; f++)
+			// 	sample->frames[f] = frames[f].method;
+
+			// // 3. Optional: aggregate immediately
+			// for (int f = 0; f < count; f++)
+			// {
+			// 	jmethodID mid = sample->frames[f];
+
+			// 	// find cached info
+			// 	jclass declaring_class;
+			// 	(*jvmti)->GetMethodDeclaringClass(
+			// 		jvmti, mid, &declaring_class);
+
+			// 	jlong tag;
+			// 	(*jvmti)->GetTag(jvmti, declaring_class, &tag);
+			// 	if (tag == 0)
+			// 		continue;
+
+			// 	class_info_t *info =
+			// 		(class_info_t *)(intptr_t)tag;
+			// 	for (uint32_t m = 0; m < info->method_count; m++)
+			// 	{
+			// 		if (info->methods[m].method_id == mid
+			// 			&& info->methods[m].sample_index >= 0)
+			// 		{
+			// 			__atomic_add_fetch(
+			// 				&ctx->metrics
+			// 					->call_sample_counts
+			// 						[info->methods[m]
+			// 								.sample_index],
+			// 				1,
+			// 				__ATOMIC_RELAXED);
+			// 		}
+			// 	}
+			// }
+			// }
 		}
 
 		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);

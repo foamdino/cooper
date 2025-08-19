@@ -127,6 +127,28 @@ arena_alloc(arena_t *arena, size_t sz)
 		{
 			void *block = arena->free_blocks[i];
 
+			// #ifdef ENABLE_DEBUG_LOGS
+			/* DIAGNOSTIC: check that block looks like a header */
+			block_header_t *hdr = (block_header_t *)block;
+			if (hdr->magic != ARENA_BLOCK_MAGIC)
+			{
+				fprintf(stderr,
+				        "arena_alloc: BAD HEADER MAGIC! block=%p "
+				        "free_count=%zu used=%zu total=%zu\n",
+				        block,
+				        arena->free_count,
+				        arena->used,
+				        arena->total_sz);
+				/* dump a few entries for debugging */
+				for (size_t j = 0; j < arena->free_count; ++j)
+					fprintf(stderr,
+					        " free[%zu]=%p size=%zu\n",
+					        j,
+					        arena->free_blocks[j],
+					        arena->block_sizes[j]);
+				abort(); /* fail fast with diagnostics */
+			}
+			// #endif
 			/* Remove this block from free list by moving the last one here */
 			arena->free_blocks[i] = arena->free_blocks[arena->free_count - 1];
 			arena->block_sizes[i] = arena->block_sizes[arena->free_count - 1];
@@ -151,6 +173,16 @@ arena_alloc(arena_t *arena, size_t sz)
 
 	void *block = (char *)arena->memory + arena->used;
 	arena->used += total_size;
+
+	if (arena->used > arena->total_sz - total_size)
+	{
+		fprintf(stderr,
+		        "arena_alloc: out of memory: used=%zu total=%zu need=%zu\n",
+		        arena->used,
+		        arena->total_sz,
+		        total_size);
+		return NULL;
+	}
 
 	/* Initialize block header */
 	block_header_t *header = (block_header_t *)block;

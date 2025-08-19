@@ -160,8 +160,8 @@ struct method_metrics_soa
 	int *sample_rates; /**< Configured sample rate for each method */
 
 	/* Counters */
-	uint64_t *call_counts;   /**< Number of times each method has been called */
-	uint64_t *sample_counts; /**< Number of times each method has been sampled */
+	uint64_t *call_counts; /**< Number of times each method has been called */
+	// uint64_t *sample_counts; /**< Number of times each method has been sampled */
 
 	/* Timing metrics */
 	uint64_t *total_time_ns; /**< Total execution time in nanoseconds */

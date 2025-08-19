@@ -10,7 +10,7 @@
 #include <assert.h>
 #include <pthread.h>
 
-#define Q_SZ 1024
+#define Q_SZ 4096
 
 typedef enum q_entry_type q_entry_type_e;
 typedef struct q_entry q_entry_t;
@@ -31,7 +31,7 @@ struct q_entry
 
 struct q
 {
-	q_entry_t entries[Q_SZ];
+	q_entry_t *entries[Q_SZ];
 	int hd;
 	int tl;
 	int count;

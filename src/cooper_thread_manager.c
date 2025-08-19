@@ -106,22 +106,22 @@ start_all_threads(agent_context_t *ctx)
 	else
 		LOG_INFO("Class caching thread started");
 
-	/* Start background call stack sampling thread */
-	set_worker_status(&ctx->worker_statuses, CALL_STACK_RUNNNG);
-	LOG_INFO("Creating call stack sampling thread...");
-	if (pthread_create(&ctx->call_stack_sample_thread,
-	                   NULL,
-	                   call_stack_sampling_thread_func,
-	                   ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start call stack sampling thread: %s",
-		          strerror(errno));
-		clear_worker_status(&ctx->worker_statuses, CALL_STACK_RUNNNG);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Call stack sampling thread started");
+	// /* Start background call stack sampling thread */
+	// set_worker_status(&ctx->worker_statuses, CALL_STACK_RUNNNG);
+	// LOG_INFO("Creating call stack sampling thread...");
+	// if (pthread_create(&ctx->call_stack_sample_thread,
+	//                    NULL,
+	//                    call_stack_sampling_thread_func,
+	//                    ctx)
+	//     != 0)
+	// {
+	// 	LOG_ERROR("Failed to start call stack sampling thread: %s",
+	// 	          strerror(errno));
+	// 	clear_worker_status(&ctx->worker_statuses, CALL_STACK_RUNNNG);
+	// 	return COOPER_ERR;
+	// }
+	// else
+	// 	LOG_INFO("Call stack sampling thread started");
 
 	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
@@ -146,6 +146,17 @@ stop_all_threads(agent_context_t *ctx)
 	/* Signal all threads to stop */
 	/* Zero all flag/bits */
 	ctx->worker_statuses = 0;
+
+	LOG_INFO("Stopping call stack sampling thread");
+	if (ctx->call_stack_sample_thread)
+	{
+		LOG_INFO("Waiting for call stack sampling thread to terminate");
+		int res = safe_thread_join(ctx->call_stack_sample_thread, 3);
+		if (res != 0)
+			LOG_WARN(
+			    "Call stack sampling thread did not terminate cleanly: %d",
+			    res);
+	}
 
 	/* Wait for export thread */
 	if (ctx->export_thread)
@@ -209,16 +220,4 @@ stop_all_threads(agent_context_t *ctx)
 			LOG_WARN("Class caching thread did not terminate cleanly: %d",
 			         res);
 	}
-
-	if (ctx->call_stack_sample_thread)
-	{
-		LOG_INFO("Waiting for call stack sampling thread to terminate");
-		int res = safe_thread_join(ctx->call_stack_sample_thread, 3);
-		if (res != 0)
-			LOG_WARN(
-			    "Call stack sampling thread did not terminate cleanly: %d",
-			    res);
-	}
-
-	LOG_INFO("All background threads stopped");
 }
