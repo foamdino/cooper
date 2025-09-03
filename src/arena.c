@@ -166,8 +166,9 @@ arena_alloc(arena_t *arena, size_t sz)
 	if (arena->used + req_size > arena->total_sz)
 	{
 		fprintf(stderr,
-		        "arena_alloc: insufficient space: need=%zu available=%zu "
+		        "arena_alloc: insufficient space in %s: need=%zu available=%zu "
 		        "used=%zu total=%zu free_blocks=%zu\n",
+		        arena->name,
 		        req_size,
 		        arena->total_sz - arena->used,
 		        arena->used,

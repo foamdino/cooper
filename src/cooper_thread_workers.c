@@ -1169,7 +1169,6 @@ mem_sampling_thread_func(void *arg)
 	JNIEnv *jni = NULL;
 	jvmtiError err;
 	jvmtiPhase jvm_phase;
-	int mem_thread_attached = 0;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1181,7 +1180,6 @@ mem_sampling_thread_func(void *arg)
 		return NULL;
 	}
 
-	mem_thread_attached = 1;
 	LOG_INFO("Memory sampling thread successfully attached to JVM");
 
 	while (check_worker_status(ctx->worker_statuses, MEM_SAMPLING_RUNNING))
@@ -1236,15 +1234,10 @@ mem_sampling_thread_func(void *arg)
 		sleep(ctx->config.mem_sample_interval);
 	}
 
-	/* Cannot detach thread when not attached.. */
-	if (mem_thread_attached)
-	{
-		/* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
-		if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase)
-		        == JVMTI_ERROR_NONE
-		    && jvm_phase == JVMTI_PHASE_LIVE)
-			(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
-	}
+	/* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Memory sampling thread terminated\n");
 	return NULL;
@@ -1263,7 +1256,6 @@ heap_stats_thread_func(void *arg)
 	JNIEnv *jni = NULL;
 	jvmtiError err;
 	jvmtiPhase jvm_phase;
-	int heap_thread_attached = 0;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1275,7 +1267,6 @@ heap_stats_thread_func(void *arg)
 		return NULL;
 	}
 
-	heap_thread_attached = 1;
 	LOG_INFO("Heap statistics thread successfully attached to JVM");
 
 	// TODO extract sleep interval to config
@@ -1300,20 +1291,16 @@ heap_stats_thread_func(void *arg)
 		}
 
 		/* Collect heap statistics */
-		LOG_INFO("Heap statistics collection starting...");
 		collect_heap_statistics(ctx, jni);
 
 		/* Sleep for 60 seconds between collections */
 		sleep(60);
 	}
 
-	/* Detach from JVM if we were attached and JVM is still live */
-	if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE
-	    && jvm_phase == JVMTI_PHASE_LIVE)
-	{
-		if (heap_thread_attached)
-			(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
-	}
+	/* Detach from JVM if JVM is still live */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Heap statistics thread terminated\n");
 	return NULL;
@@ -1333,6 +1320,9 @@ class_cache_thread_func(void *arg)
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
+	jvmtiError err;
+	jvmtiPhase jvm_phase;
+
 	jint res =
 	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
 	if (res != JNI_OK || jni == NULL)
@@ -1375,7 +1365,9 @@ class_cache_thread_func(void *arg)
 	}
 
 	/* Detach from JVM */
-	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Class cache thread exiting, processed %d classes", classes_processed);
 	return NULL;
@@ -1411,23 +1403,23 @@ call_stack_sampling_thread_func(void *arg)
 
 	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
 	{
-		// err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		// if (err != JVMTI_ERROR_NONE)
-		// {
-		// 	LOG_ERROR("Error getting JVM phase in call stack sampling thread:
-		// %d", 	          err);
-		// 	// goto cleanup;
-		// 	sleep(10);
-		// 	continue;
-		// }
+		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+		if (err != JVMTI_ERROR_NONE)
+		{
+			LOG_ERROR(
+			    "Error getting JVM phase in call stack sampling thread: %d",
+			    err);
+			// goto cleanup;
+			sleep(10);
+			continue;
+		}
 
-		// if (jvm_phase != JVMTI_PHASE_LIVE)
-		// {
-		// 	LOG_INFO(
-		// 	    "JVM not in live phase, skipping call stack sampling");
-		// 	sleep(10);
-		// 	continue;
-		// }
+		if (jvm_phase != JVMTI_PHASE_LIVE)
+		{
+			LOG_INFO("JVM not in live phase, skipping call stack sampling");
+			sleep(10);
+			continue;
+		}
 
 		// sleep for configured interval
 		// usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
@@ -1437,8 +1429,8 @@ call_stack_sampling_thread_func(void *arg)
 		/* Get all threads */
 		jint thread_count = 0;
 		jthread *threads  = NULL;
-		if ((*jvmti)->GetAllThreads(jvmti, &thread_count, &threads)
-		    != JVMTI_ERROR_NONE)
+		err = (*jvmti)->GetAllThreads(jvmti, &thread_count, &threads);
+		if (err != JVMTI_ERROR_NONE)
 			continue;
 
 		/* We get the time before looping so that all the samples
@@ -1452,74 +1444,71 @@ call_stack_sampling_thread_func(void *arg)
 			jint count = 0;
 
 			/* If we cannot get the stack trace or count we just continue */
-			if ((*jvmti)->GetStackTrace(
-				jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count)
-			    != JVMTI_ERROR_NONE)
+			err = (*jvmti)->GetStackTrace(
+			    jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count);
+			if (err != JVMTI_ERROR_NONE)
 				continue;
 
 			if (count == 0)
 				continue;
 
-			// if ((*jvmti)->GetStackTrace(
-			// 	jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count)
-			//         == JVMTI_ERROR_NONE
-			//     && count > 0)
-			// {
-			/* Allocate sample */
+			err = (*jvmti)->GetStackTrace(
+			    jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count);
+			if (err == JVMTI_ERROR_NONE && count > 0)
+			{
+				/* Allocate sample */
+				call_stack_sample_t *sample =
+				    arena_alloc(arena, sizeof(call_stack_sample_t));
+				if (!sample)
+					continue;
 
-			// LOG_INFO("Before alloc sample");
+				sample->timestamp_ns = now;
+				sample->frame_count  = count;
 
-			// call_stack_sample_t *sample =
-			// 	arena_alloc(arena, sizeof(call_stack_sample_t));
+				// get thread id (cached Thread.getId)
+				jlong tid = (*jni)->CallLongMethod(
+				    jni, threads[i], ctx->getId_method);
+				sample->thread_id = tid;
 
-			// LOG_INFO("After alloc sample %p", sample);
-			// if (!sample)
-			// 	continue;
+				for (int f = 0; f < count; f++)
+					sample->frames[f] = frames[f].method;
 
-			// sample->timestamp_ns = now;
-			// sample->frame_count  = count;
+				for (int f = 0; f < count; f++)
+				{
+					jmethodID mid = sample->frames[f];
 
-			// // get thread id (cached Thread.getId)
-			// jlong tid = (*jni)->CallLongMethod(
-			// 	jni, threads[i], ctx->getId_method);
-			// sample->thread_id = tid;
+					// find cached info
+					jclass declaring_class;
+					(*jvmti)->GetMethodDeclaringClass(
+					    jvmti, mid, &declaring_class);
 
-			// for (int f = 0; f < count; f++)
-			// 	sample->frames[f] = frames[f].method;
+					jlong tag;
+					(*jvmti)->GetTag(jvmti, declaring_class, &tag);
+					if (tag == 0)
+						continue;
 
-			// // 3. Optional: aggregate immediately
-			// for (int f = 0; f < count; f++)
-			// {
-			// 	jmethodID mid = sample->frames[f];
+					class_info_t *info =
+					    (class_info_t *)(intptr_t)tag;
 
-			// 	// find cached info
-			// 	jclass declaring_class;
-			// 	(*jvmti)->GetMethodDeclaringClass(
-			// 		jvmti, mid, &declaring_class);
+					/* linear search */
+					for (uint32_t m = 0; m < info->method_count; m++)
+					{
+						if (info->methods[m].method_id == mid
+						    && info->methods[m].sample_index >= 0)
+						{
+							__atomic_add_fetch(
+							    &ctx->metrics
+								 ->call_sample_counts
+								     [info->methods[m]
+							                  .sample_index],
+							    1,
+							    __ATOMIC_RELAXED);
+						}
+					}
+				}
 
-			// 	jlong tag;
-			// 	(*jvmti)->GetTag(jvmti, declaring_class, &tag);
-			// 	if (tag == 0)
-			// 		continue;
-
-			// 	class_info_t *info =
-			// 		(class_info_t *)(intptr_t)tag;
-			// 	for (uint32_t m = 0; m < info->method_count; m++)
-			// 	{
-			// 		if (info->methods[m].method_id == mid
-			// 			&& info->methods[m].sample_index >= 0)
-			// 		{
-			// 			__atomic_add_fetch(
-			// 				&ctx->metrics
-			// 					->call_sample_counts
-			// 						[info->methods[m]
-			// 								.sample_index],
-			// 				1,
-			// 				__ATOMIC_RELAXED);
-			// 		}
-			// 	}
-			// }
-			// }
+				arena_free(arena, sample);
+			}
 		}
 
 		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);
