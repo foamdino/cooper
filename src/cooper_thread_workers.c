@@ -1373,6 +1373,7 @@ class_cache_thread_func(void *arg)
 	return NULL;
 }
 
+// TODO adjust this to use a ringbuffer when ready.
 /**
  *
  */
@@ -1383,6 +1384,9 @@ call_stack_sampling_thread_func(void *arg)
 	jvmtiEnv *jvmti      = ctx->jvmti_env;
 	jvmtiPhase jvm_phase;
 	jvmtiError err;
+
+	// TODO quick return until we get the ringbuffer sorted
+	//  return NULL;
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -1446,68 +1450,55 @@ call_stack_sampling_thread_func(void *arg)
 			/* If we cannot get the stack trace or count we just continue */
 			err = (*jvmti)->GetStackTrace(
 			    jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count);
-			if (err != JVMTI_ERROR_NONE)
+			if (err != JVMTI_ERROR_NONE || count == 0)
 				continue;
 
-			if (count == 0)
+			/* Allocate sample */
+			call_stack_sample_t *sample =
+			    arena_alloc(arena, sizeof(call_stack_sample_t));
+			if (!sample)
 				continue;
 
-			err = (*jvmti)->GetStackTrace(
-			    jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count);
-			if (err == JVMTI_ERROR_NONE && count > 0)
+			sample->timestamp_ns = now;
+			sample->frame_count  = count;
+
+			// get thread id (cached Thread.getId)
+			jlong tid =
+			    (*jni)->CallLongMethod(jni, threads[i], ctx->getId_method);
+			sample->thread_id = tid;
+
+			for (int f = 0; f < count; f++)
+				sample->frames[f] = frames[f].method;
+
+			for (int f = 0; f < count; f++)
 			{
-				/* Allocate sample */
-				call_stack_sample_t *sample =
-				    arena_alloc(arena, sizeof(call_stack_sample_t));
-				if (!sample)
+				jmethodID mid = sample->frames[f];
+
+				// find cached info
+				jclass declaring_class;
+				(*jvmti)->GetMethodDeclaringClass(
+				    jvmti, mid, &declaring_class);
+
+				jlong tag;
+				(*jvmti)->GetTag(jvmti, declaring_class, &tag);
+				if (tag == 0)
 					continue;
 
-				sample->timestamp_ns = now;
-				sample->frame_count  = count;
+				class_info_t *info = (class_info_t *)(intptr_t)tag;
 
-				// get thread id (cached Thread.getId)
-				jlong tid = (*jni)->CallLongMethod(
-				    jni, threads[i], ctx->getId_method);
-				sample->thread_id = tid;
-
-				for (int f = 0; f < count; f++)
-					sample->frames[f] = frames[f].method;
-
-				for (int f = 0; f < count; f++)
+				/* linear search */
+				for (uint32_t m = 0; m < info->method_count; m++)
 				{
-					jmethodID mid = sample->frames[f];
-
-					// find cached info
-					jclass declaring_class;
-					(*jvmti)->GetMethodDeclaringClass(
-					    jvmti, mid, &declaring_class);
-
-					jlong tag;
-					(*jvmti)->GetTag(jvmti, declaring_class, &tag);
-					if (tag == 0)
-						continue;
-
-					class_info_t *info =
-					    (class_info_t *)(intptr_t)tag;
-
-					/* linear search */
-					for (uint32_t m = 0; m < info->method_count; m++)
+					if (info->methods[m].method_id == mid
+					    && info->methods[m].sample_index >= 0)
 					{
-						if (info->methods[m].method_id == mid
-						    && info->methods[m].sample_index >= 0)
-						{
-							__atomic_add_fetch(
-							    &ctx->metrics
-								 ->call_sample_counts
-								     [info->methods[m]
-							                  .sample_index],
-							    1,
-							    __ATOMIC_RELAXED);
-						}
+						__atomic_add_fetch(
+						    &ctx->metrics->call_sample_counts
+							 [info->methods[m].sample_index],
+						    1,
+						    __ATOMIC_RELAXED);
 					}
 				}
-
-				arena_free(arena, sample);
 			}
 		}
 

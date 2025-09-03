@@ -339,21 +339,21 @@ struct agent_context
 	package_filter_t package_filter; /**< Set of packages to look for */
 	FILE *log_file;                  /**< Log output file */
 	pthread_t log_thread;            /**< Logging thread */
-	pthread_t export_thread;         /**< Export background thread */
-	pthread_t mem_sampling_thread;   /**< Mem sampling background thread */
-	pthread_t shm_export_thread;     /**< Export via shared mem background thread */
-	pthread_t heap_stats_thread;     /**< Heap stats background thread */
-	pthread_t class_cache_thread;    /**< Class caching background thread */
+	/* TODO move sample thread handles to thread manager... */
+	pthread_t export_thread;       /**< Export background thread */
+	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
+	pthread_t shm_export_thread;   /**< Export via shared mem background thread */
+	pthread_t heap_stats_thread;   /**< Heap stats background thread */
+	pthread_t class_cache_thread;  /**< Class caching background thread */
 	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
 	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
 	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
 	                                  see thread_workers_status */
 	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
 	config_t config;               /**< Agent configuration */
-	// class_q_t *class_queue;        /**< q for class caching background thread */
-	q_t *class_queue;                /**< q for class caching background thread */
-	arena_t *arenas[ARENA_ID__LAST]; /**< Array of arenas */
-	method_metrics_soa_t *metrics;   /**< Method metrics in SoA format */
+	q_t *class_queue;              /**< q for class caching background thread */
+	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
+	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
 	thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
 	object_allocation_metrics_t
