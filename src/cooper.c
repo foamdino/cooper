@@ -210,11 +210,12 @@ record_method_execution(agent_context_t *ctx,
 {
 	method_metrics_soa_t *metrics = ctx->metrics;
 
-	LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu\n",
-	          method_index,
-	          (unsigned long)exec_time_ns,
-	          (unsigned long)memory_bytes,
-	          (unsigned long)cycles);
+	// LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu,
+	// cycles=%lu\n",
+	//           method_index,
+	//           (unsigned long)exec_time_ns,
+	//           (unsigned long)memory_bytes,
+	//           (unsigned long)cycles);
 
 	/* Check for valid index */
 	if (method_index < 0 || (size_t)method_index >= metrics->count)
@@ -782,7 +783,8 @@ method_exit_callback(jvmtiEnv *jvmti,
 	{
 		/* We need to search the stack for a matching method - this seems to be
 		 * the common case */
-		LOG_DEBUG("Method exit mismatch, searching for method [%p] in stack\n");
+		// LOG_DEBUG("Method exit mismatch, searching for method [%p] in
+		// stack\n");
 
 		/* Traverse stack to find target */
 		while (current)
@@ -811,11 +813,11 @@ method_exit_callback(jvmtiEnv *jvmti,
 	 * of samples */
 	if (!target)
 	{
-		LOG_DEBUG("No matching method found for methodID [%p]\n", method);
+		// LOG_DEBUG("No matching method found for methodID [%p]\n", method);
 		return;
 	}
 
-	LOG_DEBUG("Matching method found for methodID [%p]\n", method);
+	// LOG_DEBUG("Matching method found for methodID [%p]\n", method);
 	unsigned int flags = 0;
 
 	if (target->method_index >= 0
@@ -836,7 +838,7 @@ method_exit_callback(jvmtiEnv *jvmti,
 
 	if ((flags & METRIC_FLAG_MEMORY) != 0)
 	{
-		LOG_DEBUG("sampling memory for %d\n", target->method_index);
+		// LOG_DEBUG("sampling memory for %d\n", target->method_index);
 		/* JVM heap allocations during method execution */
 		memory_delta = target->current_alloc_bytes;
 	}
@@ -935,6 +937,7 @@ exception_callback(jvmtiEnv *jvmti_env,
 	/* TODO do something more useful with exception callbacks - just logging at the
 	 * moment is noise */
 #ifdef ENABLE_DEBUG_LOGS
+	return;
 	UNUSED(location);
 	UNUSED(catch_location);
 
@@ -1159,11 +1162,7 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 
 	/* Get cached class signature */
 	if (get_cached_class_signature(jvmti_env, klass, &class_sig) != COOPER_OK)
-	{
-		LOG_DEBUG("[object_alloc_callback] Unable to get class signature for "
-		          "object tracking\n");
 		return;
-	}
 
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
@@ -1174,17 +1173,11 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();
 	if (!context)
-	{
-		LOG_DEBUG("[object_alloc_callback] No context\n");
 		return;
-	}
 
 	method_sample_t *sample = context->sample;
 	if (!sample)
-	{
-		LOG_DEBUG("[object_alloc_callback] No sample\n");
 		return;
-	}
 
 	/* Check if memory metrics are enabled for this method */
 	if (sample->method_index < 0
@@ -1276,7 +1269,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	if (q_enq(global_ctx->class_queue, entry) != 0)
 	{
-		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
 		/* Clean up the global reference if we couldn't enqueue */
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		/* Release entry mem back to arena on enqueue failure */
@@ -1339,18 +1332,12 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 
 	/* Additional validation */
 	if (!class_sig || class_sig[0] == '\0')
-	{
-		LOG_DEBUG("Skipping null or empty class_sig");
 		return NULL;
-	}
 
 	/* Try to find existing stats using API */
 	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
 	if (stats)
-	{
-		/* Found existing entry */
-		return stats;
-	}
+		return stats; /* Found existing entry */
 
 	/* Check load factor before creating new entry */
 	if (ht_get_load(ctx->class_table) >= 0.75)
@@ -1405,7 +1392,7 @@ heap_object_callback(jvmtiHeapReferenceKind reference_kind,
 
 	if (size < 0)
 	{
-		LOG_DEBUG("Negative object size %ld for class_tag %ld", size, class_tag);
+		LOG_ERROR("Negative object size %ld for class_tag %ld", size, class_tag);
 		return JVMTI_VISIT_OBJECTS;
 	}
 
@@ -1447,7 +1434,7 @@ heap_object_callback(jvmtiHeapReferenceKind reference_kind,
 	uint64_t safe_size = (uint64_t)size; /* Convert after validation */
 	if (stats->total_size > UINT64_MAX - safe_size)
 	{
-		LOG_WARN("Total size overflow for class_tag %ld", class_tag);
+		LOG_ERROR("Total size overflow for class_tag %ld", class_tag);
 		return JVMTI_VISIT_OBJECTS;
 	}
 
@@ -1476,12 +1463,6 @@ add_method_to_metrics(agent_context_t *ctx,
 
 	method_metrics_soa_t *metrics = ctx->metrics;
 
-	/* Add debug output to see what's being added */
-	LOG_DEBUG("Adding method to metrics: %s (rate=%d, flags=%u)\n",
-	          signature,
-	          sample_rate,
-	          flags);
-
 	/* Check if method already exists */
 	int index = find_method_index(metrics, signature);
 	if (index >= 0)
@@ -1497,7 +1478,7 @@ add_method_to_metrics(agent_context_t *ctx,
 	if (metrics->count >= metrics->capacity)
 	{
 		/* Cannot grow in the current implementation with arenas */
-		LOG_DEBUG("Method metrics capacity reached (%zu)\n", metrics->capacity);
+		LOG_ERROR("Method metrics capacity reached (%zu)\n", metrics->capacity);
 		return -1;
 	}
 
@@ -1505,7 +1486,7 @@ add_method_to_metrics(agent_context_t *ctx,
 	arena_t *arena = ctx->arenas[METRICS_ARENA_ID];
 	if (!arena)
 	{
-		LOG_DEBUG("Could not find metrics arena\n");
+		LOG_ERROR("Could not find metrics arena\n");
 		return -1;
 	}
 	index = metrics->count;
@@ -1517,8 +1498,9 @@ add_method_to_metrics(agent_context_t *ctx,
 	metrics->min_time_ns[index]  = UINT64_MAX;
 	metrics->metric_flags[index] = flags;
 	metrics->count++;
-	LOG_DEBUG(
-	    "Added new method at index %d, total methods: %zu\n", index, metrics->count);
+	// LOG_DEBUG(
+	//     "Added new method at index %d, total methods: %zu\n", index,
+	//     metrics->count);
 	return index;
 }
 
@@ -1770,7 +1752,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 
 		if (q_enq(global_ctx->class_queue, entry) != 0)
 		{
-			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+			LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
 			/* Clean up the global reference if we couldn't enqueue */
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			/* Release entry mem back to arena on enqueue failure */

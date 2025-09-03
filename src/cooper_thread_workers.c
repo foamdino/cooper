@@ -31,7 +31,7 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
 	    || jvm_phase != JVMTI_PHASE_LIVE)
 	{
-		LOG_DEBUG("Cannot get the thread id as jvm is not in correct phase: %d",
+		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
 		          jvm_phase);
 		return 0;
 	}
@@ -50,8 +50,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 		LOG_ERROR("Exception occurred while getting thread ID");
 		return 0;
 	}
-
-	LOG_DEBUG("Looking up Java thread ID: %lld", (long long)thread_id);
 
 	/* Use Thread.getId() as a key to our mapping table */
 	pthread_mutex_lock(&ctx->samples_lock);
@@ -124,8 +122,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 
 			pthread_mutex_unlock(&ctx->samples_lock);
 		}
-		else
-			LOG_DEBUG("Cannot get native ID for non-current thread");
 	}
 
 	return result;
@@ -264,7 +260,7 @@ export_to_file(agent_context_t *ctx)
 	    "min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
 	/* Debug output to verify data being exported */
-	LOG_DEBUG("Exporting %zu method metrics\n", ctx->metrics->count);
+	LOG_INFO("Exporting %zu method metrics\n", ctx->metrics->count);
 
 	/* Export the entire method_metrics_soa structure */
 	size_t total_calls   = 0;
@@ -348,10 +344,10 @@ export_to_file(agent_context_t *ctx)
 	fprintf(fp, "Total method calls: %lu\n", (unsigned long)total_calls);
 	fprintf(fp, "Total samples collected: %lu\n", (unsigned long)total_samples);
 
-	LOG_DEBUG("Export complete: methods=%zu, calls=%lu, samples=%lu\n",
-	          ctx->metrics->count,
-	          (unsigned long)total_calls,
-	          (unsigned long)total_samples);
+	LOG_INFO("Export complete: methods=%zu, calls=%lu, samples=%lu\n",
+	         ctx->metrics->count,
+	         (unsigned long)total_calls,
+	         (unsigned long)total_samples);
 
 	pthread_mutex_unlock(&ctx->samples_lock);
 
@@ -601,7 +597,6 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 
 	/* Log the number of Java threads found for debugging */
 	jsize num_threads = (*jni)->GetArrayLength(jni, entries);
-	LOG_DEBUG("Found %d Java threads in getAllStackTraces", num_threads);
 
 	/* Process each java live thread */
 	for (int j = 0; j < num_threads; j++)
@@ -637,16 +632,10 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 			goto local_clean;
 		}
 
-		LOG_DEBUG("Processing Java thread ID: %lld", (long long)thread_id);
-
 		/* Get native thread ID */
 		pid_t native_tid = get_native_thread_id(ctx, jni, threadObj);
 		if (native_tid == 0)
-		{
-			LOG_DEBUG("Could not get native thread ID for Java thread %lld",
-			          (long long)thread_id);
 			goto local_clean;
-		}
 
 		/* Sample linux thread memory */
 		uint64_t thread_mem = get_thread_memory(native_tid);
@@ -1104,8 +1093,6 @@ export_thread_func(void *arg)
 	/* export to file while export_running flag is set */
 	while (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
 	{
-		LOG_DEBUG("Export thread sleeping for %d seconds\n",
-		          ctx->config.export_interval);
 		/* Sleep in smaller increments to be more responsive to shutdown */
 		for (int i = 0;
 		     i < ctx->config.export_interval
@@ -1115,7 +1102,7 @@ export_thread_func(void *arg)
 
 		if (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
 		{
-			LOG_DEBUG("Export thread woke up, exporting metrics\n");
+			LOG_INFO("Export thread woke up, exporting metrics\n");
 			export_to_file(ctx);
 		}
 	}
@@ -1143,7 +1130,6 @@ shm_export_thread_func(void *arg)
 	{
 		if (ctx->shm_ctx == NULL)
 		{
-			LOG_DEBUG("Shared mem not available, thread sleeping");
 			sleep(2);
 			continue;
 		}
@@ -1237,10 +1223,10 @@ mem_sampling_thread_func(void *arg)
 
 			pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
-			LOG_DEBUG("Memory sample #%zu: %llu bytes at %llu ns",
-			          ctx->app_memory_metrics->sample_count,
-			          (unsigned long long)process_mem,
-			          (unsigned long long)timestamp);
+			// LOG_DEBUG("Memory sample #%zu: %llu bytes at %llu ns",
+			//           ctx->app_memory_metrics->sample_count,
+			//           (unsigned long long)process_mem,
+			//           (unsigned long long)timestamp);
 		}
 
 		/* Sample thread memory for active Java threads */

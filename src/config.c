@@ -151,12 +151,12 @@ config_add_method_filter(arena_t *arena,
 
 	config->num_filters++;
 
-	LOG_DEBUG("Added filter: %s:%s:%s (rate=%d, flags=%u)\n",
-	          class_sig,
-	          method_name,
-	          method_sig,
-	          sample_rate,
-	          metric_flags);
+	LOG_INFO("Added filter: %s:%s:%s (rate=%d, flags=%u)\n",
+	         class_sig,
+	         method_name,
+	         method_sig,
+	         sample_rate,
+	         metric_flags);
 
 	return 0;
 }
@@ -262,7 +262,7 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				if (sscanf(value, "%d", &rate) == 1 && rate > 0)
 				{
 					config->default_sample_rate = rate;
-					LOG_DEBUG("Set default sample rate: %d\n", rate);
+					LOG_INFO("Set default sample rate: %d\n", rate);
 				}
 			}
 		}
@@ -324,7 +324,7 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 			if (value && strstr(processed, "path"))
 			{
 				config->sample_file_path = value;
-				LOG_DEBUG("Set sample file path: %s\n", value);
+				LOG_INFO("Set sample file path: %s\n", value);
 			}
 		}
 		else if (strcmp(current_section, "[export]") == 0)
@@ -336,7 +336,7 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 			if (strstr(processed, "method"))
 			{
 				config->export_method = value;
-				LOG_DEBUG("Set export method: %s\n", value);
+				LOG_INFO("Set export method: %s\n", value);
 			}
 			else if (strstr(processed, "interval"))
 			{
@@ -344,7 +344,7 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				if (sscanf(value, "%d", &interval) == 1 && interval > 0)
 				{
 					config->export_interval = interval;
-					LOG_DEBUG("Set export interval: %d\n", interval);
+					LOG_INFO("Set export interval: %d\n", interval);
 				}
 			}
 		}
@@ -390,10 +390,10 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 						    [config->package_filter
 						         .num_packages] = len;
 						config->package_filter.num_packages++;
-						LOG_DEBUG("Added package filter: %s "
-						          "(len=%zu)\n",
-						          package,
-						          len);
+						LOG_INFO("Added package filter: %s "
+						         "(len=%zu)\n",
+						         package,
+						         len);
 					}
 				}
 			}
