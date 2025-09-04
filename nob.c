@@ -79,6 +79,9 @@ int main(int argc, char **argv)
         nob_cmd_append(&cc_cmd, "-DENABLE_INFO_LOGS", "-O2");
 
     nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so",
+        SRC_FOLDER"ring.c",
+        SRC_FOLDER"ring_store.c",
+        SRC_FOLDER"ring_channel.c",
         SRC_FOLDER"proc_mem.c",
         SRC_FOLDER"arena.c", 
         SRC_FOLDER"arena_str.c", 
@@ -90,6 +93,7 @@ int main(int argc, char **argv)
         SRC_FOLDER"heap.c", 
         SRC_FOLDER"ht.c",  
         SRC_FOLDER"q.c",
+        SRC_FOLDER"cooper_ring.c",
         SRC_FOLDER"cooper_thread_manager.c",
         SRC_FOLDER"cooper_thread_workers.c",
         SRC_FOLDER"cooper.c", "-pthread", "-lrt");
@@ -102,7 +106,10 @@ int main(int argc, char **argv)
 
     /* compile tests */
     
-    nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"test_cooper", 
+    nob_cmd_append(&test_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-Isrc", "-g", "-o", BUILD_FOLDER"test_cooper",
+        SRC_FOLDER"ring.c",
+        SRC_FOLDER"ring_store.c",
+        SRC_FOLDER"ring_channel.c",
         SRC_FOLDER"proc_mem.c",
         SRC_FOLDER"arena.c", 
         SRC_FOLDER"arena_str.c", 
@@ -114,6 +121,7 @@ int main(int argc, char **argv)
         SRC_FOLDER"heap.c",
         SRC_FOLDER"ht.c",
         SRC_FOLDER"q.c",
+        SRC_FOLDER"cooper_ring.c",
         SRC_FOLDER"cooper_thread_manager.c",
         SRC_FOLDER"cooper_thread_workers.c",
         SRC_FOLDER"cooper.c",

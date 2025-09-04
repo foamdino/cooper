@@ -56,9 +56,10 @@ q_enq(q_t *queue, q_entry_t *entry)
 	}
 
 	/* Add to queue */
-	queue->entries[queue->hd].type = entry->type;
-	queue->entries[queue->hd].data = entry->data;
-	queue->hd                      = (queue->hd + 1) % Q_SZ;
+	// queue->entries[queue->hd]->type = entry->type;
+	// queue->entries[queue->hd]->data = entry->data;
+	queue->entries[queue->hd] = entry;
+	queue->hd                 = (queue->hd + 1) % Q_SZ;
 	queue->count++;
 
 	/* Signal waiting thread */
@@ -101,7 +102,7 @@ q_deq(q_t *queue)
 	}
 
 	/* Get entry */
-	q_entry_t *entry = &queue->entries[queue->tl];
+	q_entry_t *entry = queue->entries[queue->tl];
 	queue->tl        = (queue->tl + 1) % Q_SZ;
 	queue->count--;
 

@@ -105,9 +105,9 @@ ht_create(arena_t *arena, size_t initial_cap, double load_factor)
 	ht->load_factor = load_factor;
 	ht->arena       = arena;
 
-	LOG_DEBUG("Created hashtable: capacity=%zu, load_factor=%.2f",
-	          initial_cap,
-	          load_factor);
+	LOG_INFO("Created hashtable: capacity=%zu, load_factor=%.2f",
+	         initial_cap,
+	         load_factor);
 	return ht;
 }
 
@@ -244,5 +244,5 @@ ht_reset(hashtable_t *ht)
 	memset(ht->entries, 0, ht->capacity * sizeof(ht_entry_t));
 
 	ht->count = 0;
-	LOG_DEBUG("Reset hashtable (capacity: %zu)", ht->capacity);
+	LOG_INFO("Reset hashtable (capacity: %zu)", ht->capacity);
 }

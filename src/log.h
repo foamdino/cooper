@@ -42,6 +42,7 @@ struct log_system
 	arena_t *arena;
 	FILE *log_file;
 	pthread_t log_thread;
+	pthread_mutex_t arena_lock;
 	int initialized;
 };
 
