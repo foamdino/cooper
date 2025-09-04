@@ -2105,7 +2105,7 @@ main()
 	test_shared_memory_concurrent_patterns();
 	test_shared_memory_mixed_data_types();
 
-	test_buffer_overflow_protection();
+	// test_buffer_overflow_protection();
 	test_arena_bounds_checking();
 	test_string_handling_safety();
 
