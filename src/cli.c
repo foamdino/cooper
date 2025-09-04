@@ -186,7 +186,6 @@ read_shared_memory_data()
 		switch (entry->type)
 		{
 			case COOPER_DATA_METHOD_METRIC: {
-				/* Clean, semantic access to method data */
 				cooper_method_data_t *method = &entry->data.method;
 
 				/* Find or create method entry */
@@ -239,7 +238,6 @@ read_shared_memory_data()
 			}
 
 			case COOPER_DATA_MEMORY_SAMPLE: {
-				/* Clean access to memory data */
 				cooper_memory_data_t *memory = &entry->data.memory;
 
 				memory_data.last_updated = current_time;
@@ -305,8 +303,7 @@ read_shared_memory_data()
 			}
 
 			case COOPER_DATA_OBJECT_ALLOC: {
-				/* Clean access to object allocation data */
-				struct cooper_object_alloc_data *alloc =
+				cooper_object_alloc_data_t *alloc =
 				    &entry->data.object_alloc;
 
 				/* Find or add object type */
@@ -348,6 +345,21 @@ read_shared_memory_data()
 					objects[obj_idx].avg_size     = alloc->avg_size;
 					objects[obj_idx].last_updated = current_time;
 				}
+				break;
+			}
+
+			case COOPER_DATA_HEAP_STATS: {
+				cooper_heap_stats_data_t *stats = &entry->data.heap_stats;
+
+				// TODO complete this
+
+				break;
+			}
+
+			case COOPER_DATA_CLASS_STACKS: {
+
+				// TODO complete this
+
 				break;
 			}
 		}
@@ -442,6 +454,12 @@ main()
 					break;
 				case '4':
 					current_view = UI_VIEW_OBJECTS;
+					break;
+				case '5':
+					current_view = UI_VIEW_HEAP;
+					break;
+				case '6':
+					current_view = UI_VIEW_CALL_STACKS;
 					break;
 			}
 		}

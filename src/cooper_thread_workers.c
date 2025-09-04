@@ -386,7 +386,8 @@ export_method_to_shm(agent_context_t *ctx)
 			method_data.cpu_cycles    = ctx->metrics->cpu_cycles[i];
 			method_data.metric_flags  = ctx->metrics->metric_flags[i];
 
-			cooper_shm_write_method_data(ctx->shm_ctx, &method_data);
+			cooper_shm_write_data(
+			    ctx->shm_ctx, COOPER_DATA_METHOD_METRIC, &method_data);
 		}
 	}
 
@@ -417,7 +418,8 @@ export_memory_to_shm(agent_context_t *ctx)
 		    .thread_id     = 0, /* Process-wide */
 		    .thread_memory = 0};
 
-		cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
+		cooper_shm_write_data(
+		    ctx->shm_ctx, COOPER_DATA_MEMORY_SAMPLE, &memory_data);
 	}
 
 	/* Export thread memory samples */
@@ -437,7 +439,9 @@ export_memory_to_shm(agent_context_t *ctx)
 				    .thread_id     = tm->thread_id,
 				    .thread_memory = tm->memory_samples[latest_idx]};
 
-				cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
+				cooper_shm_write_data(ctx->shm_ctx,
+				                      COOPER_DATA_MEMORY_SAMPLE,
+				                      &memory_data);
 			}
 			tm = tm->next;
 		}
@@ -483,11 +487,53 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 			alloc_data.max_size = ctx->object_metrics->max_size[i];
 			alloc_data.avg_size = ctx->object_metrics->avg_size[i];
 
-			cooper_shm_write_object_alloc_data(ctx->shm_ctx, &alloc_data);
+			cooper_shm_write_data(
+			    ctx->shm_ctx, COOPER_DATA_OBJECT_ALLOC, &alloc_data);
 		}
 	}
 
 	pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+static void
+export_heap_stats_to_shm(agent_context_t *ctx)
+{
+	if (!ctx->shm_ctx || !ctx->last_heap_stats)
+		return;
+
+	if (!ctx->last_heap_stats || ctx->last_heap_stats_count == 0)
+		return;
+
+	// TODO perhaps need different lock
+	pthread_mutex_lock(&ctx->samples_lock);
+
+	for (size_t i = 0; i < ctx->last_heap_stats_count; i++)
+	{
+		class_stats_t *stats = (class_stats_t *)ctx->last_heap_stats->elements[i];
+
+		if (!stats || !stats->class_name)
+			continue;
+
+		cooper_heap_stats_data_t heap_stats_data = {0};
+		strncpy(heap_stats_data.class_signature,
+		        stats->class_name,
+		        COOPER_MAX_SIGNATURE_LEN - 1);
+		heap_stats_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+		heap_stats_data.instance_count = stats->instance_count;
+		heap_stats_data.total_sz       = stats->total_size;
+		heap_stats_data.avg_sz         = stats->avg_size;
+
+		cooper_shm_write_data(
+		    ctx->shm_ctx, COOPER_DATA_HEAP_STATS, &heap_stats_data);
+	}
+
+	// TODO diff lock??
+	pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+static void
+export_call_stack_samples_to_shm(agent_context_t *ctx)
+{
 }
 
 /**
@@ -1147,6 +1193,12 @@ shm_export_thread_func(void *arg)
 		/* Export object allocation metrics */
 		export_object_alloc_to_shm(ctx);
 
+		/* Export heap stats */
+		export_heap_stats_to_shm(ctx);
+
+		/* Export call stack samples */
+		export_call_stack_samples_to_shm(ctx);
+
 		/* Sleep for export interval */
 		sleep(2);
 	}
@@ -1374,7 +1426,6 @@ class_cache_thread_func(void *arg)
 	return NULL;
 }
 
-// TODO adjust this to use a ringbuffer when ready.
 /**
  *
  */

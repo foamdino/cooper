@@ -98,16 +98,11 @@ error_cleanup:
 	return -1;
 }
 
-/* Generic method data writer */
 int
-cooper_shm_write_method_data(cooper_shm_context_t *ctx,
-                             const struct cooper_method_data *data)
+cooper_shm_write_data(cooper_shm_context_t *ctx, unsigned int type, void *data)
 {
 	assert(ctx != NULL);
 	assert(data != NULL);
-	assert(ctx->data_shm != NULL);
-	assert(ctx->status_shm != NULL);
-	assert(strlen(data->signature) > 0);
 
 	if (!ctx || !data)
 		return -1;
@@ -118,74 +113,29 @@ cooper_shm_write_method_data(cooper_shm_context_t *ctx,
 	if (ctx->status_shm->status[write_index] == ENTRY_READY)
 		return -1; /* CLI hasn't read previous data yet, skip this write */
 
-	/* Clean assignment - no field mapping */
-	struct cooper_sample_entry *entry = &ctx->data_shm->entries[write_index];
-	entry->type                       = COOPER_DATA_METHOD_METRIC;
-	entry->timestamp                  = time(NULL) - ctx->data_shm->start_time;
-	entry->data.method                = *data; /* Direct struct copy */
+	cooper_sample_entry_t *entry = &ctx->data_shm->entries[write_index];
+	entry->type                  = type;
+	entry->timestamp             = time(NULL) - ctx->data_shm->start_time;
 
-	/* Mark as ready for CLI to read */
-	ctx->status_shm->status[write_index] = ENTRY_READY;
-	ctx->data_shm->next_write_index      = (write_index + 1) % COOPER_MAX_ENTRIES;
-
-	return 0;
-}
-
-/* Memory data writer */
-int
-cooper_shm_write_memory_data(cooper_shm_context_t *ctx,
-                             const struct cooper_memory_data *data)
-{
-	assert(ctx != NULL);
-	assert(data != NULL);
-	assert(ctx->data_shm != NULL);
-	assert(ctx->status_shm != NULL);
-
-	if (!ctx || !data)
-		return -1;
-
-	uint32_t write_index = ctx->data_shm->next_write_index % COOPER_MAX_ENTRIES;
-
-	/* Check if CLI has read the previous data at this index */
-	if (ctx->status_shm->status[write_index] == ENTRY_READY)
-		return -1; /* CLI hasn't read previous data yet, skip this write */
-
-	struct cooper_sample_entry *entry = &ctx->data_shm->entries[write_index];
-	entry->type                       = COOPER_DATA_MEMORY_SAMPLE;
-	entry->timestamp                  = time(NULL) - ctx->data_shm->start_time;
-	entry->data.memory                = *data; /* Direct struct copy */
-
-	/* Mark as ready for CLI to read */
-	ctx->status_shm->status[write_index] = ENTRY_READY;
-	ctx->data_shm->next_write_index      = (write_index + 1) % COOPER_MAX_ENTRIES;
-
-	return 0;
-}
-
-/* Object allocation data writer */
-int
-cooper_shm_write_object_alloc_data(cooper_shm_context_t *ctx,
-                                   const struct cooper_object_alloc_data *data)
-{
-	assert(ctx != NULL);
-	assert(data != NULL);
-	assert(ctx->data_shm != NULL);
-	assert(ctx->status_shm != NULL);
-	assert(strlen(data->class_signature) > 0);
-
-	if (!ctx || !data)
-		return -1;
-
-	uint32_t write_index = ctx->data_shm->next_write_index % COOPER_MAX_ENTRIES;
-
-	/* Check if CLI has read the previous data at this index */
-	if (ctx->status_shm->status[write_index] == ENTRY_READY)
-		return -1; /* CLI hasn't read previous data yet, skip this write */
-
-	struct cooper_sample_entry *entry = &ctx->data_shm->entries[write_index];
-	entry->type                       = COOPER_DATA_OBJECT_ALLOC;
-	entry->timestamp                  = time(NULL) - ctx->data_shm->start_time;
-	entry->data.object_alloc          = *data; /* Direct struct copy */
+	switch (type)
+	{
+		case COOPER_DATA_METHOD_METRIC: {
+			entry->data.method = *((cooper_method_data_t *)data);
+			break;
+		}
+		case COOPER_DATA_MEMORY_SAMPLE: {
+			entry->data.memory = *((cooper_memory_data_t *)data);
+			break;
+		}
+		case COOPER_DATA_OBJECT_ALLOC: {
+			entry->data.object_alloc = *((cooper_object_alloc_data_t *)data);
+			break;
+		}
+		case COOPER_DATA_HEAP_STATS: {
+			entry->data.heap_stats = *((cooper_heap_stats_data_t *)data);
+			break;
+		}
+	}
 
 	/* Mark as ready for CLI to read */
 	ctx->status_shm->status[write_index] = ENTRY_READY;

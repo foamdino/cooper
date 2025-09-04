@@ -1210,13 +1210,13 @@ test_shared_memory_status_transitions()
 	                                         .total_time_ns = 50000};
 
 	/* Write should succeed on empty slot */
-	int result = cooper_shm_write_method_data(&ctx, &test_method);
+	int result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == 0);
 	assert(ctx.status_shm->status[0] == ENTRY_READY);
 
 	/* Writing to same slot should fail (backpressure) */
 	ctx.data_shm->next_write_index = 0; /* Reset to same slot */
-	result                         = cooper_shm_write_method_data(&ctx, &test_method);
+	result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == -1);                             /* Should fail */
 	assert(ctx.status_shm->status[0] == ENTRY_READY); /* State unchanged */
 
@@ -1264,7 +1264,8 @@ test_shared_memory_method_metrics()
 	/* Write using new function */
 	for (int i = 0; i < 1; i++)
 	{
-		int result = cooper_shm_write_method_data(&ctx, &test_methods[i]);
+		int result = cooper_shm_write_data(
+		    &ctx, COOPER_DATA_METHOD_METRIC, &test_methods[i]);
 		assert(result == 0);
 		assert(ctx.status_shm->status[i] == ENTRY_READY);
 	}
@@ -1311,7 +1312,8 @@ test_shared_memory_memory_samples()
 	/* Write using new function */
 	for (int i = 0; i < 2; i++)
 	{
-		int result = cooper_shm_write_memory_data(&ctx, &test_memory[i]);
+		int result = cooper_shm_write_data(
+		    &ctx, COOPER_DATA_MEMORY_SAMPLE, &test_memory[i]);
 		assert(result == 0);
 		assert(ctx.status_shm->status[i] == ENTRY_READY);
 	}
@@ -1351,7 +1353,7 @@ test_shared_memory_object_alloc()
 	                                              .max_size          = 1024,
 	                                              .avg_size          = 64};
 
-	int result = cooper_shm_write_object_alloc_data(&ctx, &test_alloc);
+	int result = cooper_shm_write_data(&ctx, COOPER_DATA_OBJECT_ALLOC, &test_alloc);
 	assert(result == 0);
 	assert(ctx.status_shm->status[0] == ENTRY_READY);
 
@@ -1385,7 +1387,8 @@ test_shared_memory_wraparound()
 	for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++)
 	{
 		test_method.call_count = i + 1; /* Unique identifier */
-		int result             = cooper_shm_write_method_data(&ctx, &test_method);
+		int result =
+		    cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 		assert(result == 0);
 		assert(ctx.status_shm->status[i] == ENTRY_READY);
 
@@ -1401,7 +1404,7 @@ test_shared_memory_wraparound()
 
 	/* Next write should fail (buffer full) */
 	test_method.call_count = 9999;
-	int result             = cooper_shm_write_method_data(&ctx, &test_method);
+	int result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == -1);
 
 	/* Mark first few entries as read */
@@ -1422,7 +1425,7 @@ test_shared_memory_wraparound()
 	/* Should be able to write to first slot again */
 	ctx.data_shm->next_write_index = 0;    /* Reset write index */
 	test_method.call_count         = 8888; /* New unique value */
-	result                         = cooper_shm_write_method_data(&ctx, &test_method);
+	result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == 0);
 	assert(ctx.status_shm->status[0] == ENTRY_READY);
 
@@ -1455,7 +1458,8 @@ test_shared_memory_concurrent_patterns()
 		for (int i = 0; i < 5; i++)
 		{
 			test_method.call_count = round * 100 + i;
-			int result = cooper_shm_write_method_data(&ctx, &test_method);
+			int result             = cooper_shm_write_data(
+                            &ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 			assert(result == 0);
 
 			/* Verify data was written correctly */
@@ -1535,15 +1539,15 @@ test_shared_memory_mixed_data_types()
 	/* Test mixed data types using new structures */
 	struct cooper_method_data method = {.signature  = "MixedTest::method",
 	                                    .call_count = 42};
-	cooper_shm_write_method_data(&ctx, &method);
+	cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &method);
 
 	struct cooper_memory_data memory = {
 	    .process_memory = 1024 * 1024 * 50, .thread_id = 0, .thread_memory = 0};
-	cooper_shm_write_memory_data(&ctx, &memory);
+	cooper_shm_write_data(&ctx, COOPER_DATA_MEMORY_SAMPLE, &memory);
 
 	struct cooper_object_alloc_data alloc = {.class_signature  = "TestClass",
 	                                         .allocation_count = 100};
-	cooper_shm_write_object_alloc_data(&ctx, &alloc);
+	cooper_shm_write_data(&ctx, COOPER_DATA_OBJECT_ALLOC, &alloc);
 
 	/* Verify data types and integrity */
 	assert(ctx.data_shm->entries[0].type == COOPER_DATA_METHOD_METRIC);
@@ -1879,7 +1883,8 @@ test_shared_memory_race_conditions(void)
 	for (uint32_t i = 0; i < COOPER_MAX_ENTRIES; i++)
 	{
 		test_method.call_count = i + 1;
-		int result             = cooper_shm_write_method_data(&ctx, &test_method);
+		int result =
+		    cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 		assert(result == 0);
 		assert(ctx.status_shm->status[i] == ENTRY_READY);
 	}
@@ -1889,7 +1894,7 @@ test_shared_memory_race_conditions(void)
 
 	/* Next write should fail due to backpressure */
 	test_method.call_count = 9999;
-	int result             = cooper_shm_write_method_data(&ctx, &test_method);
+	int result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == -1); /* Should fail */
 
 	/* Simulate concurrent reader - mark some entries as read */
@@ -1911,7 +1916,7 @@ test_shared_memory_race_conditions(void)
 	/* Should be able to write to first slot again */
 	ctx.data_shm->next_write_index = 0;
 	test_method.call_count         = 7777;
-	result                         = cooper_shm_write_method_data(&ctx, &test_method);
+	result = cooper_shm_write_data(&ctx, COOPER_DATA_METHOD_METRIC, &test_method);
 	assert(result == 0);
 	assert(ctx.status_shm->status[0] == ENTRY_READY);
 
