@@ -199,6 +199,16 @@ jobs:
         asset_path: ./build/cli
         asset_name: cli
         asset_content_type: application/octet-stream
+
+    - name: Upload libtui ui lib for cli
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/libtui.so
+        asset_name: libtui.so
+        asset_content_type: application/octet-stream
         
     - name: Upload cooper shared library
       uses: actions/upload-release-asset@v1
