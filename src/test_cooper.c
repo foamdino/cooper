@@ -11,7 +11,7 @@
 #include "cpu.h"
 #include "cache.h"
 #include "config.h"
-#include "shared_mem.h"
+#include "cooper_shm.h"
 
 q_t *log_queue = NULL;
 

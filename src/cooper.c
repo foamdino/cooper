@@ -2106,6 +2106,16 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
+	/* Initialize ring channel */
+	if (ring_channel_init(&global_ctx->call_stack_channel,
+	                      CALL_STACK_CHANNEL_CAPACITY,
+	                      sizeof(call_stack_sample_t))
+	    != COOPER_OK)
+	{
+		LOG_ERROR("Failed to init call_stack_channel");
+		return JNI_ERR;
+	}
+
 	/* Grab a copy of the JVM pointer */
 	global_ctx->jvm = vm;
 

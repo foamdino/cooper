@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include "shared_mem.h"
+#include "cooper_shm.h"
 
 /**
  * Initialize shared memory for the agent

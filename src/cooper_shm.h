@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#ifndef SHARED_MEM_H
-#define SHARED_MEM_H
+#ifndef COOPER_SHM_H
+#define COOPER_SHM_H
 
 #include <stdint.h>
 #include <sys/mman.h>
@@ -152,4 +152,4 @@ int cooper_shm_write_data(cooper_shm_context_t *ctx, unsigned int type, void *da
 
 void cooper_shm_cleanup_read_entries(cooper_shm_context_t *ctx);
 
-#endif /* SHARED_MEM_H */
+#endif /* COOPER_SHM_H */

@@ -19,4 +19,8 @@ struct ring_channel
 	ring_t ready_ring;  /**< indices filled for consumer */
 };
 
+int ring_channel_init(ring_channel_t *ch, uint32_t capacity, uint32_t elem_sz);
+
+void ring_channel_free(ring_channel_t *ch);
+
 #endif /* RING_CHANNEL_H */

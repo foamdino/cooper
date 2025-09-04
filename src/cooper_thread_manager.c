@@ -10,7 +10,6 @@
 #include "cooper.h"
 #include "log.h"
 #include "thread_util.h"
-#include "shared_mem.h"
 
 /*
  * Start all background threads

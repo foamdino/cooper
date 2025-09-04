@@ -13,7 +13,7 @@
 
 #include "log.h"
 #include "thread_util.h"
-#include "shared_mem.h"
+#include "cooper_shm.h"
 
 /* Forward declaration */
 typedef struct agent_context agent_context_t;

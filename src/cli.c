@@ -17,7 +17,7 @@
 #include <stdarg.h>
 
 #include "tui_loader.h"
-#include "shared_mem.h"
+#include "cooper_shm.h"
 
 #define REFRESH_INTERVAL 250000 /* 250ms */
 

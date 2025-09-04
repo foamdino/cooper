@@ -31,7 +31,7 @@
 #include "cpu.h"
 #include "cache.h"
 #include "config.h"
-#include "shared_mem.h"
+#include "cooper_shm.h"
 #include "thread_util.h"
 #include "heap.h"
 #include "ht.h"
@@ -47,6 +47,8 @@
 #define MAX_THREAD_MAPPINGS 1024
 #define MAX_MEMORY_SAMPLES  100  /**< The max number of memory samples to keep */
 #define MAX_OBJECT_TYPES    2048 /**< The max types of objects to track */
+#define CALL_STACK_CHANNEL_CAPACITY                                                      \
+	4096 /**< The max num of elements in the ring channel */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define EXCEPTION_ARENA_SZ   1024 * 1024

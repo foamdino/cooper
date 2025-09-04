@@ -11,7 +11,7 @@ sample_alloc(ring_channel_t *ch, uint32_t *out_idx)
 {
 	uint32_t idx;
 	if (ring_pop(&ch->free_ring, &idx) != COOPER_OK)
-		return NULL; // no free slots available
+		return NULL; /* no free slots available */
 	if (out_idx)
 		*out_idx = idx;
 	return (call_stack_sample_t *)ring_store_get(&ch->store, idx);
@@ -20,7 +20,7 @@ sample_alloc(ring_channel_t *ch, uint32_t *out_idx)
 int
 sample_publish(ring_channel_t *ch, uint32_t idx)
 {
-	// push to ready ring; if full, recycle back to freelist
+	/* push to ready ring; if full, recycle back to free ring */
 	if (ring_push(&ch->ready_ring, idx) != COOPER_OK)
 	{
 		ring_push(&ch->free_ring, idx);
@@ -34,7 +34,7 @@ sample_consume(ring_channel_t *ch, uint32_t *out_idx)
 {
 	uint32_t idx;
 	if (ring_pop(&ch->ready_ring, &idx) != COOPER_OK)
-		return NULL; // no ready samples
+		return NULL; /* no ready samples */
 	if (out_idx)
 		*out_idx = idx;
 	return (call_stack_sample_t *)ring_store_get(&ch->store, idx);
