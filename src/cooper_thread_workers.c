@@ -1406,18 +1406,11 @@ call_stack_sampling_thread_func(void *arg)
 	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
 	{
 		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		if (err != JVMTI_ERROR_NONE)
+		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
 		{
-			LOG_ERROR(
-			    "Error getting JVM phase in call stack sampling thread: %d",
-			    err);
-			sleep(10);
-			continue;
-		}
-
-		if (jvm_phase != JVMTI_PHASE_LIVE)
-		{
-			LOG_INFO("JVM not in live phase, skipping call stack sampling");
+			LOG_ERROR("[call stack sampling thread] Error getting JVM phase, "
+			          "or JVM not in live phase: %d",
+			          err);
 			sleep(10);
 			continue;
 		}
@@ -1486,17 +1479,17 @@ call_stack_sampling_thread_func(void *arg)
 
 				class_info_t *info = (class_info_t *)(intptr_t)tag;
 
-				/* linear search */
+				/* linear search - replace at some point */
 				for (uint32_t m = 0; m < info->method_count; m++)
 				{
 					if (info->methods[m].method_id == mid
 					    && info->methods[m].sample_index >= 0)
 					{
-						__atomic_add_fetch(
+						atomic_fetch_add_explicit(
 						    &ctx->metrics->call_sample_counts
 							 [info->methods[m].sample_index],
 						    1,
-						    __ATOMIC_RELAXED);
+						    memory_order_relaxed);
 					}
 				}
 			}

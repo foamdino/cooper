@@ -20,7 +20,7 @@ ring_channel_init(ring_channel_t *ch, uint32_t capacity, uint32_t elem_sz)
 	for (uint32_t i = 0; i < capacity; i++)
 		ring_push(&ch->free_ring, i);
 
-	return 1;
+	return 0;
 }
 
 void

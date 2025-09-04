@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 
 #include <sys/mman.h>
 #include <sys/syscall.h>

@@ -226,14 +226,15 @@ record_method_execution(agent_context_t *ctx,
 	}
 
 	// /* Update sample count */
-	// __atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
+	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
+	// memory_order_relaxed);
 
 	/* Update timing metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
 	{
-		__atomic_add_fetch(&metrics->total_time_ns[method_index],
-		                   exec_time_ns,
-		                   __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
+		                          exec_time_ns,
+		                          memory_order_relaxed);
 
 		/* Update min/max */
 		pthread_mutex_lock(&ctx->samples_lock);
@@ -250,8 +251,9 @@ record_method_execution(agent_context_t *ctx,
 	/* Update memory metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
 	{
-		__atomic_add_fetch(
-		    &metrics->alloc_bytes[method_index], memory_bytes, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
+		                          memory_bytes,
+		                          memory_order_relaxed);
 
 		pthread_mutex_lock(&ctx->samples_lock);
 
@@ -263,8 +265,8 @@ record_method_execution(agent_context_t *ctx,
 
 	/* Update CPU metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-		__atomic_add_fetch(
-		    &metrics->cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(
+		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
 
 	// LOG_DEBUG(
 	//     "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
