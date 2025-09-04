@@ -35,6 +35,7 @@
 #include "heap.h"
 #include "ht.h"
 #include "q.h"
+#include "ring_channel.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x)        (void)(x)
@@ -347,13 +348,14 @@ struct agent_context
 	pthread_t class_cache_thread;  /**< Class caching background thread */
 	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
 	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
-	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
-	                                  see thread_workers_status */
-	cooper_shm_context_t *shm_ctx; /**< Shared mem context */
-	config_t config;               /**< Agent configuration */
-	q_t *class_queue;              /**< q for class caching background thread */
-	arena_t *arenas[ARENA_ID__LAST];          /**< Array of arenas */
-	method_metrics_soa_t *metrics;            /**< Method metrics in SoA format */
+	unsigned int worker_statuses; /**< Bitfield flags for background worker threads -
+	                                 see thread_workers_status */
+	ring_channel_t call_stack_channel; /**< ring channel for call stacks */
+	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
+	config_t config;                   /**< Agent configuration */
+	q_t *class_queue;                  /**< q for class caching background thread */
+	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
+	method_metrics_soa_t *metrics;     /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
 	thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
 	object_allocation_metrics_t

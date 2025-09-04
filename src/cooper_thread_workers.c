@@ -5,6 +5,7 @@
  */
 
 #include "cooper.h"
+#include "cooper_ring.h"
 #include "cooper_thread_workers.h"
 
 /* Helper functions */
@@ -1385,9 +1386,6 @@ call_stack_sampling_thread_func(void *arg)
 	jvmtiPhase jvm_phase;
 	jvmtiError err;
 
-	// TODO quick return until we get the ringbuffer sorted
-	//  return NULL;
-
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
 	jint res =
@@ -1413,7 +1411,6 @@ call_stack_sampling_thread_func(void *arg)
 			LOG_ERROR(
 			    "Error getting JVM phase in call stack sampling thread: %d",
 			    err);
-			// goto cleanup;
 			sleep(10);
 			continue;
 		}
@@ -1454,15 +1451,17 @@ call_stack_sampling_thread_func(void *arg)
 				continue;
 
 			/* Allocate sample */
+			uint32_t idx;
 			call_stack_sample_t *sample =
-			    arena_alloc(arena, sizeof(call_stack_sample_t));
+			    sample_alloc(&ctx->call_stack_channel, &idx);
+
 			if (!sample)
-				continue;
+				continue; /* no free slot on channel ring */
 
 			sample->timestamp_ns = now;
 			sample->frame_count  = count;
 
-			// get thread id (cached Thread.getId)
+			/* get thread id (cached Thread.getId) */
 			jlong tid =
 			    (*jni)->CallLongMethod(jni, threads[i], ctx->getId_method);
 			sample->thread_id = tid;
@@ -1470,6 +1469,7 @@ call_stack_sampling_thread_func(void *arg)
 			for (int f = 0; f < count; f++)
 				sample->frames[f] = frames[f].method;
 
+			/* Aggregate samples */
 			for (int f = 0; f < count; f++)
 			{
 				jmethodID mid = sample->frames[f];
@@ -1500,6 +1500,9 @@ call_stack_sampling_thread_func(void *arg)
 					}
 				}
 			}
+
+			/* Publish to channel ready ring */
+			sample_publish(&ctx->call_stack_channel, idx);
 		}
 
 		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);

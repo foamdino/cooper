@@ -12,6 +12,12 @@ Compile and from the build location:
 `java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test`
 Need to have a `trace.ini` file in the working directory
 
+## Code metrics
+
+<!-- TOKEI-START -->
+
+<!-- TOKEI-END -->
+
 ## Valgrind
 
 ```
