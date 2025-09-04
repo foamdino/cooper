@@ -27,10 +27,58 @@
 #include "nob.h"
 
 #include <stdlib.h>
+#include <sys/stat.h>
+
 // TODO: add more comments in here
 
 #define BUILD_FOLDER "build/"
 #define SRC_FOLDER   "src/"
+#define JAVA_SRC     "java-src/"
+
+// Subdirs for organisational clarity
+#define LIB_FOLDER   SRC_FOLDER "lib/"
+#define AGENT_FOLDER SRC_FOLDER "agent/"
+#define CLI_FOLDER   SRC_FOLDER "cli/"
+#define TEST_FOLDER   SRC_FOLDER "test/"
+
+static bool path_is_dir(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+}
+
+static void add_sources_from_dir(Nob_Cmd *cmd, const char *dir)
+{
+    Nob_File_Paths paths = {0};
+    if (!nob_read_entire_dir(dir, &paths))
+    {
+        nob_log(NOB_ERROR, "Failed to read dir %s", dir);
+        exit(1);
+    }
+    for (size_t i = 0; i < paths.count; ++i)
+    {
+        if (nob_sv_end_with(nob_sv_from_cstr(paths.items[i]), ".c"))
+        {
+            char full_path[1024];
+
+            // add slash if not already present
+            size_t len = strlen(dir);
+            if (len > 0 && dir[len-1] == '/')
+                snprintf(full_path, sizeof(full_path), "%s%s", dir, paths.items[i]);
+            else
+                snprintf(full_path, sizeof(full_path), "%s/%s", dir, paths.items[i]);
+
+            if (path_is_dir(full_path)) {
+                // recurse into subdir
+                add_sources_from_dir(cmd, full_path);
+            } else if (nob_sv_end_with(nob_sv_from_cstr(paths.items[i]), ".c")) {
+                nob_cmd_append(cmd, nob_temp_strdup(full_path));
+                nob_log(NOB_INFO, full_path);
+            }
+        }
+    }
+    // nob_file_paths_free(paths);
+}
 
 int main(int argc, char **argv)
 {
@@ -78,30 +126,33 @@ int main(int argc, char **argv)
     else
         nob_cmd_append(&cc_cmd, "-DENABLE_INFO_LOGS", "-O2");
 
-    nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so",
-        SRC_FOLDER"ring.c",
-        SRC_FOLDER"ring_store.c",
-        SRC_FOLDER"ring_channel.c",
-        SRC_FOLDER"proc_mem.c",
-        SRC_FOLDER"arena.c", 
-        SRC_FOLDER"arena_str.c", 
-        SRC_FOLDER"log.c", 
-        SRC_FOLDER"cache.c", 
-        SRC_FOLDER"config.c", 
-        SRC_FOLDER"thread_util.c", 
-        SRC_FOLDER"heap.c", 
-        SRC_FOLDER"ht.c",  
-        SRC_FOLDER"q.c",
-        SRC_FOLDER"cooper_shm.c",
-        SRC_FOLDER"cooper_ring.c",
-        SRC_FOLDER"cooper_thread_manager.c",
-        SRC_FOLDER"cooper_thread_workers.c",
-        SRC_FOLDER"cooper.c", "-pthread", "-lrt");
+    nob_cmd_append(&cc_cmd, "-o", BUILD_FOLDER"libcooper.so");
+    // add_sources_from_dir(&cc_cmd, LIB_FOLDER);
+    // add_sources_from_dir(&cc_cmd, AGENT_FOLDER);
+    add_sources_from_dir(&cc_cmd, SRC_FOLDER);
+        // SRC_FOLDER"ring.c",
+        // SRC_FOLDER"ring_store.c",
+        // SRC_FOLDER"ring_channel.c",
+        // SRC_FOLDER"proc_mem.c",
+        // SRC_FOLDER"arena.c", 
+        // SRC_FOLDER"arena_str.c", 
+        // SRC_FOLDER"log.c", 
+        // SRC_FOLDER"cache.c", 
+        // SRC_FOLDER"config.c", 
+        // SRC_FOLDER"thread_util.c", 
+        // SRC_FOLDER"heap.c", 
+        // SRC_FOLDER"ht.c",  
+        // SRC_FOLDER"q.c",
+        // SRC_FOLDER"cooper_shm.c",
+        // SRC_FOLDER"cooper_ring.c",
+        // SRC_FOLDER"cooper_thread_manager.c",
+        // SRC_FOLDER"cooper_thread_workers.c",
+        // SRC_FOLDER"cooper.c", "-pthread", "-lrt");
 
     if (!nob_cmd_run_sync(cc_cmd)) return 1;
 
     /* compile java */
-    nob_cmd_append(&javac_cmd, "javac", "java-src/com/github/foamdino/Test.java", "-d", BUILD_FOLDER);
+    nob_cmd_append(&javac_cmd, "javac", JAVA_SRC"com/github/foamdino/Test.java", "-d", BUILD_FOLDER);
     if (!nob_cmd_run_sync(javac_cmd)) return 1;
 
     /* compile tests */
@@ -125,7 +176,7 @@ int main(int argc, char **argv)
         SRC_FOLDER"cooper_thread_manager.c",
         SRC_FOLDER"cooper_thread_workers.c",
         SRC_FOLDER"cooper.c",
-        SRC_FOLDER"test_cooper.c", "-pthread", "-lrt");
+        SRC_FOLDER"test/test_cooper.c", "-pthread", "-lrt");
     
     if (!nob_cmd_run_sync(test_cmd)) return 1;
 
