@@ -43,9 +43,11 @@ static cli_shm_context_t shm_ctx    = {0};
 /* Display data structures */
 static tui_method_display_t methods[UI_MAX_DISPLAY_ITEMS];
 static tui_object_display_t objects[UI_MAX_DISPLAY_ITEMS];
+static tui_heap_display_t heap[UI_MAX_DISPLAY_ITEMS];
 static tui_memory_display_t memory_data = {0};
 static int method_count                 = 0;
 static int object_count                 = 0;
+static int heap_count                   = 0;
 
 /* Terminal handling functions */
 void
@@ -351,7 +353,37 @@ read_shared_memory_data()
 			case COOPER_DATA_HEAP_STATS: {
 				cooper_heap_stats_data_t *stats = &entry->data.heap_stats;
 
-				// TODO complete this
+				/* Find or add heap type */
+				int idx = -1;
+				for (int j = 0; j < heap_count; j++)
+				{
+					if (strcmp(heap[j].class_name,
+					           stats->class_signature)
+					    == 0)
+					{
+						idx = j;
+						break;
+					}
+				}
+
+				if (idx == -1 && heap_count < UI_MAX_DISPLAY_ITEMS)
+					idx = heap_count++;
+
+				if (idx >= 0)
+				{
+					/* Copy class signature to local CLI structure */
+					strncpy(heap[idx].class_name,
+					        stats->class_signature,
+					        sizeof(heap[idx].class_name) - 1);
+					heap[idx].class_name[sizeof(heap[idx].class_name)
+					                     - 1] = '\0';
+
+					/* Semantic field names */
+					heap[idx].total_sz       = stats->total_sz;
+					heap[idx].avg_sz         = stats->avg_sz;
+					heap[idx].instance_count = stats->instance_count;
+					heap[idx].last_updated   = current_time;
+				}
 
 				break;
 			}
@@ -473,9 +505,11 @@ main()
 		tui_context_t ui_ctx = {
 		    .methods      = methods,
 		    .objects      = objects,
+		    .heap         = heap,
 		    .memory_data  = &memory_data,
 		    .method_count = method_count,
 		    .object_count = object_count,
+		    .heap_count   = heap_count,
 		    .current_view = current_view,
 		    .terminal     = {.width = term_width, .height = term_height}};
 

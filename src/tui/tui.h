@@ -80,6 +80,7 @@ struct tui_heap_display
 	uint64_t instance_count;
 	uint64_t total_sz;
 	uint64_t avg_sz;
+	time_t last_updated;
 };
 
 struct tui_class_stacks_display
@@ -98,10 +99,12 @@ struct tui_context
 	tui_method_display_t *methods;
 	tui_object_display_t *objects;
 	tui_memory_display_t *memory_data;
+	tui_heap_display_t *heap;
 	tui_view_mode_e current_view;
 	tui_terminal_info_t terminal;
 	int method_count;
 	int object_count;
+	int heap_count;
 };
 
 /**
@@ -162,6 +165,12 @@ void tui_draw_memory_view(tui_context_t *ctx);
  * @param ctx UI context
  */
 void tui_draw_objects_view(tui_context_t *ctx);
+
+/**
+ * Draw the heap view
+ * @param ctx UI context
+ */
+void tui_draw_heap_view(tui_context_t *ctx);
 
 /**
  * Clear the screen

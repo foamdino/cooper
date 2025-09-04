@@ -78,7 +78,6 @@ static void add_sources_from_dir(Nob_Cmd *cmd, const char *dir)
         } else if (nob_sv_end_with(nob_sv_from_cstr(paths.items[i]), ".c")) {
             // add .c source file
             nob_cmd_append(cmd, nob_temp_strdup(full_path));
-            nob_log(NOB_INFO, full_path);
         }
     }
 }
