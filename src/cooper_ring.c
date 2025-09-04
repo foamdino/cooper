@@ -24,9 +24,9 @@ sample_publish(ring_channel_t *ch, uint32_t idx)
 	if (ring_push(&ch->ready_ring, idx) != COOPER_OK)
 	{
 		ring_push(&ch->free_ring, idx);
-		return 0;
+		return 1;
 	}
-	return 1;
+	return 0;
 }
 
 call_stack_sample_t *

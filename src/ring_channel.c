@@ -10,11 +10,11 @@ int
 ring_channel_init(ring_channel_t *ch, uint32_t capacity, uint32_t elem_sz)
 {
 	if (ring_store_init(&ch->store, capacity, elem_sz) != 0)
-		return 0;
+		return 1;
 	if (ring_init(&ch->free_ring, capacity) != 0)
-		return 0;
+		return 1;
 	if (ring_init(&ch->ready_ring, capacity) != 0)
-		return 0;
+		return 1;
 
 	/* populate freelist with all indices */
 	for (uint32_t i = 0; i < capacity; i++)
