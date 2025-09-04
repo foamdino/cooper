@@ -16,8 +16,8 @@
 #include <math.h>
 #include <stdarg.h>
 
-#include "tui_loader.h"
-#include "cooper_shm.h"
+#include "../tui/tui_loader.h"
+#include "../agent/cooper_shm.h"
 
 #define REFRESH_INTERVAL 250000 /* 250ms */
 

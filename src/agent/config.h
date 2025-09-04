@@ -11,10 +11,9 @@
 #include <string.h>
 #include <assert.h>
 
-#include "arena.h"
-#include "arena_str.h"
-#include "log.h"
-// #include "cooper.h"
+#include "../lib/arena.h"
+#include "../lib/arena_str.h"
+#include "../lib/log.h"
 #include "cooper_types.h"
 
 #define DEFAULT_CFG_FILE    "trace.ini"

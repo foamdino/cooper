@@ -6,10 +6,6 @@
 
 #include "cooper_thread_manager.h"
 #include "cooper_thread_workers.h"
-// TODO move things into cooper_types to decouple
-#include "cooper.h"
-#include "log.h"
-#include "thread_util.h"
 
 /*
  * Start all background threads

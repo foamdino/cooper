@@ -24,19 +24,22 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
+/* library includes */
+#include "../lib/arena.h"
+#include "../lib/arena_str.h"
+#include "../lib/log.h"
+#include "../lib/cpu.h"
+#include "../lib/cache.h"
+#include "../lib/thread_util.h"
+#include "../lib/heap.h"
+#include "../lib/ht.h"
+#include "../lib/q.h"
+#include "../lib/ring/ring_channel.h"
+
+/* agent includes */
 #include "cooper_types.h"
-#include "arena.h"
-#include "arena_str.h"
-#include "log.h"
-#include "cpu.h"
-#include "cache.h"
 #include "config.h"
 #include "cooper_shm.h"
-#include "thread_util.h"
-#include "heap.h"
-#include "ht.h"
-#include "q.h"
-#include "ring_channel.h"
 
 /* Macro to tag callback function params that we don't use */
 #define UNUSED(x)        (void)(x)

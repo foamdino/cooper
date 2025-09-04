@@ -8,7 +8,8 @@
 #define COOPER_RING_H
 
 #include "cooper.h"
-#include "ring_channel.h"
+#include "../lib/ring/ring.h"
+#include "../lib/ring/ring_channel.h"
 
 call_stack_sample_t *sample_alloc(ring_channel_t *ch, uint32_t *out_idx);
 

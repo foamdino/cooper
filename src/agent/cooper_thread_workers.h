@@ -7,7 +7,7 @@
 #ifndef COOPER_THREAD_WORKERS_H
 #define COOPER_THREAD_WORKERS_H
 
-#include "proc_mem.h"
+#include "../lib/proc_mem.h"
 #include "cooper_thread_manager.h"
 
 /* Forward declaration to avoid circular dependency */

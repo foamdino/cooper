@@ -4,14 +4,15 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#include "cooper.h"
-#include "log.h"
-#include "arena.h"
-#include "arena_str.h"
-#include "cpu.h"
-#include "cache.h"
-#include "config.h"
-#include "cooper_shm.h"
+#include "../lib/log.h"
+#include "../lib/arena.h"
+#include "../lib/arena_str.h"
+#include "../lib/cpu.h"
+#include "../lib/cache.h"
+
+#include "../agent/cooper.h"
+#include "../agent/config.h"
+#include "../agent/cooper_shm.h"
 
 q_t *log_queue = NULL;
 

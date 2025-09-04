@@ -11,8 +11,9 @@
 #include <string.h>
 #include <errno.h>
 
-#include "log.h"
-#include "thread_util.h"
+#include "../lib/log.h"
+#include "../lib/thread_util.h"
+#include "cooper.h"
 #include "cooper_shm.h"
 
 /* Forward declaration */
