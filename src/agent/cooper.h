@@ -103,6 +103,7 @@
 typedef struct package_filter package_filter_t;
 typedef struct config config_t;
 typedef struct method_sample method_sample_t;
+typedef struct object_ref_info object_ref_info_t;
 typedef struct call_stack_sample call_stack_sample_t;
 typedef struct class_stats class_stats_t;
 typedef struct thread_context thread_context_t;
@@ -263,12 +264,23 @@ struct method_sample
 	method_sample_t *parent;      /**< Parent (or calling) method */
 };
 
+struct object_ref_info
+{
+	jlong object_tag;         /* Tag we assign to track this object */
+	jlong class_tag;          /* Class tag from your existing system */
+	uint64_t shallow_size;    /* Object's own size */
+	uint64_t deep_size;       /* Calculated deep size */
+	int deep_size_calculated; /* Flag to avoid recalculation */
+};
+
 struct class_stats
 {
 	char *class_name;
 	uint64_t instance_count;
 	uint64_t total_size;
+	uint64_t total_deep_size;
 	uint64_t avg_size;
+	uint64_t avg_deep_size;
 };
 
 struct heap_iteration_context
@@ -277,6 +289,8 @@ struct heap_iteration_context
 	jvmtiEnv *jvmti;
 	arena_t *arena;
 	hashtable_t *class_table;
+	hashtable_t *object_table;
+	jlong next_object_tag;
 };
 
 struct callbacks

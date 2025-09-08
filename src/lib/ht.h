@@ -61,7 +61,7 @@ hashtable_t *ht_create(arena_t *arena, size_t initial_cap, double load_factor);
  * @param key           String key (will be copied to arena)
  * @param value         Value pointer to store
  *
- * @return              1 on success, 0 on failure (table full or invalid args)
+ * @return              0 on success, 1 on failure (table full or invalid args)
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */
@@ -85,7 +85,7 @@ void *ht_get(hashtable_t *ht, const char *key);
  * @param ht            Hashtable pointer
  * @param key           String key to remove
  *
- * @return              1 if removed, 0 if not found
+ * @return              0 if removed, 1 if not found
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */

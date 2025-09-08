@@ -407,12 +407,15 @@ update_object_allocation_stats(agent_context_t *ctx,
 	int index = find_or_add_object_type(ctx->object_metrics, class_sig);
 	if (index >= 0)
 	{
-		__atomic_add_fetch(
-		    &ctx->object_metrics->allocation_counts[index], 1, __ATOMIC_RELAXED);
-		__atomic_add_fetch(
-		    &ctx->object_metrics->total_bytes[index], safe_sz, __ATOMIC_RELAXED);
-		__atomic_add_fetch(
-		    &ctx->object_metrics->current_instances[index], 1, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&ctx->object_metrics->allocation_counts[index],
+		                          1,
+		                          memory_order_relaxed);
+		atomic_fetch_add_explicit(&ctx->object_metrics->total_bytes[index],
+		                          safe_sz,
+		                          memory_order_relaxed);
+		atomic_fetch_add_explicit(&ctx->object_metrics->current_instances[index],
+		                          1,
+		                          memory_order_relaxed);
 
 		/* Update size statistics */
 		pthread_mutex_lock(&ctx->samples_lock);
@@ -1323,132 +1326,132 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	pthread_mutex_unlock(&global_ctx->samples_lock);
 }
 
-/* Enhanced find_or_create_stats with additional safety checks */
-static class_stats_t *
-find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
-{
+// /* Enhanced find_or_create_stats with additional safety checks */
+// static class_stats_t *
+// find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
+// {
 
-	assert(ctx != NULL);
-	assert(ctx->class_table != NULL);
-	assert(class_sig != NULL);
+// 	assert(ctx != NULL);
+// 	assert(ctx->class_table != NULL);
+// 	assert(class_sig != NULL);
 
-	/* Additional validation */
-	if (!class_sig || class_sig[0] == '\0')
-		return NULL;
+// 	/* Additional validation */
+// 	if (!class_sig || class_sig[0] == '\0')
+// 		return NULL;
 
-	/* Try to find existing stats using API */
-	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
-	if (stats)
-		return stats; /* Found existing entry */
+// 	/* Try to find existing stats using API */
+// 	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
+// 	if (stats)
+// 		return stats; /* Found existing entry */
 
-	/* Check load factor before creating new entry */
-	if (ht_get_load(ctx->class_table) >= 0.75)
-	{
-		LOG_ERROR("Hash table load factor exceeded");
-		return NULL;
-	}
+// 	/* Check load factor before creating new entry */
+// 	if (ht_get_load(ctx->class_table) >= 0.75)
+// 	{
+// 		LOG_ERROR("Hash table load factor exceeded");
+// 		return NULL;
+// 	}
 
-	/* Create new stats entry - stats will be memset to 0 by arena */
-	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
-	if (!stats)
-	{
-		LOG_ERROR("Failed to allocate class stats");
-		return NULL;
-	}
+// 	/* Create new stats entry - stats will be memset to 0 by arena */
+// 	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
+// 	if (!stats)
+// 	{
+// 		LOG_ERROR("Failed to allocate class stats");
+// 		return NULL;
+// 	}
 
-	/* Add to hashtable using API */
-	if (!ht_put(ctx->class_table, class_sig, stats))
-	{
-		LOG_ERROR("Failed to add class stats to hashtable");
-		return NULL;
-	}
+// 	/* Add to hashtable using API */
+// 	if (!ht_put(ctx->class_table, class_sig, stats))
+// 	{
+// 		LOG_ERROR("Failed to add class stats to hashtable");
+// 		return NULL;
+// 	}
 
-	LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)",
-	          class_sig,
-	          ht_get_load(ctx->class_table));
-	return stats;
-}
+// 	LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)",
+// 	          class_sig,
+// 	          ht_get_load(ctx->class_table));
+// 	return stats;
+// }
 
 /* Robust heap object callback with enhanced error handling */
-static jint JNICALL
-heap_object_callback(jvmtiHeapReferenceKind reference_kind,
-                     const jvmtiHeapReferenceInfo *reference_info,
-                     jlong class_tag,
-                     jlong referrer_class_tag,
-                     jlong size,
-                     jlong *tag_ptr,
-                     jlong *referrer_tag,
-                     jint length,
-                     void *user_data)
-{
-	UNUSED(reference_kind);
-	UNUSED(reference_info);
-	UNUSED(referrer_class_tag);
-	UNUSED(tag_ptr);
-	UNUSED(referrer_tag);
-	UNUSED(length);
+// static jint JNICALL
+// heap_object_callback(jvmtiHeapReferenceKind reference_kind,
+//                      const jvmtiHeapReferenceInfo *reference_info,
+//                      jlong class_tag,
+//                      jlong referrer_class_tag,
+//                      jlong size,
+//                      jlong *tag_ptr,
+//                      jlong *referrer_tag,
+//                      jint length,
+//                      void *user_data)
+// {
+// 	UNUSED(reference_kind);
+// 	UNUSED(reference_info);
+// 	UNUSED(referrer_class_tag);
+// 	UNUSED(tag_ptr);
+// 	UNUSED(referrer_tag);
+// 	UNUSED(length);
 
-	/* No-op */
-	if (class_tag == 0)
-		return JVMTI_VISIT_OBJECTS;
+// 	/* No-op */
+// 	if (class_tag == 0)
+// 		return JVMTI_VISIT_OBJECTS;
 
-	if (size < 0)
-	{
-		LOG_ERROR("Negative object size %ld for class_tag %ld", size, class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
+// 	if (size < 0)
+// 	{
+// 		LOG_ERROR("Negative object size %ld for class_tag %ld", size, class_tag);
+// 		return JVMTI_VISIT_OBJECTS;
+// 	}
 
-	if (!user_data)
-	{
-		LOG_ERROR("Null user_data in heap callback");
-		return JVMTI_VISIT_ABORT;
-	}
+// 	if (!user_data)
+// 	{
+// 		LOG_ERROR("Null user_data in heap callback");
+// 		return JVMTI_VISIT_ABORT;
+// 	}
 
-	heap_iteration_context_t *ctx = (heap_iteration_context_t *)user_data;
+// 	heap_iteration_context_t *ctx = (heap_iteration_context_t *)user_data;
 
-	/* Validate context */
-	if (!ctx->class_table)
-	{
-		LOG_ERROR("Invalid context in heap callback");
-		return JVMTI_VISIT_ABORT;
-	}
+// 	/* Validate context */
+// 	if (!ctx->class_table)
+// 	{
+// 		LOG_ERROR("Invalid context in heap callback");
+// 		return JVMTI_VISIT_ABORT;
+// 	}
 
-	/* class_tag should be a pointer to class_info_t struct */
-	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
-	if (!info->in_heap_iteration)
-	{
-		LOG_INFO("Class %s not in iteration", info->class_sig);
-		return JVMTI_VISIT_OBJECTS;
-	}
+// 	/* class_tag should be a pointer to class_info_t struct */
+// 	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
+// 	if (!info->in_heap_iteration)
+// 	{
+// 		LOG_INFO("Class %s not in iteration", info->class_sig);
+// 		return JVMTI_VISIT_OBJECTS;
+// 	}
 
-	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
+// 	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
 
-	if (!stats)
-		return JVMTI_VISIT_OBJECTS;
+// 	if (!stats)
+// 		return JVMTI_VISIT_OBJECTS;
 
-	/* Overflow protection for counters */
-	if (stats->instance_count == UINT64_MAX)
-	{
-		LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
+// 	/* Overflow protection for counters */
+// 	if (stats->instance_count == UINT64_MAX)
+// 	{
+// 		LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
+// 		return JVMTI_VISIT_OBJECTS;
+// 	}
 
-	uint64_t safe_size = (uint64_t)size; /* Convert after validation */
-	if (stats->total_size > UINT64_MAX - safe_size)
-	{
-		LOG_ERROR("Total size overflow for class_tag %ld", class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
+// 	uint64_t safe_size = (uint64_t)size; /* Convert after validation */
+// 	if (stats->total_size > UINT64_MAX - safe_size)
+// 	{
+// 		LOG_ERROR("Total size overflow for class_tag %ld", class_tag);
+// 		return JVMTI_VISIT_OBJECTS;
+// 	}
 
-	stats->instance_count++;
-	stats->total_size += safe_size;
+// 	stats->instance_count++;
+// 	stats->total_size += safe_size;
 
-	/* Safe average calculation */
-	if (stats->instance_count > 0)
-		stats->avg_size = stats->total_size / stats->instance_count;
+// 	/* Safe average calculation */
+// 	if (stats->instance_count > 0)
+// 		stats->avg_size = stats->total_size / stats->instance_count;
 
-	return JVMTI_VISIT_OBJECTS;
-}
+// 	return JVMTI_VISIT_OBJECTS;
+// }
 
 /**
  * Add a method to the metrics structure
@@ -1891,8 +1894,10 @@ init_jvm_capabilities(agent_context_t *ctx)
 	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
 
 	/* Set heap callbacks */
-	memset(&ctx->callbacks.heap_callbacks, 0, sizeof(ctx->callbacks.heap_callbacks));
-	ctx->callbacks.heap_callbacks.heap_reference_callback = heap_object_callback;
+	// memset(&ctx->callbacks.heap_callbacks, 0,
+	// sizeof(ctx->callbacks.heap_callbacks));
+	// // ctx->callbacks.heap_callbacks.heap_reference_callback =
+	// heap_object_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,

@@ -12,6 +12,7 @@
 
 typedef struct package_filter package_filter_t;
 typedef struct class_q_entry class_q_entry_t;
+typedef struct jobject_list jobject_list_t;
 
 /* Metric flags for method sampling */
 enum metric_flags
