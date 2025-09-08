@@ -437,7 +437,7 @@ tui_draw_heap_view(tui_context_t *ctx)
 		return;
 	}
 
-	tui_append_to_buffer("HEAP USAGE BY CLASS\n");
+	tui_append_to_buffer("HEAP USAGE BY CLASS (DEEP SIZE ANALYSIS)\n");
 	for (int i = 0; i < ctx->terminal.width; i++)
 	{
 		tui_append_to_buffer("─");
@@ -445,57 +445,115 @@ tui_draw_heap_view(tui_context_t *ctx)
 	tui_append_to_buffer("\n");
 
 	/* Find max total_sz for bar scaling */
-	uint64_t max_total_sz = 0;
+	uint64_t max_shallow_sz = 0;
+	uint64_t max_deep_sz    = 0;
 	for (int i = 0; i < ctx->heap_count; i++)
 	{
-		if (ctx->heap[i].total_sz > max_total_sz)
-			max_total_sz = ctx->heap[i].total_sz;
+		if (ctx->heap[i].total_sz > max_shallow_sz)
+			max_shallow_sz = ctx->heap[i].total_sz;
+
+		if (ctx->heap[i].total_deep_sz > max_deep_sz)
+			max_deep_sz = ctx->heap[i].total_deep_sz;
 	}
 
+	/* Use the larger of the two for unified scaling */
+	uint64_t max_size = (max_deep_sz > max_shallow_sz) ? max_deep_sz : max_shallow_sz;
+
 	/* Calculate available width for bars (reserve space for data columns) */
-	int bar_width = ctx->terminal.width - 45; /* Reserve ~45 chars for text */
-	if (bar_width < 10)
-		bar_width = 10;
+	int bar_width = ctx->terminal.width - 60; /* Reserve ~60 chars for text */
+	if (bar_width < 15)
+		bar_width = 15;
 
 	for (int i = 0; i < ctx->heap_count; i++)
 	{
-		char total_size_str[32];
-		char avg_size_str[32];
+		char shallow_total_str[32];
+		char deep_total_str[32];
+		char shallow_avg_str[32];
+		char deep_avg_str[32];
 		char instance_str[32];
-		char line_buffer[256];
+		char ratio_str[16];
+		char line_buffer[512];
 
 		/* Format the numbers */
 		tui_format_number(
 		    ctx->heap[i].instance_count, instance_str, sizeof(instance_str));
 		tui_format_size(
-		    ctx->heap[i].total_sz, total_size_str, sizeof(total_size_str));
-		tui_format_size(ctx->heap[i].avg_sz, avg_size_str, sizeof(avg_size_str));
+		    ctx->heap[i].total_sz, shallow_total_str, sizeof(shallow_total_str));
+		tui_format_size(
+		    ctx->heap[i].total_deep_sz, deep_total_str, sizeof(deep_total_str));
+		tui_format_size(
+		    ctx->heap[i].avg_sz, shallow_avg_str, sizeof(shallow_avg_str));
+		tui_format_size(
+		    ctx->heap[i].avg_deep_sz, deep_avg_str, sizeof(deep_avg_str));
 
-		/* First line: class name */
-		snprintf(
-		    line_buffer, sizeof(line_buffer), "%s\n", ctx->heap[i].class_name);
-		tui_append_to_buffer(line_buffer);
+		/* Calculate deep/shallow ratio */
+		double ratio =
+		    (ctx->heap[i].total_sz > 0)
+			? (double)ctx->heap[i].total_deep_sz / ctx->heap[i].total_sz
+			: 1.0;
+		snprintf(ratio_str, sizeof(ratio_str), "%.1fx", ratio);
 
-		/* Second line: data with bar */
-		int bar_length =
-		    (max_total_sz > 0)
-			? (int)((ctx->heap[i].total_sz * bar_width) / max_total_sz)
-			: 0;
+		/* First line: class name with ratio indicator */
+		const char *ratio_indicator = "●";
+		if (ratio > 5.0)
+			ratio_indicator = "⚠"; /* High expansion ratio */
+		else if (ratio > 2.0)
+			ratio_indicator = "▲"; /* Moderate expansion */
+		else if (ratio < 1.5)
+			ratio_indicator = "·"; /* Low expansion */
 
 		snprintf(line_buffer,
 		         sizeof(line_buffer),
-		         "│ %s inst │ %s │ %s avg │ ",
-		         instance_str,
-		         total_size_str,
-		         avg_size_str);
+		         "%s %s %s\n",
+		         ctx->heap[i].class_name,
+		         ratio_indicator,
+		         ratio_str);
 		tui_append_to_buffer(line_buffer);
 
-		/* Draw the bar */
-		for (int j = 0; j < bar_length; j++)
-			tui_append_to_buffer("█");
+		/* Second line: instance count and shallow size data */
+		snprintf(line_buffer,
+		         sizeof(line_buffer),
+		         "│ %s inst │ Shallow: %s │ %s avg │ ",
+		         instance_str,
+		         shallow_total_str,
+		         shallow_avg_str);
+		tui_append_to_buffer(line_buffer);
 
-		tui_append_to_buffer("\n\n");
+		/* Draw shallow size bar */
+		int shallow_bar_length =
+		    (max_size > 0) ? (int)((ctx->heap[i].total_sz * bar_width) / max_size)
+				   : 0;
+
+		for (int j = 0; j < shallow_bar_length; j++)
+			tui_append_to_buffer("▒"); /* Light shade for shallow */
+		tui_append_to_buffer("\n");
+
+		/* Third line: deep size data */
+		snprintf(line_buffer,
+		         sizeof(line_buffer),
+		         "│ %s     │ Deep:    %s │ %s avg │ ",
+		         "        ", /* Align with instance count spacing */
+		         deep_total_str,
+		         deep_avg_str);
+		tui_append_to_buffer(line_buffer);
+
+		/* Draw deep size bar */
+		int deep_bar_length =
+		    (max_size > 0)
+			? (int)((ctx->heap[i].total_deep_sz * bar_width) / max_size)
+			: 0;
+
+		for (int j = 0; j < deep_bar_length; j++)
+			tui_append_to_buffer("█"); /* Solid block for deep */
+		tui_append_to_buffer("\n");
+
+		/* Add spacing between entries */
+		tui_append_to_buffer("\n");
 	}
+
+	/* Add legend */
+	tui_append_to_buffer("Legend: ▒ Shallow Size  █ Deep Size  ");
+	tui_append_to_buffer("⚠ High Ratio (>5x)  ▲ Moderate (2-5x)  · Low (<1.5x)\n");
 }
 
 void

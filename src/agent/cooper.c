@@ -1893,12 +1893,6 @@ init_jvm_capabilities(agent_context_t *ctx)
 	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
 	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
 
-	/* Set heap callbacks */
-	// memset(&ctx->callbacks.heap_callbacks, 0,
-	// sizeof(ctx->callbacks.heap_callbacks));
-	// // ctx->callbacks.heap_callbacks.heap_reference_callback =
-	// heap_object_callback;
-
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
 	                              &ctx->callbacks.event_callbacks,

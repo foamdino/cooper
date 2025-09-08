@@ -102,7 +102,9 @@ struct cooper_heap_stats_data
 	char class_signature[COOPER_MAX_SIGNATURE_LEN];
 	uint64_t instance_count;
 	uint64_t total_sz;
+	uint64_t total_deep_sz;
 	uint64_t avg_sz;
+	uint64_t avg_deep_sz;
 };
 
 struct cooper_sample_entry

@@ -521,7 +521,9 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 		heap_stats_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
 		heap_stats_data.instance_count = stats->instance_count;
 		heap_stats_data.total_sz       = stats->total_size;
+		heap_stats_data.total_deep_sz  = stats->total_deep_size;
 		heap_stats_data.avg_sz         = stats->avg_size;
+		heap_stats_data.avg_deep_sz    = stats->avg_deep_size;
 
 		cooper_shm_write_data(
 		    ctx->shm_ctx, COOPER_DATA_HEAP_STATS, &heap_stats_data);
@@ -868,9 +870,21 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 }
 
 static jint JNICALL
-heap_object_callback(
-    jlong class_tag, jlong size, jlong *tag_ptr, jint length, void *user_data)
+heap_object_callback(jvmtiHeapReferenceKind reference_kind,
+                     const jvmtiHeapReferenceInfo *reference_info,
+                     jlong class_tag,
+                     jlong referrer_class_tag,
+                     jlong size,
+                     jlong *tag_ptr,
+                     jlong *referrer_tag,
+                     jint length,
+                     void *user_data)
 {
+	UNUSED(reference_kind);
+	UNUSED(reference_info);
+	UNUSED(referrer_class_tag);
+	UNUSED(tag_ptr);
+	UNUSED(referrer_tag);
 	UNUSED(length);
 
 	/* No-op */
@@ -906,7 +920,7 @@ heap_object_callback(
 		return JVMTI_VISIT_OBJECTS;
 	}
 
-	/* EXISTING LOGIC: Update class statistics (shallow size) */
+	/* Update class statistics (shallow size) */
 	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
 	if (!stats)
 		return JVMTI_VISIT_OBJECTS;
@@ -925,7 +939,7 @@ heap_object_callback(
 		return JVMTI_VISIT_OBJECTS;
 	}
 
-	/* Update shallow size statistics (existing logic) */
+	/* Update shallow size statistics */
 	stats->instance_count++;
 	stats->total_size += safe_size;
 
@@ -933,112 +947,81 @@ heap_object_callback(
 	if (stats->instance_count > 0)
 		stats->avg_size = stats->total_size / stats->instance_count;
 
-	/* NEW LOGIC: Track this object for deep size calculation */
-	if (!ctx->object_table)
+	uint64_t estimated_deep_size = safe_size;
+	// TODO move this into a table of name->value
+
+	/* Apply class-specific multipliers based on class signature */
+	const char *class_sig = info->class_sig;
+
+	if (strstr(class_sig, "java/util/"))
 	{
-		/* Object tracking not enabled, skip deep size tracking */
-		return JVMTI_VISIT_OBJECTS;
+		/* Collections – size dominated by backing arrays, often ~3-5x */
+		if (strstr(class_sig, "HashMap")
+		    || strstr(class_sig, "ConcurrentHashMap"))
+			estimated_deep_size = safe_size * 4;
+		else if (strstr(class_sig, "ArrayList"))
+			estimated_deep_size = safe_size * 3;
+		else
+			estimated_deep_size = safe_size * 3;
 	}
-
-	/* Assign a unique tag to this object if it doesn't have one */
-	if (!*tag_ptr)
+	else if (strstr(class_sig, "java/lang/String"))
 	{
-		*tag_ptr = ctx->next_object_tag++;
+		/* Strings include char[] backing – ~2x is a good rule */
+		estimated_deep_size = safe_size * 2;
 	}
-
-	/* Store object reference info for deep size calculation */
-	char tag_key[32];
-	snprintf(tag_key, sizeof(tag_key), "%ld", *tag_ptr);
-
-	object_ref_info_t *obj_info = arena_alloc(ctx->arena, sizeof(object_ref_info_t));
-	if (obj_info)
+	else if (class_sig[0] == '[')
 	{
-		obj_info->object_tag   = *tag_ptr;
-		obj_info->class_tag    = class_tag;
-		obj_info->shallow_size = safe_size;
-		obj_info->deep_size    = safe_size; /* Initialize with shallow size */
-		obj_info->deep_size_calculated = 0;
-
-		/* Insert into object tracking table */
-		if (ht_put(ctx->object_table, tag_key, obj_info) != COOPER_OK)
+		/* Arrays: estimate based on component type */
+		if (strstr(class_sig, "[L"))
 		{
-			LOG_DEBUG("Failed to insert object %lld into tracking table",
-			          *tag_ptr);
-			arena_free(ctx->arena, obj_info);
+			/* Object arrays – references dominate */
+			estimated_deep_size = safe_size * 2;
 		}
+		else
+		{
+			/* Primitive arrays – low overhead */
+			estimated_deep_size = safe_size + (safe_size / 8);
+		}
+	}
+	else if (strstr(class_sig, "java/lang/") || strstr(class_sig, "java/time/")
+	         || strstr(class_sig, "java/"))
+	{
+		/* Standard Java objects – modest overhead */
+		estimated_deep_size = safe_size + (safe_size / 2);
+	}
+	else if (strstr(class_sig, "org/springframework/data/")
+	         || strstr(class_sig, "javax/persistence/")
+	         || strstr(class_sig, "org/hibernate/") || strstr(class_sig, "Repository")
+	         || strstr(class_sig, "DAO"))
+	{
+		/* Persistence layer beans are heavy due to proxies + metadata */
+		estimated_deep_size =
+		    safe_size * 3 + (64 * 1024); /* add ~64KB overhead */
+	}
+	else if (strstr(class_sig, "org/springframework/")
+	         || strstr(class_sig, "Controller") || strstr(class_sig, "Transformer")
+	         || strstr(class_sig, "Service"))
+	{
+		/* Typical Spring beans / app classes – proxies, reflection, annotations
+		 */
+		estimated_deep_size = safe_size * 2 + (8 * 1024); /* add ~8KB baseline */
 	}
 	else
 	{
-		LOG_DEBUG("Failed to allocate object_ref_info for tag %lld", *tag_ptr);
+		/* Unknown application objects – conservative fallback */
+		estimated_deep_size = safe_size * 2;
 	}
 
-	return JVMTI_VISIT_OBJECTS;
-}
+	/* Update deep size statistics */
+	stats->total_deep_size += estimated_deep_size;
+	if (stats->instance_count > 0)
+		stats->avg_deep_size = stats->total_deep_size / stats->instance_count;
 
-static jint JNICALL
-heap_reference_callback(jvmtiHeapReferenceKind reference_kind,
-                        const jvmtiHeapReferenceInfo *reference_info,
-                        jlong class_tag,
-                        jlong referrer_class_tag,
-                        jlong size,
-                        jlong *tag_ptr,
-                        jlong *referrer_tag_ptr,
-                        jint length,
-                        void *user_data)
-{
-	UNUSED(reference_info);
-	UNUSED(class_tag);
-	UNUSED(referrer_class_tag);
-	UNUSED(size);
-	UNUSED(length);
-
-	/* Only track meaningful object references for deep size calculation */
-	if (reference_kind != JVMTI_HEAP_REFERENCE_FIELD
-	    && reference_kind != JVMTI_HEAP_REFERENCE_ARRAY_ELEMENT
-	    && reference_kind != JVMTI_HEAP_REFERENCE_STATIC_FIELD)
-	{
-		return JVMTI_VISIT_OBJECTS;
-	}
-
-	/* Skip if we don't have both tags */
-	if (!tag_ptr || !referrer_tag_ptr || !*tag_ptr || !*referrer_tag_ptr)
-		return JVMTI_VISIT_OBJECTS;
-
-	if (!user_data)
-		return JVMTI_VISIT_OBJECTS;
-
-	heap_iteration_context_t *ctx = (heap_iteration_context_t *)user_data;
-
-	if (!ctx->object_table)
-		return JVMTI_VISIT_OBJECTS;
-
-	/* Find referrer object in our tracking table */
-	char referrer_key[32];
-	snprintf(referrer_key, sizeof(referrer_key), "%ld", *referrer_tag_ptr);
-
-	object_ref_info_t *referrer =
-	    (object_ref_info_t *)ht_get(ctx->object_table, referrer_key);
-	if (!referrer)
-		return JVMTI_VISIT_OBJECTS;
-
-	/* Find referenced object in our tracking table */
-	char ref_key[32];
-	snprintf(ref_key, sizeof(ref_key), "%ld", *tag_ptr);
-
-	object_ref_info_t *referenced =
-	    (object_ref_info_t *)ht_get(ctx->object_table, ref_key);
-	if (referenced)
-	{
-		/* Add referenced object's shallow size to referrer's deep size */
-		/* Note: This is a simple additive model - more sophisticated approaches
-		 * could handle shared references differently */
-		referrer->deep_size += referenced->shallow_size;
-
-		LOG_DEBUG("Reference: object %lld -> object %lld (added %llu bytes)",
-		          *referrer_tag_ptr,
-		          *tag_ptr,
-		          (unsigned long long)referenced->shallow_size);
-	}
+	LOG_DEBUG("Object: %s, shallow: %lu, estimated_deep: %lu, total_deep: %lu",
+	          info->class_sig,
+	          safe_size,
+	          estimated_deep_size,
+	          stats->total_deep_size);
 
 	return JVMTI_VISIT_OBJECTS;
 }
@@ -1095,34 +1078,16 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	/* Create generic hashtable for class statistics */
 	size_t hash_size      = calculate_hashtable_size(class_count);
 	hashtable_t *class_ht = ht_create(scratch_arena, hash_size, 0.75);
+
 	if (!class_ht)
 	{
-		LOG_ERROR("Failed to create class generic hashtable");
-		goto cleanup_classes;
-	}
-
-	size_t object_hash_size = hash_size * 10; /* Estimate more objects than classes */
-	hashtable_t *object_ht  = ht_create(scratch_arena, object_hash_size, 0.75);
-	if (!object_ht)
-	{
-		LOG_ERROR("Failed to create object hashtable for deep size tracking");
+		LOG_ERROR("Failed to create hashtable");
 		goto cleanup_classes;
 	}
 
 	/* Set up iteration context with validation */
-	heap_iteration_context_t iter_ctx = {.env             = env,
-	                                     .jvmti           = jvmti,
-	                                     .arena           = scratch_arena,
-	                                     .class_table     = class_ht,
-	                                     .object_table    = object_ht,
-	                                     .next_object_tag = 1};
-
-	/* Validate context before proceeding */
-	if (!iter_ctx.env || !iter_ctx.jvmti || !iter_ctx.arena || !iter_ctx.class_table)
-	{
-		LOG_ERROR("Invalid iteration context");
-		goto cleanup_classes;
-	}
+	heap_iteration_context_t iter_ctx = {
+	    .env = env, .jvmti = jvmti, .arena = scratch_arena, .class_table = class_ht};
 
 	/* Tag classes for heap iteration */
 	for (int i = 0; i < class_count; i++)
@@ -1136,93 +1101,18 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			info->in_heap_iteration = 1;
 		}
 	}
+	LOG_INFO("Starting heap analysis");
+	jvmtiHeapCallbacks callbacks      = {0};
+	callbacks.heap_reference_callback = heap_object_callback;
 
-	/* PHASE 1: UPDATED - Use IterateThroughHeap for object collection */
-	LOG_INFO("Phase 1: Collecting objects and shallow sizes");
-	jvmtiHeapCallbacks phase1_callbacks      = {0};
-	phase1_callbacks.heap_iteration_callback = heap_object_callback;
-
-	err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &phase1_callbacks, &iter_ctx);
+	err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &iter_ctx);
 	if (err != JVMTI_ERROR_NONE)
 	{
-		LOG_ERROR("Phase 1 heap iteration failed: %d", err);
+		LOG_ERROR("FollowReferences failed: %d", err);
 		goto cleanup_tags;
 	}
 
-	/* PHASE 2: NEW - Use FollowReferences for deep size calculation */
-	LOG_INFO("Phase 2: Calculating deep sizes via reference tracking");
-	jvmtiHeapCallbacks phase2_callbacks      = {0};
-	phase2_callbacks.heap_reference_callback = heap_reference_callback;
-
-	err = (*jvmti)->FollowReferences(
-	    jvmti, 0, NULL, NULL, &phase2_callbacks, &iter_ctx);
-	if (err != JVMTI_ERROR_NONE)
-	{
-		LOG_WARN("Phase 2 reference tracking failed: %d (continuing with shallow "
-		         "sizes)",
-		         err);
-		/* Continue processing - we still have shallow size data */
-	}
-
-	/* PHASE 3: NEW - Aggregate deep sizes back to class statistics */
-	LOG_INFO("Phase 3: Aggregating deep sizes by class");
-
-	for (size_t i = 0; i < iter_ctx.object_table->capacity; i++)
-	{
-		ht_entry_t *entry = &iter_ctx.object_table->entries[i];
-
-		if (entry->state != HT_OCCUPIED || !entry->value)
-			continue;
-
-		object_ref_info_t *obj_info = (object_ref_info_t *)entry->value;
-		class_info_t *class_info = (class_info_t *)(intptr_t)obj_info->class_tag;
-
-		if (!class_info || !class_info->in_heap_iteration)
-			continue;
-
-		/* Find the class stats for this object's class */
-		class_stats_t *stats =
-		    (class_stats_t *)ht_get(iter_ctx.class_table, class_info->class_sig);
-		if (stats)
-		{
-			/* Add this object's deep size to the class total */
-			stats->total_deep_size += obj_info->deep_size;
-		}
-
-		/* Calculate avg_deep_size */
-		if (stats->instance_count > 0)
-		{
-			stats->avg_deep_size =
-			    stats->total_deep_size / stats->instance_count;
-		}
-	}
-
-	// /* Calculate average deep sizes for each class */
-	// for (size_t i = 0; i < iter_ctx.class_table->capacity; i++)
-	// {
-	//     ht_entry_t *entry = &iter_ctx.class_table->entries[i];
-
-	//     if (entry->state != HT_OCCUPIED || !entry->value)
-	//         continue;
-
-	//     class_stats_t *stats = (class_stats_t *)entry->value;
-	//     if (stats->instance_count > 0)
-	//     {
-	//         stats->avg_deep_size = stats->total_deep_size / stats->instance_count;
-	//     }
-	// }
-
-	// /* Use centralized heap callbacks */
-	// LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
-	// err = (*jvmti)->FollowReferences(
-	//     jvmti, 0, NULL, NULL, &ctx->callbacks.heap_callbacks, &iter_ctx);
-	// if (err != JVMTI_ERROR_NONE)
-	// {
-	// 	LOG_ERROR("Heap iteration failed: %d", err);
-	// 	goto cleanup_tags;
-	// }
-	// LOG_INFO("Heap iteration completed, processing %zu unique classes",
-	//          iter_ctx.class_table->count);
+	LOG_INFO("Heap analysis completed. Classes: %zu", iter_ctx.class_table->count);
 
 	/* Process hashtable results into top-N heap with bounds checking */
 	size_t processed = 0;
@@ -1244,10 +1134,20 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 		processed++;
 
+		/* DLog stats before adding to heap */
+		LOG_DEBUG("Final stats for %s: instances=%llu, shallow_total=%llu, "
+		          "deep_total=%llu",
+		          entry->key,
+		          (unsigned long long)stats->instance_count,
+		          (unsigned long long)stats->total_size,
+		          (unsigned long long)stats->total_deep_size);
+
+		uint64_t sort_size = (stats->total_deep_size > 0) ? stats->total_deep_size
+		                                                  : stats->total_size;
+
 		/* Only resolve names for potential top-N entries */
 		if (heap->size < TOP_N
-		    || stats->total_deep_size
-		           > ((class_stats_t *)heap->elements[0])->total_deep_size)
+		    || sort_size > ((class_stats_t *)heap->elements[0])->total_deep_size)
 		{
 			class_stats_t *heap_entry =
 			    arena_alloc(scratch_arena, sizeof(class_stats_t));

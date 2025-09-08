@@ -289,8 +289,6 @@ struct heap_iteration_context
 	jvmtiEnv *jvmti;
 	arena_t *arena;
 	hashtable_t *class_table;
-	hashtable_t *object_table;
-	jlong next_object_tag;
 };
 
 struct callbacks

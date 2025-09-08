@@ -79,7 +79,9 @@ struct tui_heap_display
 	char class_name[UI_MAX_SIGNATURE_LEN];
 	uint64_t instance_count;
 	uint64_t total_sz;
+	uint64_t total_deep_sz;
 	uint64_t avg_sz;
+	uint64_t avg_deep_sz;
 	time_t last_updated;
 };
 

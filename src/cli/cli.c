@@ -380,7 +380,9 @@ read_shared_memory_data()
 
 					/* Semantic field names */
 					heap[idx].total_sz       = stats->total_sz;
+					heap[idx].total_deep_sz  = stats->total_deep_sz;
 					heap[idx].avg_sz         = stats->avg_sz;
+					heap[idx].avg_deep_sz    = stats->avg_deep_sz;
 					heap[idx].instance_count = stats->instance_count;
 					heap[idx].last_updated   = current_time;
 				}
