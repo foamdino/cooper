@@ -695,10 +695,10 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 		return;
 
 	/* We found a method to track. Atomically increment its total call count. */
-	uint64_t current_calls = __atomic_add_fetch(
+	uint64_t current_calls = atomic_fetch_add_explicit(
 	    &global_ctx->metrics->call_counts[method_info->sample_index],
 	    1,
-	    __ATOMIC_RELAXED);
+	    memory_order_relaxed);
 
 	int sample_rate =
 	    global_ctx->metrics
