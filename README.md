@@ -14,9 +14,6 @@ Need to have a `trace.ini` file in the working directory
 
 ## Code metrics
 
-<!-- TOKEI-START -->
-
-<!-- TOKEI-END -->
 
 ## Valgrind
 
@@ -93,3 +90,41 @@ We need to extend the cpu.h lib to support retrieving the number of cores.
   * OS-level system call tracing (eBPF/ftrace etc)
   * Native lib load/unload events
   * CPU clock cycles integration (v1 done)
+
+<!-- TOKEI-START -->
+## 📊 Code Statistics
+
+**Generated:** 2025-09-09 11:29:44 UTC for release `v0.0.3-alpha`
+
+This report tracks project complexity to maintain our goal of a minimal, dependency-free JVM agent.
+
+```
+===============================================================================
+ Language            Files        Lines         Code     Comments       Blanks
+===============================================================================
+ C                      24        10416         7208         1614         1594
+ C Header               24         4058         2431         1081          546
+ Shell                   2          301          216           53           32
+ Java                    3          256          142           62           52
+ Batch                   1          149          134            0           15
+ INI                     2           86           42           26           18
+ XML                     1           37           35            0            2
+ BASH                    1           35           21            7            7
+-------------------------------------------------------------------------------
+ Markdown                4          327            0          231           96
+ |- BASH                 1            7            4            2            1
+ |- INI                  1           23           13            5            5
+ (Total)                            357           17          238          102
+===============================================================================
+ Total                  62        15665        10229         3074         2362
+===============================================================================
+```
+
+**Key Metrics:**
+- **Total C Lines:** 21
+- **Total C Files:** 46
+- **External Dependencies:** 0 (excluding system libraries)
+- **Build Tool:** Custom (nob.c)
+
+*Lower complexity = easier maintenance, faster builds, and reduced attack surface.*
+<!-- TOKEI-END -->
