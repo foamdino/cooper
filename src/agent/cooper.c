@@ -24,7 +24,8 @@ static const arena_config_t arena_configs[] =
     {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
     {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
-    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS}
+    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS},
+	{CALL_STACK_ARENA_ID, CALL_STACK_ARENA_NAME, CALL_STACK_ARENA_SZ, CALL_STACK_ARENA_BLOCKS}
 };
 /* clang-format on */
 
@@ -209,11 +210,12 @@ record_method_execution(agent_context_t *ctx,
 {
 	method_metrics_soa_t *metrics = ctx->metrics;
 
-	LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu, cycles=%lu\n",
-	          method_index,
-	          (unsigned long)exec_time_ns,
-	          (unsigned long)memory_bytes,
-	          (unsigned long)cycles);
+	// LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu,
+	// cycles=%lu\n",
+	//           method_index,
+	//           (unsigned long)exec_time_ns,
+	//           (unsigned long)memory_bytes,
+	//           (unsigned long)cycles);
 
 	/* Check for valid index */
 	if (method_index < 0 || (size_t)method_index >= metrics->count)
@@ -223,15 +225,16 @@ record_method_execution(agent_context_t *ctx,
 		return;
 	}
 
-	/* Update sample count */
-	__atomic_add_fetch(&metrics->sample_counts[method_index], 1, __ATOMIC_RELAXED);
+	// /* Update sample count */
+	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
+	// memory_order_relaxed);
 
 	/* Update timing metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
 	{
-		__atomic_add_fetch(&metrics->total_time_ns[method_index],
-		                   exec_time_ns,
-		                   __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
+		                          exec_time_ns,
+		                          memory_order_relaxed);
 
 		/* Update min/max */
 		pthread_mutex_lock(&ctx->samples_lock);
@@ -248,8 +251,9 @@ record_method_execution(agent_context_t *ctx,
 	/* Update memory metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
 	{
-		__atomic_add_fetch(
-		    &metrics->alloc_bytes[method_index], memory_bytes, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
+		                          memory_bytes,
+		                          memory_order_relaxed);
 
 		pthread_mutex_lock(&ctx->samples_lock);
 
@@ -261,15 +265,15 @@ record_method_execution(agent_context_t *ctx,
 
 	/* Update CPU metrics if enabled */
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-		__atomic_add_fetch(
-		    &metrics->cpu_cycles[method_index], cycles, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(
+		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
 
-	LOG_DEBUG(
-	    "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
-	    method_index,
-	    (unsigned long)metrics->sample_counts[method_index],
-	    (unsigned long)metrics->total_time_ns[method_index],
-	    (unsigned long)metrics->alloc_bytes[method_index]);
+	// LOG_DEBUG(
+	//     "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
+	//     method_index,
+	//     (unsigned long)metrics->sample_counts[method_index],
+	//     (unsigned long)metrics->total_time_ns[method_index],
+	//     (unsigned long)metrics->alloc_bytes[method_index]);
 }
 
 static object_allocation_metrics_t *
@@ -403,12 +407,15 @@ update_object_allocation_stats(agent_context_t *ctx,
 	int index = find_or_add_object_type(ctx->object_metrics, class_sig);
 	if (index >= 0)
 	{
-		__atomic_add_fetch(
-		    &ctx->object_metrics->allocation_counts[index], 1, __ATOMIC_RELAXED);
-		__atomic_add_fetch(
-		    &ctx->object_metrics->total_bytes[index], safe_sz, __ATOMIC_RELAXED);
-		__atomic_add_fetch(
-		    &ctx->object_metrics->current_instances[index], 1, __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&ctx->object_metrics->allocation_counts[index],
+		                          1,
+		                          memory_order_relaxed);
+		atomic_fetch_add_explicit(&ctx->object_metrics->total_bytes[index],
+		                          safe_sz,
+		                          memory_order_relaxed);
+		atomic_fetch_add_explicit(&ctx->object_metrics->current_instances[index],
+		                          1,
+		                          memory_order_relaxed);
 
 		/* Update size statistics */
 		pthread_mutex_lock(&ctx->samples_lock);
@@ -752,12 +759,12 @@ method_exit_callback(jvmtiEnv *jvmti,
 	if (!context)
 		return;
 
-	if (!context->sample || context->sample->method_index < 0)
-	{
-		LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
-		          context,
-		          context->sample);
-	}
+	// if (!context->sample || context->sample->method_index < 0)
+	// {
+	// 	LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
+	// 	          context,
+	// 	          context->sample);
+	// }
 
 	/* We need to look in our stack to find a corresponding method entry
 	Note that the JVM doesn't guarantee ordering of method entry/exits for a variety
@@ -781,7 +788,8 @@ method_exit_callback(jvmtiEnv *jvmti,
 	{
 		/* We need to search the stack for a matching method - this seems to be
 		 * the common case */
-		LOG_DEBUG("Method exit mismatch, searching for method [%p] in stack\n");
+		// LOG_DEBUG("Method exit mismatch, searching for method [%p] in
+		// stack\n");
 
 		/* Traverse stack to find target */
 		while (current)
@@ -810,11 +818,11 @@ method_exit_callback(jvmtiEnv *jvmti,
 	 * of samples */
 	if (!target)
 	{
-		LOG_DEBUG("No matching method found for methodID [%p]\n", method);
+		// LOG_DEBUG("No matching method found for methodID [%p]\n", method);
 		return;
 	}
 
-	LOG_DEBUG("Matching method found for methodID [%p]\n", method);
+	// LOG_DEBUG("Matching method found for methodID [%p]\n", method);
 	unsigned int flags = 0;
 
 	if (target->method_index >= 0
@@ -835,7 +843,7 @@ method_exit_callback(jvmtiEnv *jvmti,
 
 	if ((flags & METRIC_FLAG_MEMORY) != 0)
 	{
-		LOG_DEBUG("sampling memory for %d\n", target->method_index);
+		// LOG_DEBUG("sampling memory for %d\n", target->method_index);
 		/* JVM heap allocations during method execution */
 		memory_delta = target->current_alloc_bytes;
 	}
@@ -934,6 +942,7 @@ exception_callback(jvmtiEnv *jvmti_env,
 	/* TODO do something more useful with exception callbacks - just logging at the
 	 * moment is noise */
 #ifdef ENABLE_DEBUG_LOGS
+	return;
 	UNUSED(location);
 	UNUSED(catch_location);
 
@@ -1158,11 +1167,7 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 
 	/* Get cached class signature */
 	if (get_cached_class_signature(jvmti_env, klass, &class_sig) != COOPER_OK)
-	{
-		LOG_DEBUG("[object_alloc_callback] Unable to get class signature for "
-		          "object tracking\n");
 		return;
-	}
 
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
@@ -1173,17 +1178,11 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();
 	if (!context)
-	{
-		LOG_DEBUG("[object_alloc_callback] No context\n");
 		return;
-	}
 
 	method_sample_t *sample = context->sample;
 	if (!sample)
-	{
-		LOG_DEBUG("[object_alloc_callback] No sample\n");
 		return;
-	}
 
 	/* Check if memory metrics are enabled for this method */
 	if (sample->method_index < 0
@@ -1275,7 +1274,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	if (q_enq(global_ctx->class_queue, entry) != 0)
 	{
-		LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+		LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
 		/* Clean up the global reference if we couldn't enqueue */
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		/* Release entry mem back to arena on enqueue failure */
@@ -1285,6 +1284,58 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
+}
+
+static void JNICALL
+class_file_load_callback(jvmtiEnv *jvmti_env,
+                         JNIEnv *jni_env,
+                         jclass class_being_redefined,
+                         jobject loader,
+                         const char *name,
+                         jobject protection_domain,
+                         jint class_data_len,
+                         const unsigned char *class_data,
+                         jint *new_class_data_len,
+                         unsigned char **new_class_data)
+{
+	UNUSED(jvmti_env);
+	UNUSED(jni_env);
+	UNUSED(class_being_redefined);
+	UNUSED(loader);
+	UNUSED(protection_domain);
+	UNUSED(new_class_data_len);
+	UNUSED(new_class_data);
+
+	/* Fast filter check - no allocations */
+	if (!should_process_class(&global_ctx->package_filter, name))
+		return;
+
+	/* Class passed filter, enqueue for background processing */
+	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	class_q_entry_t *class_entry =
+	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+	if (!entry || !class_entry)
+	{
+		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		return;
+	}
+
+	/* Create our q entry */
+	class_entry->class_sig = arena_strdup(q_entry_arena, name);
+	entry->type            = Q_ENTRY_CLASS;
+
+	/* Scan class_data for annotations */
+	// TODO build out class file parsing in lib/jvm to deal with class_data
+	//... use class_data_len and class_data, add result to class_entry->annotations
+	// array
+	entry->data = class_entry;
+	/* Store the q entry in a hashtable
+	we look up the q entry in the class_load_callback and add it to the q for
+	background processing
+	*/
+	ht_put(global_ctx->interesting_classes, name, class_entry);
 }
 
 static void JNICALL
@@ -1327,139 +1378,6 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	pthread_mutex_unlock(&global_ctx->samples_lock);
 }
 
-/* Enhanced find_or_create_stats with additional safety checks */
-static class_stats_t *
-find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
-{
-
-	assert(ctx != NULL);
-	assert(ctx->class_table != NULL);
-	assert(class_sig != NULL);
-
-	/* Additional validation */
-	if (!class_sig || class_sig[0] == '\0')
-	{
-		LOG_DEBUG("Skipping null or empty class_sig");
-		return NULL;
-	}
-
-	/* Try to find existing stats using API */
-	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
-	if (stats)
-	{
-		/* Found existing entry */
-		return stats;
-	}
-
-	/* Check load factor before creating new entry */
-	if (ht_get_load(ctx->class_table) >= 0.75)
-	{
-		LOG_ERROR("Hash table load factor exceeded");
-		return NULL;
-	}
-
-	/* Create new stats entry - stats will be memset to 0 by arena */
-	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
-	if (!stats)
-	{
-		LOG_ERROR("Failed to allocate class stats");
-		return NULL;
-	}
-
-	/* Add to hashtable using API */
-	if (!ht_put(ctx->class_table, class_sig, stats))
-	{
-		LOG_ERROR("Failed to add class stats to hashtable");
-		return NULL;
-	}
-
-	LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)",
-	          class_sig,
-	          ht_get_load(ctx->class_table));
-	return stats;
-}
-
-/* Robust heap object callback with enhanced error handling */
-static jint JNICALL
-heap_object_callback(jvmtiHeapReferenceKind reference_kind,
-                     const jvmtiHeapReferenceInfo *reference_info,
-                     jlong class_tag,
-                     jlong referrer_class_tag,
-                     jlong size,
-                     jlong *tag_ptr,
-                     jlong *referrer_tag,
-                     jint length,
-                     void *user_data)
-{
-	UNUSED(reference_kind);
-	UNUSED(reference_info);
-	UNUSED(referrer_class_tag);
-	UNUSED(tag_ptr);
-	UNUSED(referrer_tag);
-	UNUSED(length);
-
-	/* No-op */
-	if (class_tag == 0)
-		return JVMTI_VISIT_OBJECTS;
-
-	if (size < 0)
-	{
-		LOG_DEBUG("Negative object size %ld for class_tag %ld", size, class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
-
-	if (!user_data)
-	{
-		LOG_ERROR("Null user_data in heap callback");
-		return JVMTI_VISIT_ABORT;
-	}
-
-	heap_iteration_context_t *ctx = (heap_iteration_context_t *)user_data;
-
-	/* Validate context */
-	if (!ctx->class_table)
-	{
-		LOG_ERROR("Invalid context in heap callback");
-		return JVMTI_VISIT_ABORT;
-	}
-
-	/* class_tag should be a pointer to class_info_t struct */
-	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
-	if (!info->in_heap_iteration)
-	{
-		LOG_INFO("Class %s not in iteration", info->class_sig);
-		return JVMTI_VISIT_OBJECTS;
-	}
-
-	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
-
-	if (!stats)
-		return JVMTI_VISIT_OBJECTS;
-
-	/* Overflow protection for counters */
-	if (stats->instance_count == UINT64_MAX)
-	{
-		LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
-
-	uint64_t safe_size = (uint64_t)size; /* Convert after validation */
-	if (stats->total_size > UINT64_MAX - safe_size)
-	{
-		LOG_WARN("Total size overflow for class_tag %ld", class_tag);
-		return JVMTI_VISIT_OBJECTS;
-	}
-
-	stats->instance_count++;
-	stats->total_size += safe_size;
-
-	/* Safe average calculation */
-	if (stats->instance_count > 0)
-		stats->avg_size = stats->total_size / stats->instance_count;
-
-	return JVMTI_VISIT_OBJECTS;
-}
-
 /**
  * Add a method to the metrics structure
  */
@@ -1474,12 +1392,6 @@ add_method_to_metrics(agent_context_t *ctx,
 	assert(ctx->metrics != NULL);
 
 	method_metrics_soa_t *metrics = ctx->metrics;
-
-	/* Add debug output to see what's being added */
-	LOG_DEBUG("Adding method to metrics: %s (rate=%d, flags=%u)\n",
-	          signature,
-	          sample_rate,
-	          flags);
 
 	/* Check if method already exists */
 	int index = find_method_index(metrics, signature);
@@ -1496,7 +1408,7 @@ add_method_to_metrics(agent_context_t *ctx,
 	if (metrics->count >= metrics->capacity)
 	{
 		/* Cannot grow in the current implementation with arenas */
-		LOG_DEBUG("Method metrics capacity reached (%zu)\n", metrics->capacity);
+		LOG_ERROR("Method metrics capacity reached (%zu)\n", metrics->capacity);
 		return -1;
 	}
 
@@ -1504,7 +1416,7 @@ add_method_to_metrics(agent_context_t *ctx,
 	arena_t *arena = ctx->arenas[METRICS_ARENA_ID];
 	if (!arena)
 	{
-		LOG_DEBUG("Could not find metrics arena\n");
+		LOG_ERROR("Could not find metrics arena\n");
 		return -1;
 	}
 	index = metrics->count;
@@ -1516,8 +1428,9 @@ add_method_to_metrics(agent_context_t *ctx,
 	metrics->min_time_ns[index]  = UINT64_MAX;
 	metrics->metric_flags[index] = flags;
 	metrics->count++;
-	LOG_DEBUG(
-	    "Added new method at index %d, total methods: %zu\n", index, metrics->count);
+	// LOG_DEBUG(
+	//     "Added new method at index %d, total methods: %zu\n", index,
+	//     metrics->count);
 	return index;
 }
 
@@ -1658,8 +1571,8 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 	    arena_alloc_aligned(arena, initial_capacity * sizeof(int), CACHE_LINE_SZ);
 	metrics->call_counts = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
-	metrics->sample_counts = arena_alloc_aligned(
-	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+	// metrics->sample_counts = arena_alloc_aligned(
+	//     arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->total_time_ns = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->min_time_ns = arena_alloc_aligned(
@@ -1672,14 +1585,18 @@ init_method_metrics(arena_t *arena, size_t initial_capacity)
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->cpu_cycles = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
+	metrics->call_sample_counts = arena_alloc_aligned(
+	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->metric_flags = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(unsigned int), CACHE_LINE_SZ);
 
 	/* Check if all allocations succeeded */
-	if (!metrics->signatures || !metrics->sample_rates || !metrics->call_counts
-	    || !metrics->sample_counts || !metrics->total_time_ns || !metrics->min_time_ns
-	    || !metrics->max_time_ns || !metrics->alloc_bytes || !metrics->peak_memory
-	    || !metrics->cpu_cycles || !metrics->metric_flags)
+	if (!metrics->signatures || !metrics->sample_rates
+	    || !metrics->call_counts
+	    /*|| !metrics->sample_counts*/
+	    || !metrics->total_time_ns || !metrics->min_time_ns || !metrics->max_time_ns
+	    || !metrics->alloc_bytes || !metrics->peak_memory || !metrics->cpu_cycles
+	    || !metrics->call_sample_counts || !metrics->metric_flags)
 	{
 		return NULL;
 	}
@@ -1765,7 +1682,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 
 		if (q_enq(global_ctx->class_queue, entry) != 0)
 		{
-			LOG_DEBUG("Failed to enqueue class: %s\n", class_sig);
+			LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
 			/* Clean up the global reference if we couldn't enqueue */
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			/* Release entry mem back to arena on enqueue failure */
@@ -1899,11 +1816,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
 	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
-
-	/* Set heap callbacks */
-	memset(&ctx->callbacks.heap_callbacks, 0, sizeof(ctx->callbacks.heap_callbacks));
-	ctx->callbacks.heap_callbacks.heap_reference_callback = heap_object_callback;
+	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
+	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
@@ -2028,6 +1942,10 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		global_ctx->arenas[arena_configs[i].id] = arena;
 	}
 
+	/* make interesting classes available for class file load callback */
+	global_ctx->interesting_classes =
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID], 100, 0.75);
+
 	/* Init logging after all arenas are created */
 	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];
 	if (!log_arena)
@@ -2114,6 +2032,16 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	if (!global_ctx->shm_ctx)
 	{
 		LOG_ERROR("Failed to allocate shared memory context");
+		return JNI_ERR;
+	}
+
+	/* Initialize ring channel */
+	if (ring_channel_init(&global_ctx->call_stack_channel,
+	                      CALL_STACK_CHANNEL_CAPACITY,
+	                      sizeof(call_stack_sample_t))
+	    != COOPER_OK)
+	{
+		LOG_ERROR("Failed to init call_stack_channel");
 		return JNI_ERR;
 	}
 

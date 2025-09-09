@@ -5,6 +5,7 @@
  */
 
 #include "cooper.h"
+#include "cooper_ring.h"
 #include "cooper_thread_workers.h"
 
 /* Helper functions */
@@ -31,7 +32,7 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
 	    || jvm_phase != JVMTI_PHASE_LIVE)
 	{
-		LOG_DEBUG("Cannot get the thread id as jvm is not in correct phase: %d",
+		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
 		          jvm_phase);
 		return 0;
 	}
@@ -50,8 +51,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 		LOG_ERROR("Exception occurred while getting thread ID");
 		return 0;
 	}
-
-	LOG_DEBUG("Looking up Java thread ID: %lld", (long long)thread_id);
 
 	/* Use Thread.getId() as a key to our mapping table */
 	pthread_mutex_lock(&ctx->samples_lock);
@@ -124,8 +123,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 
 			pthread_mutex_unlock(&ctx->samples_lock);
 		}
-		else
-			LOG_DEBUG("Cannot get native ID for non-current thread");
 	}
 
 	return result;
@@ -264,7 +261,7 @@ export_to_file(agent_context_t *ctx)
 	    "min_time_ns, max_time_ns, alloc_bytes, peak_memory, cpu_cycles\n");
 
 	/* Debug output to verify data being exported */
-	LOG_DEBUG("Exporting %zu method metrics\n", ctx->metrics->count);
+	LOG_INFO("Exporting %zu method metrics\n", ctx->metrics->count);
 
 	/* Export the entire method_metrics_soa structure */
 	size_t total_calls   = 0;
@@ -275,27 +272,29 @@ export_to_file(agent_context_t *ctx)
 		{
 			/* Calculate avg time if samples exist */
 			uint64_t avg_time = 0;
-			if (ctx->metrics->sample_counts[i] > 0)
-				avg_time = ctx->metrics->total_time_ns[i]
-				           / ctx->metrics->sample_counts[i];
+			// if (ctx->metrics->sample_counts[i] > 0)
+			// 	avg_time = ctx->metrics->total_time_ns[i]
+			// 	           / ctx->metrics->sample_counts[i];
 
 			total_calls += ctx->metrics->call_counts[i];
-			total_samples += ctx->metrics->sample_counts[i];
+			// total_samples += ctx->metrics->sample_counts[i];
 
 			/* Debug output to verify each method's metrics */
 			LOG_DEBUG("Method[%zu]: %s, calls=%lu, samples=%lu, time=%lu\n",
 			          i,
 			          ctx->metrics->signatures[i],
 			          (unsigned long)ctx->metrics->call_counts[i],
-			          (unsigned long)ctx->metrics->sample_counts[i],
+			          0,
+			          //   (unsigned long)ctx->metrics->sample_counts[i],
 			          (unsigned long)ctx->metrics->total_time_ns[i]);
 
 			/* Print out the details */
 			fprintf(fp,
-			        "%s,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+			        "%s,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
 			        ctx->metrics->signatures[i],
 			        (unsigned long)ctx->metrics->call_counts[i],
-			        (unsigned long)ctx->metrics->sample_counts[i],
+			        0,
+			        // (unsigned long)ctx->metrics->sample_counts[i],
 			        (unsigned long)ctx->metrics->total_time_ns[i],
 			        (unsigned long)avg_time,
 			        (unsigned long)(ctx->metrics->min_time_ns[i] == UINT64_MAX
@@ -346,10 +345,10 @@ export_to_file(agent_context_t *ctx)
 	fprintf(fp, "Total method calls: %lu\n", (unsigned long)total_calls);
 	fprintf(fp, "Total samples collected: %lu\n", (unsigned long)total_samples);
 
-	LOG_DEBUG("Export complete: methods=%zu, calls=%lu, samples=%lu\n",
-	          ctx->metrics->count,
-	          (unsigned long)total_calls,
-	          (unsigned long)total_samples);
+	LOG_INFO("Export complete: methods=%zu, calls=%lu, samples=%lu\n",
+	         ctx->metrics->count,
+	         (unsigned long)total_calls,
+	         (unsigned long)total_samples);
 
 	pthread_mutex_unlock(&ctx->samples_lock);
 
@@ -377,8 +376,8 @@ export_method_to_shm(agent_context_t *ctx)
 			method_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
 
 			/* Direct field assignment */
-			method_data.call_count    = ctx->metrics->call_counts[i];
-			method_data.sample_count  = ctx->metrics->sample_counts[i];
+			method_data.call_count = ctx->metrics->call_counts[i];
+			// method_data.sample_count  = ctx->metrics->sample_counts[i];
 			method_data.total_time_ns = ctx->metrics->total_time_ns[i];
 			method_data.min_time_ns   = ctx->metrics->min_time_ns[i];
 			method_data.max_time_ns   = ctx->metrics->max_time_ns[i];
@@ -387,7 +386,8 @@ export_method_to_shm(agent_context_t *ctx)
 			method_data.cpu_cycles    = ctx->metrics->cpu_cycles[i];
 			method_data.metric_flags  = ctx->metrics->metric_flags[i];
 
-			cooper_shm_write_method_data(ctx->shm_ctx, &method_data);
+			cooper_shm_write_data(
+			    ctx->shm_ctx, COOPER_DATA_METHOD_METRIC, &method_data);
 		}
 	}
 
@@ -418,7 +418,8 @@ export_memory_to_shm(agent_context_t *ctx)
 		    .thread_id     = 0, /* Process-wide */
 		    .thread_memory = 0};
 
-		cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
+		cooper_shm_write_data(
+		    ctx->shm_ctx, COOPER_DATA_MEMORY_SAMPLE, &memory_data);
 	}
 
 	/* Export thread memory samples */
@@ -438,7 +439,9 @@ export_memory_to_shm(agent_context_t *ctx)
 				    .thread_id     = tm->thread_id,
 				    .thread_memory = tm->memory_samples[latest_idx]};
 
-				cooper_shm_write_memory_data(ctx->shm_ctx, &memory_data);
+				cooper_shm_write_data(ctx->shm_ctx,
+				                      COOPER_DATA_MEMORY_SAMPLE,
+				                      &memory_data);
 			}
 			tm = tm->next;
 		}
@@ -484,11 +487,55 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 			alloc_data.max_size = ctx->object_metrics->max_size[i];
 			alloc_data.avg_size = ctx->object_metrics->avg_size[i];
 
-			cooper_shm_write_object_alloc_data(ctx->shm_ctx, &alloc_data);
+			cooper_shm_write_data(
+			    ctx->shm_ctx, COOPER_DATA_OBJECT_ALLOC, &alloc_data);
 		}
 	}
 
 	pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+static void
+export_heap_stats_to_shm(agent_context_t *ctx)
+{
+	if (!ctx->shm_ctx || !ctx->last_heap_stats)
+		return;
+
+	if (!ctx->last_heap_stats || ctx->last_heap_stats_count == 0)
+		return;
+
+	// TODO perhaps need different lock
+	pthread_mutex_lock(&ctx->samples_lock);
+
+	for (size_t i = 0; i < ctx->last_heap_stats_count; i++)
+	{
+		class_stats_t *stats = (class_stats_t *)ctx->last_heap_stats->elements[i];
+
+		if (!stats || !stats->class_name)
+			continue;
+
+		cooper_heap_stats_data_t heap_stats_data = {0};
+		strncpy(heap_stats_data.class_signature,
+		        stats->class_name,
+		        COOPER_MAX_SIGNATURE_LEN - 1);
+		heap_stats_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
+		heap_stats_data.instance_count = stats->instance_count;
+		heap_stats_data.total_sz       = stats->total_size;
+		heap_stats_data.total_deep_sz  = stats->total_deep_size;
+		heap_stats_data.avg_sz         = stats->avg_size;
+		heap_stats_data.avg_deep_sz    = stats->avg_deep_size;
+
+		cooper_shm_write_data(
+		    ctx->shm_ctx, COOPER_DATA_HEAP_STATS, &heap_stats_data);
+	}
+
+	// TODO diff lock??
+	pthread_mutex_unlock(&ctx->samples_lock);
+}
+
+static void
+export_call_stack_samples_to_shm(agent_context_t *ctx)
+{
 }
 
 /**
@@ -599,7 +646,6 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 
 	/* Log the number of Java threads found for debugging */
 	jsize num_threads = (*jni)->GetArrayLength(jni, entries);
-	LOG_DEBUG("Found %d Java threads in getAllStackTraces", num_threads);
 
 	/* Process each java live thread */
 	for (int j = 0; j < num_threads; j++)
@@ -635,16 +681,10 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 			goto local_clean;
 		}
 
-		LOG_DEBUG("Processing Java thread ID: %lld", (long long)thread_id);
-
 		/* Get native thread ID */
 		pid_t native_tid = get_native_thread_id(ctx, jni, threadObj);
 		if (native_tid == 0)
-		{
-			LOG_DEBUG("Could not get native thread ID for Java thread %lld",
-			          (long long)thread_id);
 			goto local_clean;
-		}
 
 		/* Sample linux thread memory */
 		uint64_t thread_mem = get_thread_memory(native_tid);
@@ -784,6 +824,208 @@ calculate_hashtable_size(int class_count)
 	return estimated_size;
 }
 
+static class_stats_t *
+find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
+{
+
+	assert(ctx != NULL);
+	assert(ctx->class_table != NULL);
+	assert(class_sig != NULL);
+
+	/* Additional validation */
+	if (!class_sig || class_sig[0] == '\0')
+		return NULL;
+
+	/* Try to find existing stats using API */
+	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
+	if (stats)
+		return stats; /* Found existing entry */
+
+	/* Check load factor before creating new entry */
+	if (ht_get_load(ctx->class_table) >= 0.75)
+	{
+		LOG_ERROR("Hash table load factor exceeded");
+		return NULL;
+	}
+
+	/* Create new stats entry - stats will be memset to 0 by arena */
+	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
+	if (!stats)
+	{
+		LOG_ERROR("Failed to allocate class stats");
+		return NULL;
+	}
+
+	/* Add to hashtable using API */
+	if (ht_put(ctx->class_table, class_sig, stats) != COOPER_OK)
+	{
+		LOG_ERROR("Failed to add class stats to hashtable");
+		return NULL;
+	}
+
+	LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)",
+	          class_sig,
+	          ht_get_load(ctx->class_table));
+	return stats;
+}
+
+static jint JNICALL
+heap_object_callback(jvmtiHeapReferenceKind reference_kind,
+                     const jvmtiHeapReferenceInfo *reference_info,
+                     jlong class_tag,
+                     jlong referrer_class_tag,
+                     jlong size,
+                     jlong *tag_ptr,
+                     jlong *referrer_tag,
+                     jint length,
+                     void *user_data)
+{
+	UNUSED(reference_kind);
+	UNUSED(reference_info);
+	UNUSED(referrer_class_tag);
+	UNUSED(tag_ptr);
+	UNUSED(referrer_tag);
+	UNUSED(length);
+
+	/* No-op */
+	if (class_tag == 0)
+		return JVMTI_VISIT_OBJECTS;
+
+	if (size < 0)
+	{
+		LOG_DEBUG("Negative object size %ld for class_tag %ld", size, class_tag);
+		return JVMTI_VISIT_OBJECTS;
+	}
+
+	if (!user_data)
+	{
+		LOG_ERROR("Null user_data in heap callback");
+		return JVMTI_VISIT_ABORT;
+	}
+
+	heap_iteration_context_t *ctx = (heap_iteration_context_t *)user_data;
+
+	/* Validate context */
+	if (!ctx->class_table)
+	{
+		LOG_ERROR("Invalid context in heap callback");
+		return JVMTI_VISIT_ABORT;
+	}
+
+	/* class_tag should be a pointer to class_info_t struct */
+	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
+	if (!info->in_heap_iteration)
+	{
+		LOG_DEBUG("Class %s not in iteration", info->class_sig);
+		return JVMTI_VISIT_OBJECTS;
+	}
+
+	/* Update class statistics (shallow size) */
+	class_stats_t *stats = find_or_create_stats(ctx, info->class_sig);
+	if (!stats)
+		return JVMTI_VISIT_OBJECTS;
+
+	/* Overflow protection for counters */
+	if (stats->instance_count == UINT64_MAX)
+	{
+		LOG_WARN("Instance count overflow for class_tag %ld", class_tag);
+		return JVMTI_VISIT_OBJECTS;
+	}
+
+	uint64_t safe_size = (uint64_t)size; /* Convert after validation */
+	if (stats->total_size > UINT64_MAX - safe_size)
+	{
+		LOG_WARN("Total size overflow for class_tag %ld", class_tag);
+		return JVMTI_VISIT_OBJECTS;
+	}
+
+	/* Update shallow size statistics */
+	stats->instance_count++;
+	stats->total_size += safe_size;
+
+	/* Safe average calculation */
+	if (stats->instance_count > 0)
+		stats->avg_size = stats->total_size / stats->instance_count;
+
+	uint64_t estimated_deep_size = safe_size;
+	// TODO move this into a table of name->value
+
+	/* Apply class-specific multipliers based on class signature */
+	const char *class_sig = info->class_sig;
+
+	if (strstr(class_sig, "java/util/"))
+	{
+		/* Collections – size dominated by backing arrays, often ~3-5x */
+		if (strstr(class_sig, "HashMap")
+		    || strstr(class_sig, "ConcurrentHashMap"))
+			estimated_deep_size = safe_size * 4;
+		else if (strstr(class_sig, "ArrayList"))
+			estimated_deep_size = safe_size * 3;
+		else
+			estimated_deep_size = safe_size * 3;
+	}
+	else if (strstr(class_sig, "java/lang/String"))
+	{
+		/* Strings include char[] backing – ~2x is a good rule */
+		estimated_deep_size = safe_size * 2;
+	}
+	else if (class_sig[0] == '[')
+	{
+		/* Arrays: estimate based on component type */
+		if (strstr(class_sig, "[L"))
+		{
+			/* Object arrays – references dominate */
+			estimated_deep_size = safe_size * 2;
+		}
+		else
+		{
+			/* Primitive arrays – low overhead */
+			estimated_deep_size = safe_size + (safe_size / 8);
+		}
+	}
+	else if (strstr(class_sig, "java/lang/") || strstr(class_sig, "java/time/")
+	         || strstr(class_sig, "java/"))
+	{
+		/* Standard Java objects – modest overhead */
+		estimated_deep_size = safe_size + (safe_size / 2);
+	}
+	else if (strstr(class_sig, "org/springframework/data/")
+	         || strstr(class_sig, "javax/persistence/")
+	         || strstr(class_sig, "org/hibernate/") || strstr(class_sig, "Repository")
+	         || strstr(class_sig, "DAO"))
+	{
+		/* Persistence layer beans are heavy due to proxies + metadata */
+		estimated_deep_size =
+		    safe_size * 3 + (64 * 1024); /* add ~64KB overhead */
+	}
+	else if (strstr(class_sig, "org/springframework/")
+	         || strstr(class_sig, "Controller") || strstr(class_sig, "Transformer")
+	         || strstr(class_sig, "Service"))
+	{
+		/* Typical Spring beans / app classes – proxies, reflection, annotations
+		 */
+		estimated_deep_size = safe_size * 2 + (8 * 1024); /* add ~8KB baseline */
+	}
+	else
+	{
+		/* Unknown application objects – conservative fallback */
+		estimated_deep_size = safe_size * 2;
+	}
+
+	/* Update deep size statistics */
+	stats->total_deep_size += estimated_deep_size;
+	if (stats->instance_count > 0)
+		stats->avg_deep_size = stats->total_deep_size / stats->instance_count;
+
+	LOG_DEBUG("Object: %s, shallow: %lu, estimated_deep: %lu, total_deep: %lu",
+	          info->class_sig,
+	          safe_size,
+	          estimated_deep_size,
+	          stats->total_deep_size);
+
+	return JVMTI_VISIT_OBJECTS;
+}
+
 /* Fully robust heap statistics collection maintaining all safety checks */
 static void
 collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
@@ -836,22 +1078,16 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	/* Create generic hashtable for class statistics */
 	size_t hash_size      = calculate_hashtable_size(class_count);
 	hashtable_t *class_ht = ht_create(scratch_arena, hash_size, 0.75);
+
 	if (!class_ht)
 	{
-		LOG_ERROR("Failed to create class generic hashtable");
+		LOG_ERROR("Failed to create hashtable");
 		goto cleanup_classes;
 	}
 
 	/* Set up iteration context with validation */
 	heap_iteration_context_t iter_ctx = {
 	    .env = env, .jvmti = jvmti, .arena = scratch_arena, .class_table = class_ht};
-
-	/* Validate context before proceeding */
-	if (!iter_ctx.env || !iter_ctx.jvmti || !iter_ctx.arena || !iter_ctx.class_table)
-	{
-		LOG_ERROR("Invalid iteration context");
-		goto cleanup_classes;
-	}
 
 	/* Tag classes for heap iteration */
 	for (int i = 0; i < class_count; i++)
@@ -865,18 +1101,18 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			info->in_heap_iteration = 1;
 		}
 	}
+	LOG_INFO("Starting heap analysis");
+	jvmtiHeapCallbacks callbacks      = {0};
+	callbacks.heap_reference_callback = heap_object_callback;
 
-	/* Use centralized heap callbacks */
-	LOG_INFO("Starting heap iteration (hashtable size: %zu)", hash_size);
-	err = (*jvmti)->FollowReferences(
-	    jvmti, 0, NULL, NULL, &ctx->callbacks.heap_callbacks, &iter_ctx);
+	err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &iter_ctx);
 	if (err != JVMTI_ERROR_NONE)
 	{
-		LOG_ERROR("Heap iteration failed: %d", err);
+		LOG_ERROR("FollowReferences failed: %d", err);
 		goto cleanup_tags;
 	}
-	LOG_INFO("Heap iteration completed, processing %zu unique classes",
-	         iter_ctx.class_table->count);
+
+	LOG_INFO("Heap analysis completed. Classes: %zu", iter_ctx.class_table->count);
 
 	/* Process hashtable results into top-N heap with bounds checking */
 	size_t processed = 0;
@@ -898,10 +1134,20 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 		processed++;
 
+		/* DLog stats before adding to heap */
+		LOG_DEBUG("Final stats for %s: instances=%llu, shallow_total=%llu, "
+		          "deep_total=%llu",
+		          entry->key,
+		          (unsigned long long)stats->instance_count,
+		          (unsigned long long)stats->total_size,
+		          (unsigned long long)stats->total_deep_size);
+
+		uint64_t sort_size = (stats->total_deep_size > 0) ? stats->total_deep_size
+		                                                  : stats->total_size;
+
 		/* Only resolve names for potential top-N entries */
 		if (heap->size < TOP_N
-		    || stats->total_size
-		           > ((class_stats_t *)heap->elements[0])->total_size)
+		    || sort_size > ((class_stats_t *)heap->elements[0])->total_deep_size)
 		{
 			class_stats_t *heap_entry =
 			    arena_alloc(scratch_arena, sizeof(class_stats_t));
@@ -1102,8 +1348,6 @@ export_thread_func(void *arg)
 	/* export to file while export_running flag is set */
 	while (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
 	{
-		LOG_DEBUG("Export thread sleeping for %d seconds\n",
-		          ctx->config.export_interval);
 		/* Sleep in smaller increments to be more responsive to shutdown */
 		for (int i = 0;
 		     i < ctx->config.export_interval
@@ -1113,7 +1357,7 @@ export_thread_func(void *arg)
 
 		if (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
 		{
-			LOG_DEBUG("Export thread woke up, exporting metrics\n");
+			LOG_INFO("Export thread woke up, exporting metrics\n");
 			export_to_file(ctx);
 		}
 	}
@@ -1141,7 +1385,6 @@ shm_export_thread_func(void *arg)
 	{
 		if (ctx->shm_ctx == NULL)
 		{
-			LOG_DEBUG("Shared mem not available, thread sleeping");
 			sleep(2);
 			continue;
 		}
@@ -1157,6 +1400,12 @@ shm_export_thread_func(void *arg)
 
 		/* Export object allocation metrics */
 		export_object_alloc_to_shm(ctx);
+
+		/* Export heap stats */
+		export_heap_stats_to_shm(ctx);
+
+		/* Export call stack samples */
+		export_call_stack_samples_to_shm(ctx);
 
 		/* Sleep for export interval */
 		sleep(2);
@@ -1181,7 +1430,6 @@ mem_sampling_thread_func(void *arg)
 	JNIEnv *jni = NULL;
 	jvmtiError err;
 	jvmtiPhase jvm_phase;
-	int mem_thread_attached = 0;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1193,7 +1441,6 @@ mem_sampling_thread_func(void *arg)
 		return NULL;
 	}
 
-	mem_thread_attached = 1;
 	LOG_INFO("Memory sampling thread successfully attached to JVM");
 
 	while (check_worker_status(ctx->worker_statuses, MEM_SAMPLING_RUNNING))
@@ -1235,10 +1482,10 @@ mem_sampling_thread_func(void *arg)
 
 			pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
-			LOG_DEBUG("Memory sample #%zu: %llu bytes at %llu ns",
-			          ctx->app_memory_metrics->sample_count,
-			          (unsigned long long)process_mem,
-			          (unsigned long long)timestamp);
+			// LOG_DEBUG("Memory sample #%zu: %llu bytes at %llu ns",
+			//           ctx->app_memory_metrics->sample_count,
+			//           (unsigned long long)process_mem,
+			//           (unsigned long long)timestamp);
 		}
 
 		/* Sample thread memory for active Java threads */
@@ -1248,15 +1495,10 @@ mem_sampling_thread_func(void *arg)
 		sleep(ctx->config.mem_sample_interval);
 	}
 
-	/* Cannot detach thread when not attached.. */
-	if (mem_thread_attached)
-	{
-		/* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
-		if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase)
-		        == JVMTI_ERROR_NONE
-		    && jvm_phase == JVMTI_PHASE_LIVE)
-			(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
-	}
+	/* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Memory sampling thread terminated\n");
 	return NULL;
@@ -1275,7 +1517,6 @@ heap_stats_thread_func(void *arg)
 	JNIEnv *jni = NULL;
 	jvmtiError err;
 	jvmtiPhase jvm_phase;
-	int heap_thread_attached = 0;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1287,7 +1528,6 @@ heap_stats_thread_func(void *arg)
 		return NULL;
 	}
 
-	heap_thread_attached = 1;
 	LOG_INFO("Heap statistics thread successfully attached to JVM");
 
 	// TODO extract sleep interval to config
@@ -1312,20 +1552,16 @@ heap_stats_thread_func(void *arg)
 		}
 
 		/* Collect heap statistics */
-		LOG_INFO("Heap statistics collection starting...");
 		collect_heap_statistics(ctx, jni);
 
 		/* Sleep for 60 seconds between collections */
 		sleep(60);
 	}
 
-	/* Detach from JVM if we were attached and JVM is still live */
-	if ((*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase) == JVMTI_ERROR_NONE
-	    && jvm_phase == JVMTI_PHASE_LIVE)
-	{
-		if (heap_thread_attached)
-			(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
-	}
+	/* Detach from JVM if JVM is still live */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Heap statistics thread terminated\n");
 	return NULL;
@@ -1345,6 +1581,9 @@ class_cache_thread_func(void *arg)
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
+	jvmtiError err;
+	jvmtiPhase jvm_phase;
+
 	jint res =
 	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
 	if (res != JNI_OK || jni == NULL)
@@ -1387,8 +1626,139 @@ class_cache_thread_func(void *arg)
 	}
 
 	/* Detach from JVM */
-	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Class cache thread exiting, processed %d classes", classes_processed);
+	return NULL;
+}
+
+/**
+ *
+ */
+void *
+call_stack_sampling_thread_func(void *arg)
+{
+	agent_context_t *ctx = (agent_context_t *)arg;
+	jvmtiEnv *jvmti      = ctx->jvmti_env;
+	jvmtiPhase jvm_phase;
+	jvmtiError err;
+
+	/* Get JNI environment for this thread */
+	JNIEnv *jni = NULL;
+	jint res =
+	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
+	if (res != JNI_OK || jni == NULL)
+	{
+		LOG_ERROR("Failed to attach call stack sampling thread to JVM");
+		return NULL;
+	}
+
+	arena_t *arena = ctx->arenas[CALL_STACK_ARENA_ID];
+	if (!arena)
+	{
+		LOG_ERROR("Call stack arena is not initialised");
+		return NULL;
+	}
+
+	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
+	{
+		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
+		{
+			LOG_ERROR("[call stack sampling thread] Error getting JVM phase, "
+			          "or JVM not in live phase: %d",
+			          err);
+			sleep(10);
+			continue;
+		}
+
+		// sleep for configured interval
+		// usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
+		usleep(10000); // TODO move this to config - right now 100ms seems
+		               // reasonable
+
+		/* Get all threads */
+		jint thread_count = 0;
+		jthread *threads  = NULL;
+		err = (*jvmti)->GetAllThreads(jvmti, &thread_count, &threads);
+		if (err != JVMTI_ERROR_NONE)
+			continue;
+
+		/* We get the time before looping so that all the samples
+		are taken "at the same time"...
+		*/
+		uint64_t now = get_current_time_ns();
+		jvmtiFrameInfo frames[MAX_STACK_FRAMES];
+
+		for (int i = 0; i < thread_count; i++)
+		{
+			jint count = 0;
+
+			/* If we cannot get the stack trace or count we just continue */
+			err = (*jvmti)->GetStackTrace(
+			    jvmti, threads[i], 0, MAX_STACK_FRAMES, frames, &count);
+			if (err != JVMTI_ERROR_NONE || count == 0)
+				continue;
+
+			/* Allocate sample */
+			uint32_t idx;
+			call_stack_sample_t *sample =
+			    sample_alloc(&ctx->call_stack_channel, &idx);
+
+			if (!sample)
+				continue; /* no free slot on channel ring */
+
+			sample->timestamp_ns = now;
+			sample->frame_count  = count;
+
+			/* get thread id (cached Thread.getId) */
+			jlong tid =
+			    (*jni)->CallLongMethod(jni, threads[i], ctx->getId_method);
+			sample->thread_id = tid;
+
+			for (int f = 0; f < count; f++)
+				sample->frames[f] = frames[f].method;
+
+			/* Aggregate samples */
+			for (int f = 0; f < count; f++)
+			{
+				jmethodID mid = sample->frames[f];
+
+				// find cached info
+				jclass declaring_class;
+				(*jvmti)->GetMethodDeclaringClass(
+				    jvmti, mid, &declaring_class);
+
+				jlong tag;
+				(*jvmti)->GetTag(jvmti, declaring_class, &tag);
+				if (tag == 0)
+					continue;
+
+				class_info_t *info = (class_info_t *)(intptr_t)tag;
+
+				/* linear search - replace at some point */
+				for (uint32_t m = 0; m < info->method_count; m++)
+				{
+					if (info->methods[m].method_id == mid
+					    && info->methods[m].sample_index >= 0)
+					{
+						atomic_fetch_add_explicit(
+						    &ctx->metrics->call_sample_counts
+							 [info->methods[m].sample_index],
+						    1,
+						    memory_order_relaxed);
+					}
+				}
+			}
+
+			/* Publish to channel ready ring */
+			sample_publish(&ctx->call_stack_channel, idx);
+		}
+
+		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);
+	}
+
 	return NULL;
 }

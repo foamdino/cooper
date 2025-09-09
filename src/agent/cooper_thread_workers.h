@@ -7,7 +7,7 @@
 #ifndef COOPER_THREAD_WORKERS_H
 #define COOPER_THREAD_WORKERS_H
 
-#include "proc_mem.h"
+#include "../lib/proc_mem.h"
 #include "cooper_thread_manager.h"
 
 /* Forward declaration to avoid circular dependency */
@@ -19,6 +19,7 @@ void *mem_sampling_thread_func(void *arg);
 void *heap_stats_thread_func(void *arg);
 void *shm_export_thread_func(void *arg);
 void *class_cache_thread_func(void *arg);
+void *call_stack_sampling_thread_func(void *arg);
 
 /* Export functions that might be called from elsewhere */
 void export_to_file(agent_context_t *ctx);

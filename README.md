@@ -12,6 +12,12 @@ Compile and from the build location:
 `java -agentpath:./libcooper.so=logfile=/tmp/jvmti.log com.github.foamdino.Test`
 Need to have a `trace.ini` file in the working directory
 
+## Code metrics
+
+<!-- TOKEI-START -->
+
+<!-- TOKEI-END -->
+
 ## Valgrind
 
 ```
@@ -45,6 +51,10 @@ java -agentpath:/home/kev/projects/async-profiler/build/lib/libasyncProfiler.so=
   - already have a background threads setup so the structure is present
 - Useful to implement Top N methods by time or Hot method identification.
   - will need to implement Top N methods by (time/cpu etc)
+
+## Threads and pinning to cores
+At some point we will want to pin specific threads to different cores. 
+We need to extend the cpu.h lib to support retrieving the number of cores.
 
 ## Features TODO
 

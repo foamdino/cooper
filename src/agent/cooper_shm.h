@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#ifndef SHARED_MEM_H
-#define SHARED_MEM_H
+#ifndef COOPER_SHM_H
+#define COOPER_SHM_H
 
 #include <stdint.h>
 #include <sys/mman.h>
@@ -14,7 +14,7 @@
 #include <string.h>
 #include <errno.h>
 
-#include "log.h"
+#include "../lib/log.h"
 
 #define COOPER_DATA_SHM_NAME     "/cooper_data"
 #define COOPER_STATUS_SHM_NAME   "/cooper_status"
@@ -47,7 +47,9 @@ enum cooper_data_type
 {
 	COOPER_DATA_METHOD_METRIC = 1,
 	COOPER_DATA_MEMORY_SAMPLE = 2,
-	COOPER_DATA_OBJECT_ALLOC  = 3
+	COOPER_DATA_OBJECT_ALLOC  = 3,
+	COOPER_DATA_HEAP_STATS    = 4,
+	COOPER_DATA_CLASS_STACKS  = 5
 };
 
 typedef enum cooper_entry_status cooper_entry_status_e;
@@ -56,6 +58,7 @@ typedef enum cooper_data_type cooper_data_type_e;
 typedef struct cooper_method_data cooper_method_data_t;
 typedef struct cooper_object_alloc_data cooper_object_alloc_data_t;
 typedef struct cooper_memory_data cooper_memory_data_t;
+typedef struct cooper_heap_stats_data cooper_heap_stats_data_t;
 typedef struct cooper_sample_entry cooper_sample_entry_t;
 typedef struct cooper_data_shm cooper_data_shm_t;
 typedef struct cooper_status_shm cooper_status_shm_t;
@@ -94,6 +97,16 @@ struct cooper_memory_data
 	uint64_t thread_memory;
 };
 
+struct cooper_heap_stats_data
+{
+	char class_signature[COOPER_MAX_SIGNATURE_LEN];
+	uint64_t instance_count;
+	uint64_t total_sz;
+	uint64_t total_deep_sz;
+	uint64_t avg_sz;
+	uint64_t avg_deep_sz;
+};
+
 struct cooper_sample_entry
 {
 	cooper_data_type_e type;
@@ -102,6 +115,7 @@ struct cooper_sample_entry
 		cooper_method_data_t method;
 		cooper_memory_data_t memory;
 		cooper_object_alloc_data_t object_alloc;
+		cooper_heap_stats_data_t heap_stats;
 		char padding[COOPER_MAX_DATA_SZ];
 	} data;
 };
@@ -136,13 +150,8 @@ struct cooper_shm_context
 /* Function declarations */
 int cooper_shm_init_agent(cooper_shm_context_t *ctx);
 int cooper_shm_cleanup_agent(cooper_shm_context_t *ctx);
-int cooper_shm_write_method_data(cooper_shm_context_t *ctx,
-                                 const cooper_method_data_t *data);
-int cooper_shm_write_memory_data(cooper_shm_context_t *ctx,
-                                 const cooper_memory_data_t *data);
-int cooper_shm_write_object_alloc_data(cooper_shm_context_t *ctx,
-                                       const cooper_object_alloc_data_t *data);
+int cooper_shm_write_data(cooper_shm_context_t *ctx, unsigned int type, void *data);
 
 void cooper_shm_cleanup_read_entries(cooper_shm_context_t *ctx);
 
-#endif /* SHARED_MEM_H */
+#endif /* COOPER_SHM_H */

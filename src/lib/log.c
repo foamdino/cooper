@@ -33,6 +33,7 @@ log_thread_func(void *arg)
 	while (1)
 	{
 		q_entry_t *entry = q_deq(queue);
+		char *msg        = NULL;
 
 		/* Shutting down */
 		if (!entry)
@@ -40,7 +41,7 @@ log_thread_func(void *arg)
 
 		if (entry->type == Q_ENTRY_LOG)
 		{
-			char *msg = (char *)entry->data;
+			msg = (char *)entry->data;
 			/* Write message to log file */
 			if (msg)
 			{
@@ -48,6 +49,12 @@ log_thread_func(void *arg)
 				fflush(log_file);
 			}
 		}
+
+		/* Free mem back to arena */
+		pthread_mutex_lock(&log_system.arena_lock);
+		arena_free(log_system.arena, msg);
+		arena_free(log_system.arena, entry);
+		pthread_mutex_unlock(&log_system.arena_lock);
 	}
 
 	return NULL;
@@ -81,6 +88,18 @@ init_log_system(q_t *queue, arena_t *arena, FILE *log_file)
 	if (!log_file)
 		log_file = stdout;
 
+	/* Initialize the arena lock BEFORE any use */
+	if (pthread_mutex_init(&log_system.arena_lock, NULL) != 0)
+	{
+		fprintf(stderr, "ERROR: pthread_mutex_init failed\n");
+		return 1;
+	}
+
+	/* Save state for global access early (safe single-threaded init) */
+	log_system.queue    = queue;
+	log_system.arena    = arena;
+	log_system.log_file = log_file;
+
 	/* Create thread parameters */
 	log_thread_params_t *params = arena_alloc(arena, sizeof(log_thread_params_t));
 	if (!params)
@@ -103,9 +122,6 @@ init_log_system(q_t *queue, arena_t *arena, FILE *log_file)
 	}
 
 	/* Save state for global access */
-	log_system.queue       = queue;
-	log_system.arena       = arena;
-	log_system.log_file    = log_file;
 	log_system.log_thread  = log_thread;
 	log_system.initialized = 1;
 
@@ -117,6 +133,7 @@ error:
 
 	pthread_cond_destroy(&queue->cond);
 	pthread_mutex_destroy(&queue->lock);
+	pthread_mutex_destroy(&log_system.arena_lock);
 	return 1;
 }
 
@@ -157,6 +174,7 @@ cleanup_log_system()
 
 	pthread_cond_destroy(&log_system.queue->cond);
 	pthread_mutex_destroy(&log_system.queue->lock);
+	pthread_mutex_destroy(&log_system.arena_lock);
 
 	/* Reset global state */
 	log_system.queue       = NULL;
@@ -218,11 +236,37 @@ log_message(log_level_e level, const char *file, int line, const char *fmt, ...)
 		buffer[total_len + 1] = '\0';
 	}
 
-	/* Enqueue the formatted message using global system state */
+	pthread_mutex_lock(&log_system.arena_lock);
 	q_entry_t *entry = arena_alloc(log_system.arena, sizeof(q_entry_t));
-	char *log_msg    = arena_strdup(log_system.arena, buffer);
+	if (!entry)
+	{
+		/* OOM: drop message, fallback to fprintf */
+		pthread_mutex_unlock(&log_system.arena_lock);
+		fprintf(stderr, "WARNING: log arena OOM, dropping message: %s", buffer);
+		return;
+	}
+
+	char *log_msg = arena_strdup(log_system.arena, buffer);
+	if (!log_msg)
+	{
+		/* Failed to allocate message body — free the entry and drop */
+		arena_free(log_system.arena, entry);
+		pthread_mutex_unlock(&log_system.arena_lock);
+		fprintf(stderr, "WARNING: log arena OOM (msg), dropping: %s", buffer);
+		return;
+	}
+	pthread_mutex_unlock(&log_system.arena_lock);
 
 	entry->type = Q_ENTRY_LOG;
 	entry->data = log_msg;
-	q_enq(log_system.queue, entry);
+
+	if (q_enq(log_system.queue, entry) != 0)
+	{
+		/* queue full -> drop and free under lock */
+		pthread_mutex_lock(&log_system.arena_lock);
+		arena_free(log_system.arena, log_msg);
+		arena_free(log_system.arena, entry);
+		pthread_mutex_unlock(&log_system.arena_lock);
+		fprintf(stderr, "WARNING: logging queue full, dropping: %s", log_msg);
+	}
 }

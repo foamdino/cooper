@@ -11,9 +11,10 @@
 #include <string.h>
 #include <errno.h>
 
-#include "log.h"
-#include "thread_util.h"
-#include "shared_mem.h"
+#include "../lib/log.h"
+#include "../lib/thread_util.h"
+#include "cooper.h"
+#include "cooper_shm.h"
 
 /* Forward declaration */
 typedef struct agent_context agent_context_t;

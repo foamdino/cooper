@@ -31,8 +31,9 @@ struct package_filter
 
 struct class_q_entry
 {
-	jclass klass;    /* Class reference to process */
-	char *class_sig; /* Class signature (for logging) */
+	jclass klass;       /**< Class reference to process */
+	char *class_sig;    /**< Class signature (for logging) */
+	char **annotations; /**< Array of annotations */
 };
 
 #endif /* COOPER_TYPES_H */

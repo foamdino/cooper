@@ -29,7 +29,69 @@ jobs:
       
     - name: Run tests before release
       run: ./build/test_cooper
+
+    - name: Install tokei
+      run: |
+        echo "Installing tokei..."
+        TOKEI_VERSION="12.1.2"
+        curl -sL https://github.com/XAMPPRocky/tokei/releases/download/v${TOKEI_VERSION}/tokei-x86_64-unknown-linux-gnu.tar.gz | tar xz
+        sudo mv tokei /usr/local/bin/
+        echo "✓ Tokei installed: $(tokei --version)"
       
+    - name: Generate code statistics
+      run: |
+        echo "Generating code statistics..."
+        
+        # Create tokei report
+        {
+          echo "## 📊 Code Statistics"
+          echo ""
+          echo "**Generated:** $(date -u '+%Y-%m-%d %H:%M:%S UTC') for release \`${{ github.ref_name }}\`"
+          echo ""
+          echo "This report tracks project complexity to maintain our goal of a minimal, dependency-free JVM agent."
+          echo ""
+          echo "\`\`\`"
+          tokei --sort code .
+          echo "\`\`\`"
+          echo ""
+          echo "**Key Metrics:**"
+          
+          # Extract key numbers from tokei output
+          TOTAL_LINES=$(tokei --output json . | grep -o '"code":[0-9]*' | head -1 | cut -d: -f2)
+          TOTAL_FILES=$(find src/ -name "*.c" -o -name "*.h" | wc -l)
+          
+          echo "- **Total C Lines:** ${TOTAL_LINES:-"N/A"}"
+          echo "- **Total C Files:** ${TOTAL_FILES:-"N/A"}"
+          echo "- **External Dependencies:** 0 (excluding system libraries)"
+          echo "- **Build Tool:** Custom (nob.c)"
+          echo ""
+          echo "*Lower complexity = easier maintenance, faster builds, and reduced attack surface.*"
+        } > tokei_report.md
+        
+        echo "✓ Code statistics generated"
+        
+    - name: Update README with statistics
+      run: |
+        echo "Updating README.md..."
+        
+        # Remove existing tokei section if present
+        if grep -q "<!-- TOKEI-START -->" README.md; then
+          sed '/<!-- TOKEI-START -->/,/<!-- TOKEI-END -->/d' README.md > readme_new.md
+        else
+          cp README.md readme_new.md
+        fi
+        
+        # Add new tokei section
+        {
+          echo ""
+          echo "<!-- TOKEI-START -->"
+          cat tokei_report.md
+          echo "<!-- TOKEI-END -->"
+        } >> readme_new.md
+        
+        mv readme_new.md README.md
+        echo "✓ README.md updated"
+    
     - name: Verify release artifacts
       run: |
         echo "Checking build artifacts..."
@@ -140,6 +202,16 @@ jobs:
         asset_path: ./build/cli
         asset_name: cli
         asset_content_type: application/octet-stream
+
+    - name: Upload libtui ui lib for cli
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/libtui.so
+        asset_name: libtui.so
+        asset_content_type: application/octet-stream
         
     - name: Upload cooper shared library
       uses: actions/upload-release-asset@v1
@@ -150,3 +222,26 @@ jobs:
         asset_path: ./build/libcooper.so
         asset_name: libcooper.so
         asset_content_type: application/octet-stream
+
+    - name: Commit README updates to main
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Switch to main and commit
+        git checkout main
+        git add README.md
+        
+        if ! git diff --staged --quiet; then
+          git commit -m "📊 Update code statistics for ${{ github.ref_name }}
+
+Auto-generated complexity metrics to track our minimal dependencies goal.
+
+Release: ${{ github.ref_name }}
+Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          git push origin main
+          echo "✅ Code statistics committed to main branch"
+        else
+          echo "ℹ️  No statistics changes to commit"
+        fi

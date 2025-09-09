@@ -16,8 +16,8 @@
 #include <math.h>
 #include <stdarg.h>
 
-#include "tui_loader.h"
-#include "shared_mem.h"
+#include "../tui/tui_loader.h"
+#include "../agent/cooper_shm.h"
 
 #define REFRESH_INTERVAL 250000 /* 250ms */
 
@@ -43,9 +43,11 @@ static cli_shm_context_t shm_ctx    = {0};
 /* Display data structures */
 static tui_method_display_t methods[UI_MAX_DISPLAY_ITEMS];
 static tui_object_display_t objects[UI_MAX_DISPLAY_ITEMS];
+static tui_heap_display_t heap[UI_MAX_DISPLAY_ITEMS];
 static tui_memory_display_t memory_data = {0};
 static int method_count                 = 0;
 static int object_count                 = 0;
+static int heap_count                   = 0;
 
 /* Terminal handling functions */
 void
@@ -186,7 +188,6 @@ read_shared_memory_data()
 		switch (entry->type)
 		{
 			case COOPER_DATA_METHOD_METRIC: {
-				/* Clean, semantic access to method data */
 				cooper_method_data_t *method = &entry->data.method;
 
 				/* Find or create method entry */
@@ -239,7 +240,6 @@ read_shared_memory_data()
 			}
 
 			case COOPER_DATA_MEMORY_SAMPLE: {
-				/* Clean access to memory data */
 				cooper_memory_data_t *memory = &entry->data.memory;
 
 				memory_data.last_updated = current_time;
@@ -305,8 +305,7 @@ read_shared_memory_data()
 			}
 
 			case COOPER_DATA_OBJECT_ALLOC: {
-				/* Clean access to object allocation data */
-				struct cooper_object_alloc_data *alloc =
+				cooper_object_alloc_data_t *alloc =
 				    &entry->data.object_alloc;
 
 				/* Find or add object type */
@@ -348,6 +347,53 @@ read_shared_memory_data()
 					objects[obj_idx].avg_size     = alloc->avg_size;
 					objects[obj_idx].last_updated = current_time;
 				}
+				break;
+			}
+
+			case COOPER_DATA_HEAP_STATS: {
+				cooper_heap_stats_data_t *stats = &entry->data.heap_stats;
+
+				/* Find or add heap type */
+				int idx = -1;
+				for (int j = 0; j < heap_count; j++)
+				{
+					if (strcmp(heap[j].class_name,
+					           stats->class_signature)
+					    == 0)
+					{
+						idx = j;
+						break;
+					}
+				}
+
+				if (idx == -1 && heap_count < UI_MAX_DISPLAY_ITEMS)
+					idx = heap_count++;
+
+				if (idx >= 0)
+				{
+					/* Copy class signature to local CLI structure */
+					strncpy(heap[idx].class_name,
+					        stats->class_signature,
+					        sizeof(heap[idx].class_name) - 1);
+					heap[idx].class_name[sizeof(heap[idx].class_name)
+					                     - 1] = '\0';
+
+					/* Semantic field names */
+					heap[idx].total_sz       = stats->total_sz;
+					heap[idx].total_deep_sz  = stats->total_deep_sz;
+					heap[idx].avg_sz         = stats->avg_sz;
+					heap[idx].avg_deep_sz    = stats->avg_deep_sz;
+					heap[idx].instance_count = stats->instance_count;
+					heap[idx].last_updated   = current_time;
+				}
+
+				break;
+			}
+
+			case COOPER_DATA_CLASS_STACKS: {
+
+				// TODO complete this
+
 				break;
 			}
 		}
@@ -443,6 +489,12 @@ main()
 				case '4':
 					current_view = UI_VIEW_OBJECTS;
 					break;
+				case '5':
+					current_view = UI_VIEW_HEAP;
+					break;
+				case '6':
+					current_view = UI_VIEW_CALL_STACKS;
+					break;
 			}
 		}
 
@@ -455,9 +507,11 @@ main()
 		tui_context_t ui_ctx = {
 		    .methods      = methods,
 		    .objects      = objects,
+		    .heap         = heap,
 		    .memory_data  = &memory_data,
 		    .method_count = method_count,
 		    .object_count = object_count,
+		    .heap_count   = heap_count,
 		    .current_view = current_view,
 		    .terminal     = {.width = term_width, .height = term_height}};
 

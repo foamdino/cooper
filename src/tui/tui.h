@@ -11,7 +11,7 @@
 #include <time.h>
 #include <stdarg.h>
 
-#define UI_MAX_DISPLAY_ITEMS  20
+#define UI_MAX_DISPLAY_ITEMS  10
 #define UI_MAX_HISTORY_POINTS 100
 #define UI_MAX_SIGNATURE_LEN  512
 
@@ -19,15 +19,19 @@ typedef enum tui_view_mode tui_view_mode_e;
 typedef struct tui_method_display tui_method_display_t;
 typedef struct tui_object_display tui_object_display_t;
 typedef struct tui_memory_display tui_memory_display_t;
+typedef struct tui_heap_display tui_heap_display_t;
+typedef struct tui_class_stacks_display tui_class_stacks_display_t;
 typedef struct tui_terminal_info tui_terminal_info_t;
 typedef struct tui_context tui_context_t;
 
 enum tui_view_mode
 {
-	UI_VIEW_OVERVIEW = 0,
-	UI_VIEW_METHODS  = 1,
-	UI_VIEW_MEMORY   = 2,
-	UI_VIEW_OBJECTS  = 3,
+	UI_VIEW_OVERVIEW    = 0,
+	UI_VIEW_METHODS     = 1,
+	UI_VIEW_MEMORY      = 2,
+	UI_VIEW_OBJECTS     = 3,
+	UI_VIEW_HEAP        = 4,
+	UI_VIEW_CALL_STACKS = 5,
 	UI_VIEW_COUNT
 };
 
@@ -70,6 +74,22 @@ struct tui_memory_display
 	time_t last_updated;
 };
 
+struct tui_heap_display
+{
+	char class_name[UI_MAX_SIGNATURE_LEN];
+	uint64_t instance_count;
+	uint64_t total_sz;
+	uint64_t total_deep_sz;
+	uint64_t avg_sz;
+	uint64_t avg_deep_sz;
+	time_t last_updated;
+};
+
+struct tui_class_stacks_display
+{
+	// TODO complete me
+};
+
 struct tui_terminal_info
 {
 	int width;
@@ -81,10 +101,12 @@ struct tui_context
 	tui_method_display_t *methods;
 	tui_object_display_t *objects;
 	tui_memory_display_t *memory_data;
+	tui_heap_display_t *heap;
 	tui_view_mode_e current_view;
 	tui_terminal_info_t terminal;
 	int method_count;
 	int object_count;
+	int heap_count;
 };
 
 /**
@@ -145,6 +167,12 @@ void tui_draw_memory_view(tui_context_t *ctx);
  * @param ctx UI context
  */
 void tui_draw_objects_view(tui_context_t *ctx);
+
+/**
+ * Draw the heap view
+ * @param ctx UI context
+ */
+void tui_draw_heap_view(tui_context_t *ctx);
 
 /**
  * Clear the screen

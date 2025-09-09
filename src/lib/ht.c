@@ -105,9 +105,9 @@ ht_create(arena_t *arena, size_t initial_cap, double load_factor)
 	ht->load_factor = load_factor;
 	ht->arena       = arena;
 
-	LOG_DEBUG("Created hashtable: capacity=%zu, load_factor=%.2f",
-	          initial_cap,
-	          load_factor);
+	LOG_INFO("Created hashtable: capacity=%zu, load_factor=%.2f",
+	         initial_cap,
+	         load_factor);
 	return ht;
 }
 
@@ -118,7 +118,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 	if (!ht || !ht->entries || !key || key[0] == '\0')
 	{
 		LOG_ERROR("Invalid parameters to ht_put");
-		return 0;
+		return 1;
 	}
 
 	/* Check load factor before insertion */
@@ -128,7 +128,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 		LOG_WARN("Hashtable load factor exceeded: %.2f >= %.2f",
 		         current_load,
 		         ht->load_factor);
-		return 0;
+		return 1;
 	}
 
 	/* Find slot for key */
@@ -138,7 +138,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 	if (idx >= ht->capacity)
 	{
 		LOG_ERROR("Hashtable full, cannot insert key: %s", key);
-		return 0;
+		return 1;
 	}
 
 	ht_entry_t *entry = &ht->entries[idx];
@@ -157,7 +157,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 		if (!entry->key)
 		{
 			LOG_ERROR("Failed to allocate key storage");
-			return 0;
+			return 1;
 		}
 
 		/* Safe string copy */
@@ -174,7 +174,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 		          ht->capacity);
 	}
 
-	return 1;
+	return 0;
 }
 
 void *
@@ -200,7 +200,7 @@ ht_remove(hashtable_t *ht, const char *key)
 	/* Validate parameters */
 	if (!ht || !ht->entries || !key || key[0] == '\0')
 	{
-		return 0;
+		return 1;
 	}
 
 	/* Find entry */
@@ -209,7 +209,7 @@ ht_remove(hashtable_t *ht, const char *key)
 
 	if (!found || idx >= ht->capacity)
 	{
-		return 0;
+		return 1;
 	}
 
 	/* Mark as deleted (tombstone) - preserves probe chain */
@@ -220,7 +220,7 @@ ht_remove(hashtable_t *ht, const char *key)
 	ht->count--;
 
 	LOG_DEBUG("Removed key: %s (count: %zu/%zu)", key, ht->count, ht->capacity);
-	return 1;
+	return 0;
 }
 
 double
@@ -244,5 +244,5 @@ ht_reset(hashtable_t *ht)
 	memset(ht->entries, 0, ht->capacity * sizeof(ht_entry_t));
 
 	ht->count = 0;
-	LOG_DEBUG("Reset hashtable (capacity: %zu)", ht->capacity);
+	LOG_INFO("Reset hashtable (capacity: %zu)", ht->capacity);
 }
