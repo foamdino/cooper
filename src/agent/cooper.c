@@ -1287,6 +1287,58 @@ cleanup:
 }
 
 static void JNICALL
+class_file_load_callback(jvmtiEnv *jvmti_env,
+                         JNIEnv *jni_env,
+                         jclass class_being_redefined,
+                         jobject loader,
+                         const char *name,
+                         jobject protection_domain,
+                         jint class_data_len,
+                         const unsigned char *class_data,
+                         jint *new_class_data_len,
+                         unsigned char **new_class_data)
+{
+	UNUSED(jvmti_env);
+	UNUSED(jni_env);
+	UNUSED(class_being_redefined);
+	UNUSED(loader);
+	UNUSED(protection_domain);
+	UNUSED(new_class_data_len);
+	UNUSED(new_class_data);
+
+	/* Fast filter check - no allocations */
+	if (!should_process_class(&global_ctx->package_filter, name))
+		return;
+
+	/* Class passed filter, enqueue for background processing */
+	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	class_q_entry_t *class_entry =
+	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+	if (!entry || !class_entry)
+	{
+		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		return;
+	}
+
+	/* Create our q entry */
+	class_entry->class_sig = arena_strdup(q_entry_arena, name);
+	entry->type            = Q_ENTRY_CLASS;
+
+	/* Scan class_data for annotations */
+	// TODO build out class file parsing in lib/jvm to deal with class_data
+	//... use class_data_len and class_data, add result to class_entry->annotations
+	// array
+	entry->data = class_entry;
+	/* Store the q entry in a hashtable
+	we look up the q entry in the class_load_callback and add it to the q for
+	background processing
+	*/
+	ht_put(global_ctx->interesting_classes, name, class_entry);
+}
+
+static void JNICALL
 thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 {
 	UNUSED(jvmti);
@@ -1764,7 +1816,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
 	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
+	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
+	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
@@ -1888,6 +1941,10 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
 		global_ctx->arenas[arena_configs[i].id] = arena;
 	}
+
+	/* make interesting classes available for class file load callback */
+	global_ctx->interesting_classes =
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID], 100, 0.75);
 
 	/* Init logging after all arenas are created */
 	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];
