@@ -233,13 +233,11 @@ jobs:
         git add README.md
         
         if ! git diff --staged --quiet; then
-          git commit -m "📊 Update code statistics for ${{ github.ref_name }}
-
-Auto-generated complexity metrics to track our minimal dependencies goal.
-
-Release: ${{ github.ref_name }}
-Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          
+          git commit -m "📊 Update code statistics for ${{ github.ref_name }}"\
+                     -m "Auto-generated complexity metrics to track our minimal dependencies goal." \
+                     -m "Release: ${{ github.ref_name }}" \
+                     -m "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+                     
           git push origin main
           echo "✅ Code statistics committed to main branch"
         else
