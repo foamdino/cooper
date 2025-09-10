@@ -48,7 +48,7 @@ jobs:
           echo ""
           echo "**Generated:** $(date -u '+%Y-%m-%d %H:%M:%S UTC') for release \`${{ github.ref_name }}\`"
           echo ""
-          echo "This report tracks project complexity to maintain our goal of a minimal, dependency-free JVM agent."
+          echo "This report tracks project complexity to maintain the goal of a minimal, dependency-free JVM agent."
           echo ""
           echo "\`\`\`"
           tokei --sort code .
@@ -102,16 +102,23 @@ jobs:
         test -x ./build/cli
         echo "✓ CLI executable found and is executable"
         
-        # Verify shared library
+        # Verify agent library
         test -f ./build/libcooper.so
         file ./build/libcooper.so | grep -q "shared object"
         echo "✓ libcooper.so found and is valid shared library"
+
+        # Verify tui library
+        test -f ./build/libtui.so
+        file ./build/libtui.so | grep -q "shared object"
+        echo "✓ libtui.so found and is valid shared library"
         
         # Get artifact sizes for release notes
         CLI_SIZE=$(stat -c%s ./build/cli)
-        LIB_SIZE=$(stat -c%s ./build/libcooper.so)
+        AGENT_SIZE=$(stat -c%s ./build/libcooper.so)
+        LIBTUI_SIZE=$(stat -c%s ./build/libtui.so)
         echo "CLI_SIZE=$CLI_SIZE" >> $GITHUB_ENV
-        echo "LIB_SIZE=$LIB_SIZE" >> $GITHUB_ENV
+        echo "AGENT_SIZE=$AGENT_SIZE" >> $GITHUB_ENV
+        echo "LIBTUI_SIZE=$LIBTUI_SIZE" >> $GITHUB_ENV
         
     - name: Generate comprehensive changelog
       id: changelog
@@ -179,7 +186,8 @@ jobs:
           | File | Size | Description |
           |------|------|-------------|
           | `cli` | ${{ env.CLI_SIZE }} bytes | Cooper command-line monitoring tool |
-          | `libcooper.so` | ${{ env.LIB_SIZE }} bytes | Cooper Java agent shared library |
+          | `libcooper.so` | ${{ env.AGENT_SIZE }} bytes | Cooper Java agent shared library |
+          | `libtui.so` | ${{ env.LIBTUI_SIZE }} bytes | TUI library |
           
           ## 🏗️ Build Information
           - **Platform**: Linux x86_64
@@ -234,7 +242,7 @@ jobs:
         
         if ! git diff --staged --quiet; then
           git commit -m "📊 Update code statistics for ${{ github.ref_name }}"\
-                     -m "Auto-generated complexity metrics to track our minimal dependencies goal." \
+                     -m "Auto-generated complexity metrics to track minimal dependencies goal." \
                      -m "Release: ${{ github.ref_name }}" \
                      -m "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
                      

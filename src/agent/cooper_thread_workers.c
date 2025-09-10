@@ -536,6 +536,200 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 static void
 export_call_stack_samples_to_shm(agent_context_t *ctx)
 {
+	if (!ctx)
+		return;
+}
+
+void *
+flamegraph_export_thread(void *arg)
+{
+	agent_context_t *ctx = (agent_context_t *)arg;
+
+	if (!ctx)
+		return NULL;
+
+	JNIEnv *jni = NULL;
+	jvmtiError err;
+	jvmtiPhase jvm_phase;
+
+	arena_t *arena = ctx->arenas[FLAMEGRAPH_ARENA_ID];
+
+	/* Attach this thread to the JVM to get a JNIEnv */
+	jint res =
+	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
+	if (res != JNI_OK || jni == NULL)
+	{
+		LOG_ERROR("Failed to attach flamegraph export thread to JVM, error: %d\n",
+		          res);
+		return NULL;
+	}
+
+	uint64_t file_start_ns = get_current_time_ns();
+	FILE *out              = NULL;
+	char filename[256];
+
+	stack_bucket_t buckets[MAX_BUCKETS];
+	size_t bucket_count = 0;
+
+	snprintf(filename,
+	         sizeof(filename),
+	         "/tmp/flamegraph-%llu.txt",
+	         (unsigned long long)file_start_ns);
+	out = fopen(filename, "w");
+
+	if (!out)
+	{
+		LOG_ERROR("Failed to open initial flamegraph output file: %s", filename);
+		return NULL;
+	}
+
+	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
+	{
+		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
+		{
+			LOG_ERROR("[flamegraph export thread] Error getting JVM phase, "
+			          "or JVM not in live phase: %d",
+			          err);
+			sleep(10);
+			continue;
+		}
+
+		uint32_t idx;
+		call_stack_sample_t *sample =
+		    sample_consume(&ctx->call_stack_channel, &idx);
+
+		if (!sample)
+		{
+			usleep(10000);
+			continue;
+		}
+
+		char buf[8192];
+		size_t pos           = 0;
+		size_t valid_samples = 0;
+
+		for (size_t f = 0; f < sample->frame_count; f++)
+		{
+			jmethodID mid = sample->frames[f];
+
+			/* Find declaring class */
+			jclass declaring_class;
+			(*ctx->jvmti_env)
+			    ->GetMethodDeclaringClass(
+				ctx->jvmti_env, mid, &declaring_class);
+
+			/* Lookup our cached class_info_t from tag */
+			jlong tag;
+			(*ctx->jvmti_env)->GetTag(ctx->jvmti_env, declaring_class, &tag);
+			if (tag == 0)
+				continue;
+
+			class_info_t *info = (class_info_t *)(intptr_t)tag;
+
+			/* Linear search for matching method_id (could later be a hash
+			 * map) */
+			method_info_t *mi = NULL;
+			for (uint32_t m = 0; m < info->method_count; m++)
+			{
+				if (info->methods[m].method_id == mid)
+				{
+					mi = &info->methods[m];
+					break;
+				}
+			}
+			if (!mi || !mi->full_name)
+				continue;
+
+			int n = snprintf(buf + pos,
+			                 sizeof(buf) - pos,
+			                 "%s%s",
+			                 mi->full_name,
+			                 (f == sample->frame_count - 1) ? "" : ";");
+			if (n < 0 || (size_t)n >= sizeof(buf) - pos)
+				break; /* truncated */
+			pos += n;
+			valid_samples++;
+		}
+
+		if (valid_samples)
+		{
+			/* Aggregate into buckets */
+			size_t i;
+			for (i = 0; i < bucket_count; i++)
+			{
+				if (strcmp(buckets[i].stack_str, buf) == 0)
+				{
+					buckets[i].count++;
+					break;
+				}
+			}
+
+			if (i == bucket_count && bucket_count < MAX_BUCKETS)
+			{
+				buckets[bucket_count].stack_str =
+				    arena_strdup(arena, buf);
+				buckets[bucket_count].count = 1;
+				bucket_count++;
+			}
+		}
+
+		sample_release(&ctx->call_stack_channel, idx);
+
+		/* Check for rollover */
+		uint64_t now = get_current_time_ns();
+		if (now - file_start_ns >= ROLL_INTERVAL)
+		{
+			/* Flush all buckets */
+			for (size_t i = 0; i < bucket_count; i++)
+			{
+				fprintf(out,
+				        "%s %zu\n",
+				        buckets[i].stack_str,
+				        buckets[i].count);
+				arena_free(arena, buckets[i].stack_str);
+			}
+			fclose(out);
+
+			/* Reset buckets */
+			bucket_count  = 0;
+			file_start_ns = now;
+
+			/* Open new file */
+			snprintf(filename,
+			         sizeof(filename),
+			         "/tmp/flamegraph-%llu.txt",
+			         (unsigned long long)file_start_ns);
+			out = fopen(filename, "w");
+			if (!out)
+			{
+				LOG_ERROR(
+				    "Failed to open rollover flamegraph output file: %s",
+				    filename);
+				break;
+			}
+		}
+	}
+
+	/* Final flush */
+	if (out)
+	{
+		for (size_t i = 0; i < bucket_count; i++)
+		{
+			fprintf(out, "%s %zu\n", buckets[i].stack_str, buckets[i].count);
+			arena_free(arena, buckets[i].stack_str);
+		}
+		fclose(out);
+	}
+
+	/* Detach from JVM */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+
+	LOG_INFO("Flamegraph export thread exiting");
+
+	return NULL;
 }
 
 /**
@@ -1294,11 +1488,12 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 		goto deallocate;
 	}
 
-	/* Loop through each method and cache its details */
+	/* Loop through each method and cache details */
 	for (int i = 0; i < method_count; i++)
 	{
-		char *method_name          = NULL;
-		char *method_sig           = NULL;
+		char *method_name = NULL;
+		char *method_sig  = NULL;
+		char buf[1024];
 		info->methods[i].method_id = methods[i];
 
 		/* Skip any method where we cannot get name */
@@ -1311,6 +1506,8 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 		/* Store arena-allocated copies of the names */
 		info->methods[i].method_name      = arena_strdup(arena, method_name);
 		info->methods[i].method_signature = arena_strdup(arena, method_sig);
+		snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
+		info->methods[i].full_name = arena_strdup(arena, buf);
 
 		info->methods[i].sample_index =
 		    find_method_filter_index(ctx, class_sig, method_name, method_sig);
@@ -1674,8 +1871,9 @@ call_stack_sampling_thread_func(void *arg)
 			continue;
 		}
 
-		// sleep for configured interval
-		// usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
+		// TODO decouple the thread func from the body...
+		//  sleep for configured interval
+		//  usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
 		usleep(10000); // TODO move this to config - right now 100ms seems
 		               // reasonable
 
@@ -1759,6 +1957,13 @@ call_stack_sampling_thread_func(void *arg)
 
 		(*jvmti)->Deallocate(jvmti, (unsigned char *)threads);
 	}
+
+	/* Detach from JVM */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+
+	LOG_INFO("Call stack sampling thread exiting");
 
 	return NULL;
 }

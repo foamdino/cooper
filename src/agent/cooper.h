@@ -63,6 +63,7 @@
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 #define Q_ENTRY_ARENA_SZ     2048 * 1024
 #define CALL_STACK_ARENA_SZ  64 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ  1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS   1024
@@ -75,6 +76,7 @@
 #define SCRATCH_ARENA_BLOCKS     1024
 #define Q_ENTRY_ARENA_BLOCKS     1024
 #define CALL_STACK_ARENA_BLOCKS  1024
+#define FLAMEGRAPH_ARENA_BLOCKS  1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME   "exception_arena"
@@ -86,6 +88,7 @@
 #define SCRATCH_ARENA_NAME     "scratch_arena"
 #define Q_ENTRY_ARENA_NAME     "q_entry_arena"
 #define CALL_STACK_ARENA_NAME  "call_stack_arena"
+#define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -131,24 +134,26 @@ enum arenas
 	CLASS_CACHE_ARENA_ID,
 	Q_ENTRY_ARENA_ID,
 	CALL_STACK_ARENA_ID,
+	FLAMEGRAPH_ARENA_ID,
 	ARENA_ID__LAST
 };
 
 enum thread_workers_status
 {
-	EXPORT_RUNNING       = (1 << 0),
-	MEM_SAMPLING_RUNNING = (1 << 1),
-	SHM_EXPORT_RUNNING   = (1 << 2),
-	HEAP_STATS_RUNNING   = (1 << 3),
-	CLASS_CACHE_RUNNING  = (1 << 4),
-	CALL_STACK_RUNNNG    = (1 << 5)
+	EXPORT_RUNNING            = (1 << 0),
+	MEM_SAMPLING_RUNNING      = (1 << 1),
+	SHM_EXPORT_RUNNING        = (1 << 2),
+	HEAP_STATS_RUNNING        = (1 << 3),
+	CLASS_CACHE_RUNNING       = (1 << 4),
+	CALL_STACK_RUNNNG         = (1 << 5),
+	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6)
 };
 
 struct call_stack_sample
 {
 	uint64_t timestamp_ns;              /**< sample time */
 	jlong thread_id;                    /**< Java thread ID */
-	int frame_count;                    /**< number of captured frames */
+	size_t frame_count;                 /**< number of captured frames */
 	jmethodID frames[MAX_STACK_FRAMES]; /**< top-of-stack first */
 };
 
@@ -310,6 +315,7 @@ struct method_info
 	char *method_name;
 	char *method_signature;
 	int sample_index; /**< -1 for not sampled, index into SoA structure */
+	char *full_name;
 };
 
 struct class_info
@@ -365,6 +371,7 @@ struct agent_context
 	pthread_t heap_stats_thread;   /**< Heap stats background thread */
 	pthread_t class_cache_thread;  /**< Class caching background thread */
 	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
+	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
 	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
 	unsigned int worker_statuses; /**< Bitfield flags for background worker threads -
 	                                 see thread_workers_status */
