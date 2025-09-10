@@ -16,9 +16,6 @@
 #include "cooper.h"
 #include "cooper_shm.h"
 
-/* Forward declaration */
-typedef struct agent_context agent_context_t;
-
 /* Simple thread management functions */
 int start_all_threads(agent_context_t *ctx);
 void stop_all_threads(agent_context_t *ctx);

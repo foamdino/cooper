@@ -238,7 +238,7 @@ record_method_execution(agent_context_t *ctx,
 		                          memory_order_relaxed);
 
 		/* Update min/max */
-		pthread_mutex_lock(&ctx->samples_lock);
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 		if (exec_time_ns < metrics->min_time_ns[method_index])
 			metrics->min_time_ns[method_index] = exec_time_ns;
@@ -246,7 +246,7 @@ record_method_execution(agent_context_t *ctx,
 		if (exec_time_ns > metrics->max_time_ns[method_index])
 			metrics->max_time_ns[method_index] = exec_time_ns;
 
-		pthread_mutex_unlock(&ctx->samples_lock);
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 	}
 
 	/* Update memory metrics if enabled */
@@ -256,12 +256,12 @@ record_method_execution(agent_context_t *ctx,
 		                          memory_bytes,
 		                          memory_order_relaxed);
 
-		pthread_mutex_lock(&ctx->samples_lock);
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 		if (memory_bytes > metrics->peak_memory[method_index])
 			metrics->peak_memory[method_index] = memory_bytes;
 
-		pthread_mutex_unlock(&ctx->samples_lock);
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 	}
 
 	/* Update CPU metrics if enabled */
@@ -418,8 +418,9 @@ update_object_allocation_stats(agent_context_t *ctx,
 		                          1,
 		                          memory_order_relaxed);
 
+		// TODO need different locks / stats instead of using single lock
 		/* Update size statistics */
-		pthread_mutex_lock(&ctx->samples_lock);
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 		if (safe_sz < ctx->object_metrics->min_size[index])
 			ctx->object_metrics->min_size[index] = safe_sz;
 
@@ -430,7 +431,7 @@ update_object_allocation_stats(agent_context_t *ctx,
 		ctx->object_metrics->avg_size[index] =
 		    ctx->object_metrics->total_bytes[index]
 		    / ctx->object_metrics->allocation_counts[index];
-		pthread_mutex_unlock(&ctx->samples_lock);
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 	}
 }
 
@@ -1307,6 +1308,10 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(new_class_data_len);
 	UNUSED(new_class_data);
 
+	// TODO we will use these when we actually parse the class data
+	UNUSED(class_data_len);
+	UNUSED(class_data);
+
 	/* Fast filter check - no allocations */
 	if (!should_process_class(&global_ctx->package_filter, name))
 		return;
@@ -1366,7 +1371,7 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	jlong thread_id = (*jni)->CallLongMethod(jni, thread, global_ctx->getId_method);
 
 	/* Remove from our mapping table */
-	pthread_mutex_lock(&global_ctx->samples_lock);
+	pthread_mutex_lock(&global_ctx->tm_ctx.samples_lock);
 	for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
 	{
 		if (global_ctx->thread_mappings[i].java_thread_id == thread_id)
@@ -1376,7 +1381,7 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 			break;
 		}
 	}
-	pthread_mutex_unlock(&global_ctx->samples_lock);
+	pthread_mutex_unlock(&global_ctx->tm_ctx.samples_lock);
 }
 
 /**
@@ -1901,7 +1906,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	global_ctx->config.rate                = 1;
 	global_ctx->config.export_interval     = 60;
 	global_ctx->config.mem_sample_interval = 1;
-	pthread_mutex_init(&global_ctx->samples_lock, NULL);
+	pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL);
 
 	/* Redirect output */
 	if (options && strncmp(options, "logfile=", 8) == 0)
@@ -2157,7 +2162,7 @@ Agent_OnUnload(JavaVM *vm)
 		global_ctx->object_metrics = NULL;
 
 		/* Destroy mutex */
-		pthread_mutex_destroy(&global_ctx->samples_lock);
+		pthread_mutex_destroy(&global_ctx->tm_ctx.samples_lock);
 
 		free(global_ctx);
 		global_ctx = NULL;

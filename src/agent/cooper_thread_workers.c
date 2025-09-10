@@ -53,7 +53,7 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 	}
 
 	/* Use Thread.getId() as a key to our mapping table */
-	pthread_mutex_lock(&ctx->samples_lock);
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	/* Check for previous mapping */
 	for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
@@ -64,12 +64,12 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 			LOG_DEBUG("Found existing mapping: Java ID %lld -> Native ID %d",
 			          (long long)thread_id,
 			          result);
-			pthread_mutex_unlock(&ctx->samples_lock);
+			pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 			return result;
 		}
 	}
 
-	pthread_mutex_unlock(&ctx->samples_lock);
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
 	/*
 	This is a new thread id, not previously found in our mappings.
@@ -101,7 +101,7 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 
 			/* Add to our map */
 			int empty_slot = -1;
-			pthread_mutex_lock(&ctx->samples_lock);
+			pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 			for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
 			{
 				if (ctx->thread_mappings[i].java_thread_id == 0)
@@ -121,7 +121,7 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 			else
 				LOG_ERROR("No empty slots available for thread mapping");
 
-			pthread_mutex_unlock(&ctx->samples_lock);
+			pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 		}
 	}
 
@@ -155,7 +155,7 @@ export_to_file(agent_context_t *ctx)
 	}
 
 	/* Lock metrics for thread safe exporting */
-	pthread_mutex_lock(&ctx->samples_lock);
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 	/* Write header with time stamp */
 	time_t now;
 	time(&now);
@@ -350,7 +350,7 @@ export_to_file(agent_context_t *ctx)
 	         (unsigned long)total_calls,
 	         (unsigned long)total_samples);
 
-	pthread_mutex_unlock(&ctx->samples_lock);
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
 	fclose(fp);
 }
@@ -361,7 +361,7 @@ export_method_to_shm(agent_context_t *ctx)
 	if (!ctx->shm_ctx || !ctx->metrics)
 		return;
 
-	pthread_mutex_lock(&ctx->samples_lock);
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	for (size_t i = 0; i < ctx->metrics->capacity; i++)
 	{
@@ -391,7 +391,7 @@ export_method_to_shm(agent_context_t *ctx)
 		}
 	}
 
-	pthread_mutex_unlock(&ctx->samples_lock);
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 /**
@@ -459,7 +459,7 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 	if (!ctx->shm_ctx || !ctx->object_metrics)
 		return;
 
-	pthread_mutex_lock(&ctx->samples_lock);
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	for (size_t i = 0; i < ctx->object_metrics->count; i++)
 	{
@@ -492,7 +492,7 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 		}
 	}
 
-	pthread_mutex_unlock(&ctx->samples_lock);
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 static void
@@ -505,7 +505,7 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 		return;
 
 	// TODO perhaps need different lock
-	pthread_mutex_lock(&ctx->samples_lock);
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	for (size_t i = 0; i < ctx->last_heap_stats_count; i++)
 	{
@@ -530,7 +530,7 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 	}
 
 	// TODO diff lock??
-	pthread_mutex_unlock(&ctx->samples_lock);
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 static void
@@ -583,7 +583,7 @@ flamegraph_export_thread(void *arg)
 		return NULL;
 	}
 
-	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
 	{
 		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
 		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
@@ -1543,16 +1543,16 @@ export_thread_func(void *arg)
 	export_to_file(ctx);
 
 	/* export to file while export_running flag is set */
-	while (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, EXPORT_RUNNING))
 	{
 		/* Sleep in smaller increments to be more responsive to shutdown */
 		for (int i = 0;
 		     i < ctx->config.export_interval
-		     && check_worker_status(ctx->worker_statuses, EXPORT_RUNNING);
+		     && check_worker_status(ctx->tm_ctx.worker_statuses, EXPORT_RUNNING);
 		     i++)
 			sleep(1);
 
-		if (check_worker_status(ctx->worker_statuses, EXPORT_RUNNING))
+		if (check_worker_status(ctx->tm_ctx.worker_statuses, EXPORT_RUNNING))
 		{
 			LOG_INFO("Export thread woke up, exporting metrics\n");
 			export_to_file(ctx);
@@ -1578,7 +1578,7 @@ shm_export_thread_func(void *arg)
 	LOG_INFO("Shared memory export thread started");
 
 	/* TODO move export interval to const */
-	while (check_worker_status(ctx->worker_statuses, SHM_EXPORT_RUNNING))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, SHM_EXPORT_RUNNING))
 	{
 		if (ctx->shm_ctx == NULL)
 		{
@@ -1640,7 +1640,7 @@ mem_sampling_thread_func(void *arg)
 
 	LOG_INFO("Memory sampling thread successfully attached to JVM");
 
-	while (check_worker_status(ctx->worker_statuses, MEM_SAMPLING_RUNNING))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, MEM_SAMPLING_RUNNING))
 	{
 		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
 		if (err != JVMTI_ERROR_NONE)
@@ -1728,7 +1728,7 @@ heap_stats_thread_func(void *arg)
 	LOG_INFO("Heap statistics thread successfully attached to JVM");
 
 	// TODO extract sleep interval to config
-	while (check_worker_status(ctx->worker_statuses, HEAP_STATS_RUNNING))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, HEAP_STATS_RUNNING))
 	{
 		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
 		if (err != JVMTI_ERROR_NONE)
@@ -1792,7 +1792,7 @@ class_cache_thread_func(void *arg)
 	int classes_processed = 0;
 	LOG_INFO("Class cache thread started, queue has %d entries", queue->count);
 
-	while (check_worker_status(ctx->worker_statuses, CLASS_CACHE_RUNNING))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING))
 	{
 		LOG_DEBUG("Waiting for class from queue...");
 		q_entry_t *entry = q_deq(queue);
@@ -1859,7 +1859,7 @@ call_stack_sampling_thread_func(void *arg)
 		return NULL;
 	}
 
-	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
 	{
 		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
 		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))

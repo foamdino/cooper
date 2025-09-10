@@ -66,7 +66,7 @@ init_test_context()
 	ctx->config.export_method    = NULL;
 	ctx->config.export_interval  = 60;
 
-	pthread_mutex_init(&ctx->samples_lock, NULL);
+	pthread_mutex_init(&ctx->tm_ctx.samples_lock, NULL);
 
 	return ctx;
 }
@@ -113,7 +113,7 @@ cleanup_test_context(agent_context_t *ctx)
 	if (!ctx)
 		return;
 
-	pthread_mutex_destroy(&ctx->samples_lock);
+	pthread_mutex_destroy(&ctx->tm_ctx.samples_lock);
 	free(ctx);
 }
 

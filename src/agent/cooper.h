@@ -113,6 +113,7 @@ typedef struct thread_context thread_context_t;
 typedef struct method_metrics_soa method_metrics_soa_t;
 typedef struct app_memory_metrics app_memory_metrics_t;
 typedef struct thread_memory_metrics thread_memory_metrics_t;
+typedef struct thread_manager_ctx thread_manager_ctx_t;
 typedef struct agent_context agent_context_t;
 typedef struct thread_alloc thread_alloc_t;
 typedef struct thread_id_mapping thread_id_mapping_t;
@@ -351,6 +352,20 @@ struct config
 	int export_interval;     /**< export to file every 60 seconds */
 };
 
+struct thread_manager_ctx
+{
+	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
+	                                      see thread_workers_status */
+	pthread_t export_thread;       /**< Export background thread */
+	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
+	pthread_t shm_export_thread;   /**< Export via shared mem background thread */
+	pthread_t heap_stats_thread;   /**< Heap stats background thread */
+	pthread_t class_cache_thread;  /**< Class caching background thread */
+	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
+	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
+	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
+};
+
 struct agent_context
 {
 	int event_counter;        /**< Counter for nth samples */
@@ -361,20 +376,10 @@ struct agent_context
 	callbacks_t callbacks;    /**< Centralized callback structures */
 	char **method_filters;    /**< Method filter list */
 	int num_filters;          /**< Number of filters */
-	package_filter_t package_filter; /**< Set of packages to look for */
-	FILE *log_file;                  /**< Log output file */
-	pthread_t log_thread;            /**< Logging thread */
-	/* TODO move sample thread handles to thread manager... */
-	pthread_t export_thread;       /**< Export background thread */
-	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
-	pthread_t shm_export_thread;   /**< Export via shared mem background thread */
-	pthread_t heap_stats_thread;   /**< Heap stats background thread */
-	pthread_t class_cache_thread;  /**< Class caching background thread */
-	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
-	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
-	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
-	unsigned int worker_statuses; /**< Bitfield flags for background worker threads -
-	                                 see thread_workers_status */
+	package_filter_t package_filter;   /**< Set of packages to look for */
+	FILE *log_file;                    /**< Log output file */
+	pthread_t log_thread;              /**< Logging thread */
+	thread_manager_ctx_t tm_ctx;       /**< Holds state/threads for thread_manager */
 	ring_channel_t call_stack_channel; /**< ring channel for call stacks */
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */

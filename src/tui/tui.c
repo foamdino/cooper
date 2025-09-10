@@ -472,7 +472,7 @@ tui_draw_heap_view(tui_context_t *ctx)
 		char deep_avg_str[32];
 		char instance_str[32];
 		char ratio_str[16];
-		char line_buffer[512];
+		char line_buffer[640];
 
 		/* Format the numbers */
 		tui_format_number(
