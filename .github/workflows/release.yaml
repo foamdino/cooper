@@ -55,13 +55,6 @@ jobs:
           echo "\`\`\`"
           echo ""
           echo "**Key Metrics:**"
-          
-          # Extract key numbers from tokei output
-          TOTAL_LINES=$(tokei --output json . | grep -o '"code":[0-9]*' | head -1 | cut -d: -f2)
-          TOTAL_FILES=$(find src/ -name "*.c" -o -name "*.h" | wc -l)
-          
-          echo "- **Total C Lines:** ${TOTAL_LINES:-"N/A"}"
-          echo "- **Total C Files:** ${TOTAL_FILES:-"N/A"}"
           echo "- **External Dependencies:** 0 (excluding system libraries)"
           echo "- **Build Tool:** Custom (nob.c)"
           echo ""
