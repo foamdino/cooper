@@ -20,4 +20,26 @@
 int start_all_threads(agent_context_t *ctx);
 void stop_all_threads(agent_context_t *ctx);
 
+/* Set a specific worker status bit */
+static inline void
+set_worker_status(unsigned int *status, unsigned int flag)
+{
+	*status |= flag;
+}
+
+/* Check if a specific worker status bit is set - returns non-zero if set, zero if not set
+ */
+static inline int
+check_worker_status(unsigned int status, unsigned int flag)
+{
+	return status & flag;
+}
+
+/* Clear a specific worker status bit */
+static inline void
+clear_worker_status(unsigned int *status, unsigned int flag)
+{
+	*status &= ~flag;
+}
+
 #endif /* COOPER_THREAD_MANAGER_H */
