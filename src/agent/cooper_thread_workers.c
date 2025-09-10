@@ -552,6 +552,8 @@ flamegraph_export_thread(void *arg)
 	jvmtiError err;
 	jvmtiPhase jvm_phase;
 
+	arena_t *arena = ctx->arenas[FLAMEGRAPH_ARENA_ID];
+
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
 	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
@@ -562,9 +564,24 @@ flamegraph_export_thread(void *arg)
 		return NULL;
 	}
 
-	uint64_t current_ts = 0;
-	FILE *out           = NULL;
+	uint64_t file_start_ns = get_current_time_ns();
+	FILE *out              = NULL;
 	char filename[256];
+
+	stack_bucket_t buckets[MAX_BUCKETS];
+	size_t bucket_count = 0;
+
+	snprintf(filename,
+	         sizeof(filename),
+	         "/tmp/flamegraph-%llu.txt",
+	         (unsigned long long)file_start_ns);
+	out = fopen(filename, "w");
+
+	if (!out)
+	{
+		LOG_ERROR("Failed to open initial flamegraph output file: %s", filename);
+		return NULL;
+	}
 
 	while (check_worker_status(ctx->worker_statuses, CALL_STACK_RUNNNG))
 	{
@@ -588,17 +605,8 @@ flamegraph_export_thread(void *arg)
 			continue;
 		}
 
-		if (sample->timestamp_ns != current_ts)
-		{
-			if (out)
-			{
-				fclose(out);
-				out = NULL;
-			}
-
-			current_ts = sample->timestamp_ns;
-		}
-
+		char buf[8192];
+		size_t pos           = 0;
 		size_t valid_samples = 0;
 
 		for (size_t f = 0; f < sample->frame_count; f++)
@@ -633,49 +641,86 @@ flamegraph_export_thread(void *arg)
 			if (!mi || !mi->full_name)
 				continue;
 
-			/* Now we can open the file as we have at least one sample */
-			if (!out)
-			{
-				snprintf(filename,
-				         sizeof(filename),
-				         "/tmp/flamegraph-%llu.txt",
-				         (unsigned long long)current_ts);
-				out = fopen(filename, "w");
-
-				if (!out)
-				{
-					LOG_ERROR(
-					    "Failed to open flamegraph output file: %s",
-					    filename);
-					sample_release(&ctx->call_stack_channel, idx);
-					goto next_sample;
-				}
-			}
-
-			/* Write "Class.method;Class.method;..." format
-			            full_name is currently Lcom/github/foamdino/App style
-			            - could be made more readbable
-			            */
-			fprintf(out,
-			        "%s%s",
-			        mi->full_name,
-			        (f == sample->frame_count - 1) ? "" : ";");
-
-			/* We have written a valid sample with class.method */
+			int n = snprintf(buf + pos,
+			                 sizeof(buf) - pos,
+			                 "%s%s",
+			                 mi->full_name,
+			                 (f == sample->frame_count - 1) ? "" : ";");
+			if (n < 0 || (size_t)n >= sizeof(buf) - pos)
+				break; /* truncated */
+			pos += n;
 			valid_samples++;
 		}
 
-		/* Write sample weight (always 1) */
-		if (valid_samples && out)
-			fprintf(out, " 1\n");
+		if (valid_samples)
+		{
+			/* Aggregate into buckets */
+			size_t i;
+			for (i = 0; i < bucket_count; i++)
+			{
+				if (strcmp(buckets[i].stack_str, buf) == 0)
+				{
+					buckets[i].count++;
+					break;
+				}
+			}
 
-	next_sample:
-		/* Release slot back */
+			if (i == bucket_count && bucket_count < MAX_BUCKETS)
+			{
+				buckets[bucket_count].stack_str =
+				    arena_strdup(arena, buf);
+				buckets[bucket_count].count = 1;
+				bucket_count++;
+			}
+		}
+
 		sample_release(&ctx->call_stack_channel, idx);
+
+		/* Check for rollover */
+		uint64_t now = get_current_time_ns();
+		if (now - file_start_ns >= ROLL_INTERVAL)
+		{
+			/* Flush all buckets */
+			for (size_t i = 0; i < bucket_count; i++)
+			{
+				fprintf(out,
+				        "%s %zu\n",
+				        buckets[i].stack_str,
+				        buckets[i].count);
+				arena_free(arena, buckets[i].stack_str);
+			}
+			fclose(out);
+
+			/* Reset buckets */
+			bucket_count  = 0;
+			file_start_ns = now;
+
+			/* Open new file */
+			snprintf(filename,
+			         sizeof(filename),
+			         "/tmp/flamegraph-%llu.txt",
+			         (unsigned long long)file_start_ns);
+			out = fopen(filename, "w");
+			if (!out)
+			{
+				LOG_ERROR(
+				    "Failed to open rollover flamegraph output file: %s",
+				    filename);
+				break;
+			}
+		}
 	}
 
+	/* Final flush */
 	if (out)
+	{
+		for (size_t i = 0; i < bucket_count; i++)
+		{
+			fprintf(out, "%s %zu\n", buckets[i].stack_str, buckets[i].count);
+			arena_free(arena, buckets[i].stack_str);
+		}
 		fclose(out);
+	}
 
 	/* Detach from JVM */
 	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);

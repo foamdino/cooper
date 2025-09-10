@@ -10,8 +10,15 @@
 #include "../lib/proc_mem.h"
 #include "cooper_thread_manager.h"
 
-/* Forward declaration to avoid circular dependency */
-typedef struct agent_context agent_context_t;
+#define MAX_BUCKETS   16384
+#define ROLL_INTERVAL (1 * 60 * 1000000000ULL) //(10 * 60 * 1000000000ULL)
+
+typedef struct stack_bucket stack_bucket_t;
+struct stack_bucket
+{
+	char *stack_str; /**< semicolon-joined call stack */
+	size_t count;
+};
 
 /* Main worker thread functions */
 void *export_thread_func(void *arg);

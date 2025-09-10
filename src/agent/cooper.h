@@ -63,6 +63,7 @@
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 #define Q_ENTRY_ARENA_SZ     2048 * 1024
 #define CALL_STACK_ARENA_SZ  64 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ  1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS   1024
@@ -75,6 +76,7 @@
 #define SCRATCH_ARENA_BLOCKS     1024
 #define Q_ENTRY_ARENA_BLOCKS     1024
 #define CALL_STACK_ARENA_BLOCKS  1024
+#define FLAMEGRAPH_ARENA_BLOCKS  1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME   "exception_arena"
@@ -86,6 +88,7 @@
 #define SCRATCH_ARENA_NAME     "scratch_arena"
 #define Q_ENTRY_ARENA_NAME     "q_entry_arena"
 #define CALL_STACK_ARENA_NAME  "call_stack_arena"
+#define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -131,6 +134,7 @@ enum arenas
 	CLASS_CACHE_ARENA_ID,
 	Q_ENTRY_ARENA_ID,
 	CALL_STACK_ARENA_ID,
+	FLAMEGRAPH_ARENA_ID,
 	ARENA_ID__LAST
 };
 
