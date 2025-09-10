@@ -115,6 +115,20 @@ start_all_threads(agent_context_t *ctx)
 	else
 		LOG_INFO("Call stack sampling thread started");
 
+	/* Start flamegraph / call stack export */
+	set_worker_status(&ctx->worker_statuses, FLAMEGRAPH_EXPORT_RUNNING);
+	if (pthread_create(
+		&ctx->flamegraph_export_thread, NULL, flamegraph_export_thread, ctx)
+	    != 0)
+	{
+		LOG_ERROR("Failed to start flamegraph export thread: %s",
+		          strerror(errno));
+		clear_worker_status(&ctx->worker_statuses, FLAMEGRAPH_EXPORT_RUNNING);
+		return COOPER_ERR;
+	}
+	else
+		LOG_INFO("Flamegraph export thread started");
+
 	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
 }

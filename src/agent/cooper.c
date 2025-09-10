@@ -2146,6 +2146,8 @@ Agent_OnUnload(JavaVM *vm)
 		/* Finally shutdown logging */
 		cleanup_log_system();
 
+		ring_channel_free(&global_ctx->call_stack_channel);
+
 		/* Cleanup the arenas - this will free all cache managers and cache data
 		 */
 		destroy_all_arenas(global_ctx->arenas, ARENA_ID__LAST);
