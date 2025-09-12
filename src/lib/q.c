@@ -56,8 +56,6 @@ q_enq(q_t *queue, q_entry_t *entry)
 	}
 
 	/* Add to queue */
-	// queue->entries[queue->hd]->type = entry->type;
-	// queue->entries[queue->hd]->data = entry->data;
 	queue->entries[queue->hd] = entry;
 	queue->hd                 = (queue->hd + 1) % Q_SZ;
 	queue->count++;

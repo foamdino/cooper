@@ -245,76 +245,77 @@ tui_draw_memory_history(const tui_memory_display_t *memory_data, int term_width)
 	                     (unsigned long)(memory_data->process_memory / 1024 / 1024));
 }
 
-void
-tui_draw_histogram(char *title, uint64_t values[], int count)
-{
-	tui_append_formatted("%s\n", title);
-	tui_append_to_buffer("\n");
-	if (count == 0)
-	{
-		tui_append_to_buffer("No data available\n");
-		return;
-	}
+// TODO - we don't use this
+//  static void
+//  tui_draw_histogram(char *title, uint64_t values[], int count)
+//  {
+//  	tui_append_formatted("%s\n", title);
+//  	tui_append_to_buffer("\n");
+//  	if (count == 0)
+//  	{
+//  		tui_append_to_buffer("No data available\n");
+//  		return;
+//  	}
 
-	/* Create histogram buckets */
-	uint64_t min_val = values[0];
-	uint64_t max_val = values[0];
+// 	/* Create histogram buckets */
+// 	uint64_t min_val = values[0];
+// 	uint64_t max_val = values[0];
 
-	for (int i = 1; i < count; i++)
-	{
-		if (values[i] < min_val)
-			min_val = values[i];
-		if (values[i] > max_val)
-			max_val = values[i];
-	}
+// 	for (int i = 1; i < count; i++)
+// 	{
+// 		if (values[i] < min_val)
+// 			min_val = values[i];
+// 		if (values[i] > max_val)
+// 			max_val = values[i];
+// 	}
 
-	if (max_val == min_val)
-	{
-		tui_append_formatted("All values are identical: %lu\n",
-		                     (unsigned long)min_val);
-		return;
-	}
+// 	if (max_val == min_val)
+// 	{
+// 		tui_append_formatted("All values are identical: %lu\n",
+// 		                     (unsigned long)min_val);
+// 		return;
+// 	}
 
-	int num_buckets      = 20;
-	int buckets[20]      = {0};
-	uint64_t bucket_size = (max_val - min_val) / num_buckets;
+// 	int num_buckets      = 20;
+// 	int buckets[20]      = {0};
+// 	uint64_t bucket_size = (max_val - min_val) / num_buckets;
 
-	for (int i = 0; i < count; i++)
-	{
-		int bucket = (values[i] - min_val) / bucket_size;
-		if (bucket >= num_buckets)
-			bucket = num_buckets - 1;
-		buckets[bucket]++;
-	}
+// 	for (int i = 0; i < count; i++)
+// 	{
+// 		int bucket = (values[i] - min_val) / bucket_size;
+// 		if (bucket >= num_buckets)
+// 			bucket = num_buckets - 1;
+// 		buckets[bucket]++;
+// 	}
 
-	/* Find max bucket count for scaling */
-	int max_bucket = 0;
-	for (int i = 0; i < num_buckets; i++)
-	{
-		if (buckets[i] > max_bucket)
-			max_bucket = buckets[i];
-	}
+// 	/* Find max bucket count for scaling */
+// 	int max_bucket = 0;
+// 	for (int i = 0; i < num_buckets; i++)
+// 	{
+// 		if (buckets[i] > max_bucket)
+// 			max_bucket = buckets[i];
+// 	}
 
-	/* Draw histogram */
-	int bar_height = 6;
-	for (int row = bar_height; row > 0; row--)
-	{
-		for (int col = 0; col < num_buckets; col++)
-		{
-			int height =
-			    max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
-			if (height >= row)
-			{
-				tui_append_to_buffer("█");
-			}
-			else
-			{
-				tui_append_to_buffer(" ");
-			}
-		}
-		tui_append_to_buffer("\n");
-	}
-}
+// 	/* Draw histogram */
+// 	int bar_height = 6;
+// 	for (int row = bar_height; row > 0; row--)
+// 	{
+// 		for (int col = 0; col < num_buckets; col++)
+// 		{
+// 			int height =
+// 			    max_bucket > 0 ? (buckets[col] * bar_height) / max_bucket : 0;
+// 			if (height >= row)
+// 			{
+// 				tui_append_to_buffer("█");
+// 			}
+// 			else
+// 			{
+// 				tui_append_to_buffer(" ");
+// 			}
+// 		}
+// 		tui_append_to_buffer("\n");
+// 	}
+// }
 
 void
 tui_draw_overview(tui_context_t *ctx)

@@ -49,6 +49,10 @@ java -agentpath:/home/kev/projects/async-profiler/build/lib/libasyncProfiler.so=
 - Useful to implement Top N methods by time or Hot method identification.
   - will need to implement Top N methods by (time/cpu etc)
 
+* capture exception metrics for methods 
+  - take the method_metrics_soa add exception count
+  - hot methods by exceptions
+
 ## Threads and pinning to cores
 At some point we will want to pin specific threads to different cores. 
 We need to extend the cpu.h lib to support retrieving the number of cores.

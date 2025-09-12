@@ -26,7 +26,8 @@ static const arena_config_t arena_configs[] =
     {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
     {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS},
 	{CALL_STACK_ARENA_ID, CALL_STACK_ARENA_NAME, CALL_STACK_ARENA_SZ, CALL_STACK_ARENA_BLOCKS},
-	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS}
+	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
+	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS}
 };
 /* clang-format on */
 
@@ -652,49 +653,19 @@ find_method_index(method_metrics_soa_t *metrics, const char *signature)
 void JNICALL
 method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID method)
 {
+	UNUSED(jvmti);
 	UNUSED(jni);
 	UNUSED(thread);
 
-	/* Get the declaring class of the method. This is the only JVMTI call needed for
-	 * lookup. */
-	jclass declaring_class;
-	jvmtiError err =
-	    (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaring_class);
-	if (err != JVMTI_ERROR_NONE)
-		return; /* Cannot proceed without the class. */
-
-	/* Get the tag associated with the class, which points to our cached class_info_t
-	 * struct. */
-	jlong tag = 0;
-
-	/* This GetTag call is extremely fast. */
-	err = (*jvmti)->GetTag(jvmti, declaring_class, &tag);
-	if (err != JVMTI_ERROR_NONE || tag == 0)
-	{
-		/* This can happen for classes loaded before the agent was attached.
-		We simply ignore them to keep this path fast. */
-		return;
-	}
-	class_info_t *info = (class_info_t *)(intptr_t)tag;
-
-	/* Find the specific method's cached info in the class's method list.
-	For extreme performance, this linear scan could be replaced with a binary search
-	or a micro-hashtable if the methods array was sorted by method_id at class load
-	time. */
-	method_info_t *method_info = NULL;
-	for (uint32_t i = 0; i < info->method_count; i++)
-	{
-		if (info->methods[i].method_id == method)
-		{
-			method_info = &info->methods[i];
-			break;
-		}
-	}
+	method_info_t *method_info = ht_get(global_ctx->interesting_methods, method);
 
 	/* We either didn't find the method (should be rare) or it's not one we're
 	 * configured to sample. */
 	if (method_info == NULL || method_info->sample_index < 0)
 		return;
+
+	LOG_DEBUG("Found method: %s in interesting_methods hashtable",
+	          method_info->full_name);
 
 	/* We found a method to track. Atomically increment its total call count. */
 	uint64_t current_calls = atomic_fetch_add_explicit(
@@ -1300,6 +1271,12 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
                          jint *new_class_data_len,
                          unsigned char **new_class_data)
 {
+	// TODO finish this - we need to adjust the class_load_callback
+	// we also need to work on th jvm/class.c etc to pull out the
+	// annotations for the class so we can add them here and process
+	// in class_load_callback - this is unfinished
+	return;
+
 	UNUSED(jvmti_env);
 	UNUSED(jni_env);
 	UNUSED(class_being_redefined);
@@ -1949,8 +1926,16 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	}
 
 	/* make interesting classes available for class file load callback */
-	global_ctx->interesting_classes =
-	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID], 100, 0.75);
+	global_ctx->interesting_classes = ht_create(
+	    global_ctx->arenas[CLASS_CACHE_ARENA_ID], 100, 0.75, hash_string, cmp_string);
+
+	/* cache for jmethodid -> method_info_t */
+	global_ctx->interesting_methods =
+	    ht_create(global_ctx->arenas[METHOD_CACHE_ARENA_ID],
+	              100,
+	              0.75,
+	              hash_jmethodid,
+	              cmp_jmethodid);
 
 	/* Init logging after all arenas are created */
 	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];

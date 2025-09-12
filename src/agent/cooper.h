@@ -54,41 +54,44 @@
 	4096 /**< The max num of elements in the ring channel */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define EXCEPTION_ARENA_SZ   1024 * 1024
-#define LOG_ARENA_SZ         1024 * 1024
-#define SAMPLE_ARENA_SZ      2048 * 1024
-#define CONFIG_ARENA_SZ      512 * 1024
-#define METRICS_ARENA_SZ     8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ     16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
-#define Q_ENTRY_ARENA_SZ     2048 * 1024
-#define CALL_STACK_ARENA_SZ  64 * 1024 * 1024
-#define FLAMEGRAPH_ARENA_SZ  1024 * 1024
+#define EXCEPTION_ARENA_SZ    1024 * 1024
+#define LOG_ARENA_SZ          1024 * 1024
+#define SAMPLE_ARENA_SZ       2048 * 1024
+#define CONFIG_ARENA_SZ       512 * 1024
+#define METRICS_ARENA_SZ      8 * 1024 * 1024
+#define SCRATCH_ARENA_SZ      16 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
+#define Q_ENTRY_ARENA_SZ      2048 * 1024
+#define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ   1024 * 1024
+#define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
-#define EXCEPTION_ARENA_BLOCKS   1024
-#define LOG_ARENA_BLOCKS         1024
-#define EVENT_ARENA_BLOCKS       1024
-#define SAMPLE_ARENA_BLOCKS      1024
-#define CONFIG_ARENA_BLOCKS      1024
-#define METRICS_ARENA_BLOCKS     1024
-#define CLASS_CACHE_ARENA_BLOCKS 1024
-#define SCRATCH_ARENA_BLOCKS     1024
-#define Q_ENTRY_ARENA_BLOCKS     1024
-#define CALL_STACK_ARENA_BLOCKS  1024
-#define FLAMEGRAPH_ARENA_BLOCKS  1024
+#define EXCEPTION_ARENA_BLOCKS    1024
+#define LOG_ARENA_BLOCKS          1024
+#define EVENT_ARENA_BLOCKS        1024
+#define SAMPLE_ARENA_BLOCKS       1024
+#define CONFIG_ARENA_BLOCKS       1024
+#define METRICS_ARENA_BLOCKS      1024
+#define CLASS_CACHE_ARENA_BLOCKS  1024
+#define SCRATCH_ARENA_BLOCKS      1024
+#define Q_ENTRY_ARENA_BLOCKS      1024
+#define CALL_STACK_ARENA_BLOCKS   1024
+#define FLAMEGRAPH_ARENA_BLOCKS   1024
+#define METHOD_CACHE_ARENA_BLOCKS 1024
 
 /* Arena Names */
-#define EXCEPTION_ARENA_NAME   "exception_arena"
-#define LOG_ARENA_NAME         "log_arena"
-#define SAMPLE_ARENA_NAME      "sample_arena"
-#define CONFIG_ARENA_NAME      "config_arena"
-#define METRICS_ARENA_NAME     "metrics_arena"
-#define CLASS_CACHE_ARENA_NAME "class_cache_arena"
-#define SCRATCH_ARENA_NAME     "scratch_arena"
-#define Q_ENTRY_ARENA_NAME     "q_entry_arena"
-#define CALL_STACK_ARENA_NAME  "call_stack_arena"
-#define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
+#define EXCEPTION_ARENA_NAME    "exception_arena"
+#define LOG_ARENA_NAME          "log_arena"
+#define SAMPLE_ARENA_NAME       "sample_arena"
+#define CONFIG_ARENA_NAME       "config_arena"
+#define METRICS_ARENA_NAME      "metrics_arena"
+#define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
+#define SCRATCH_ARENA_NAME      "scratch_arena"
+#define Q_ENTRY_ARENA_NAME      "q_entry_arena"
+#define CALL_STACK_ARENA_NAME   "call_stack_arena"
+#define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
+#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
 
 /* Ok/Err */
 #define COOPER_OK  0
@@ -136,6 +139,7 @@ enum arenas
 	Q_ENTRY_ARENA_ID,
 	CALL_STACK_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
+	METHOD_CACHE_ARENA_ID,
 	ARENA_ID__LAST
 };
 
@@ -386,8 +390,9 @@ struct agent_context
 	q_t *class_queue;                  /**< q for class caching background thread */
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
 	hashtable_t
-	    *interesting_classes;      /**< Hashtable of scanned classes we care about */
-	method_metrics_soa_t *metrics; /**< Method metrics in SoA format */
+	    *interesting_classes; /**< Hashtable of scanned classes we care about */
+	hashtable_t *interesting_methods; /**< Hashtable of methods we care about */
+	method_metrics_soa_t *metrics;    /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
 	thread_memory_metrics_t *thread_mem_head; /**< Thread level metrics linked list */
 	object_allocation_metrics_t
@@ -421,5 +426,52 @@ void export_to_file(agent_context_t *ctx);
 void *export_thread_func(void *arg);
 
 uint64_t get_current_time_ns();
+
+/* djb2 hash function for strings */
+static inline size_t
+hash_string(const void *key, size_t capacity)
+{
+	assert(key != NULL);
+	assert(capacity > 0);
+	const char *str = key;
+
+	size_t hash = 5381;
+	int c;
+	while ((c = *str++))
+	{
+		hash = ((hash << 5) + hash) + c;
+	}
+	return hash % capacity;
+}
+
+static inline int
+cmp_string(const void *a, const void *b)
+{
+	return strcmp((const char *)a, (const char *)b);
+}
+
+/* Hash function for jmethodID (pointer) */
+static inline size_t
+hash_jmethodid(const void *key, size_t capacity)
+{
+	uintptr_t addr = (uintptr_t)key;
+
+	/* Mix the bits for better distribution */
+	addr ^= addr >> 16;
+	addr ^= addr >> 8;
+	addr *= 0x9e3779b9; /* Golden ratio approximation */
+
+	return addr % capacity;
+}
+
+/* Compare function for jmethodID */
+static inline int
+cmp_jmethodid(const void *a, const void *b)
+{
+	/* Direct pointer comparison */
+	if (a == b)
+		return 0;
+	return (a < b) ? -1 : 1;
+}
 
 #endif /* COOPER_H */

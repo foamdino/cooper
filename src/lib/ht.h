@@ -20,10 +20,13 @@
 typedef struct ht_entry ht_entry_t;
 typedef struct hashtable hashtable_t;
 
+typedef size_t (*ht_hash_fn)(const void *key, size_t capacity);
+typedef int (*ht_cmp_fn)(const void *a, const void *b);
+
 /* Hashtable entry structure */
 struct ht_entry
 {
-	char *key;     /* String key (arena-allocated) */
+	void *key;     /* key */
 	void *value;   /* Generic value pointer */
 	uint8_t state; /* 0=empty, 1=occupied, 2=deleted */
 };
@@ -36,6 +39,9 @@ struct hashtable
 	size_t count;        /* Number of occupied slots */
 	double load_factor;  /* Maximum load factor before full */
 	arena_t *arena;      /* Arena for memory allocation */
+
+	ht_hash_fn hash_fn; /* Hash function */
+	ht_cmp_fn cmp_fn;   /* Key comparison function */
 };
 
 /* Creation and destruction */
@@ -52,7 +58,11 @@ struct hashtable
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */
-hashtable_t *ht_create(arena_t *arena, size_t initial_cap, double load_factor);
+hashtable_t *ht_create(arena_t *arena,
+                       size_t initial_cap,
+                       double load_factor,
+                       ht_hash_fn hash_fn,
+                       ht_cmp_fn cmp_fn);
 
 /**
  * Insert or update a key-value pair
@@ -65,7 +75,7 @@ hashtable_t *ht_create(arena_t *arena, size_t initial_cap, double load_factor);
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */
-int ht_put(hashtable_t *ht, const char *key, void *value);
+int ht_put(hashtable_t *ht, const void *key, void *value);
 
 /**
  * Retrieve value for given key
@@ -77,7 +87,7 @@ int ht_put(hashtable_t *ht, const char *key, void *value);
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */
-void *ht_get(hashtable_t *ht, const char *key);
+void *ht_get(hashtable_t *ht, const void *key);
 
 /**
  * Remove key-value pair
@@ -89,7 +99,7 @@ void *ht_get(hashtable_t *ht, const char *key);
  *
  * NOTE: LOCK-FREE - caller must ensure thread safety
  */
-int ht_remove(hashtable_t *ht, const char *key);
+int ht_remove(hashtable_t *ht, const void *key);
 
 /**
  * Get current load factor

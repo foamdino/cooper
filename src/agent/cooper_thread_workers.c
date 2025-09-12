@@ -1270,8 +1270,9 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Create generic hashtable for class statistics */
-	size_t hash_size      = calculate_hashtable_size(class_count);
-	hashtable_t *class_ht = ht_create(scratch_arena, hash_size, 0.75);
+	size_t hash_size = calculate_hashtable_size(class_count);
+	hashtable_t *class_ht =
+	    ht_create(scratch_arena, hash_size, 0.75, hash_string, cmp_string);
 
 	if (!class_ht)
 	{
@@ -1511,6 +1512,17 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 
 		info->methods[i].sample_index =
 		    find_method_filter_index(ctx, class_sig, method_name, method_sig);
+
+		/* Only add interesting methods to cache */
+		if (info->methods[i].sample_index >= 0)
+		{
+			if (ht_put(ctx->interesting_methods,
+			           info->methods[i].method_id,
+			           &info->methods[i])
+			    != COOPER_OK)
+				LOG_WARN("Failed to cache method %s",
+				         info->methods[i].method_name);
+		}
 
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_name);
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_sig);

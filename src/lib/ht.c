@@ -9,32 +9,16 @@
 #include <string.h>
 #include <assert.h>
 
-/* djb2 hash function for strings */
-static size_t
-ht_hash_string(const char *str, size_t capacity)
-{
-	assert(str != NULL);
-	assert(capacity > 0);
-
-	size_t hash = 5381;
-	int c;
-	while ((c = *str++))
-	{
-		hash = ((hash << 5) + hash) + c;
-	}
-	return hash % capacity;
-}
-
 /* Find entry index for key (linear probing with tombstone support) */
 static size_t
-ht_find_slot(hashtable_t *ht, const char *key, int *found)
+ht_find_slot(hashtable_t *ht, const void *key, int *found)
 {
 	assert(ht != NULL);
 	assert(ht->entries != NULL);
 	assert(key != NULL);
 	assert(found != NULL);
 
-	size_t hash          = ht_hash_string(key, ht->capacity);
+	size_t hash          = ht->hash_fn(key, ht->capacity);
 	*found               = 0;
 	size_t first_deleted = ht->capacity; /* Track first deleted slot for insertion */
 
@@ -57,7 +41,7 @@ ht_find_slot(hashtable_t *ht, const char *key, int *found)
 		}
 
 		if (entry->state == HT_OCCUPIED && entry->key
-		    && strcmp(entry->key, key) == 0)
+		    && ht->cmp_fn(entry->key, key) == 0)
 		{
 			/* Key exists */
 			*found = 1;
@@ -70,14 +54,21 @@ ht_find_slot(hashtable_t *ht, const char *key, int *found)
 }
 
 hashtable_t *
-ht_create(arena_t *arena, size_t initial_cap, double load_factor)
+ht_create(arena_t *arena,
+          size_t initial_cap,
+          double load_factor,
+          ht_hash_fn hash_fn,
+          ht_cmp_fn cmp_fn)
 {
 	assert(arena != NULL);
 	assert(initial_cap > 0);
 	assert(load_factor > 0.0 && load_factor <= 1.0);
+	assert(hash_fn != NULL);
+	assert(cmp_fn != NULL);
 
 	/* Validate parameters */
-	if (!arena || initial_cap == 0 || load_factor <= 0.0 || load_factor >= 1.0)
+	if (!arena || !hash_fn || !cmp_fn || initial_cap == 0 || load_factor <= 0.0
+	    || load_factor >= 1.0)
 	{
 		LOG_ERROR("Invalid hashtable parameters");
 		return NULL;
@@ -104,6 +95,8 @@ ht_create(arena_t *arena, size_t initial_cap, double load_factor)
 	ht->capacity    = initial_cap;
 	ht->load_factor = load_factor;
 	ht->arena       = arena;
+	ht->hash_fn     = hash_fn;
+	ht->cmp_fn      = cmp_fn;
 
 	LOG_INFO("Created hashtable: capacity=%zu, load_factor=%.2f",
 	         initial_cap,
@@ -112,10 +105,10 @@ ht_create(arena_t *arena, size_t initial_cap, double load_factor)
 }
 
 int
-ht_put(hashtable_t *ht, const char *key, void *value)
+ht_put(hashtable_t *ht, const void *key, void *value)
 {
 	/* Validate parameters */
-	if (!ht || !ht->entries || !key || key[0] == '\0')
+	if (!ht || !ht->entries || !key)
 	{
 		LOG_ERROR("Invalid parameters to ht_put");
 		return 1;
@@ -137,7 +130,7 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 
 	if (idx >= ht->capacity)
 	{
-		LOG_ERROR("Hashtable full, cannot insert key: %s", key);
+		LOG_ERROR("Hashtable full, cannot insert key: %p", key);
 		return 1;
 	}
 
@@ -147,28 +140,29 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 	{
 		/* Update existing entry */
 		entry->value = value;
-		LOG_DEBUG("Updated existing key: %s", key);
+		LOG_DEBUG("Updated existing key: %p", key);
 	}
 	else
 	{
 		/* Create new entry */
-		size_t key_len = strlen(key);
-		entry->key     = arena_alloc(ht->arena, key_len + 1);
-		if (!entry->key)
-		{
-			LOG_ERROR("Failed to allocate key storage");
-			return 1;
-		}
+		// size_t key_len = strlen(key);
+		// entry->key     = arena_alloc(ht->arena, key_len + 1);
+		// if (!entry->key)
+		// {
+		// 	LOG_ERROR("Failed to allocate key storage");
+		// 	return 1;
+		// }
 
-		/* Safe string copy */
-		memcpy(entry->key, key, key_len);
-		entry->key[key_len] = '\0';
+		// /* Safe string copy */
+		// memcpy(entry->key, key, key_len);
+		// entry->key[key_len] = '\0';
 
+		entry->key   = (void *)key;
 		entry->value = value;
 		entry->state = HT_OCCUPIED;
 		ht->count++;
 
-		LOG_DEBUG("Inserted new key: %s (count: %zu/%zu)",
+		LOG_DEBUG("Inserted new key: %p (count: %zu/%zu)",
 		          key,
 		          ht->count,
 		          ht->capacity);
@@ -178,10 +172,10 @@ ht_put(hashtable_t *ht, const char *key, void *value)
 }
 
 void *
-ht_get(hashtable_t *ht, const char *key)
+ht_get(hashtable_t *ht, const void *key)
 {
 	/* Validate parameters */
-	if (!ht || !ht->entries || !key || key[0] == '\0')
+	if (!ht || !ht->entries || !key)
 		return NULL;
 
 	/* Find entry */
@@ -195,10 +189,10 @@ ht_get(hashtable_t *ht, const char *key)
 }
 
 int
-ht_remove(hashtable_t *ht, const char *key)
+ht_remove(hashtable_t *ht, const void *key)
 {
 	/* Validate parameters */
-	if (!ht || !ht->entries || !key || key[0] == '\0')
+	if (!ht || !ht->entries || !key)
 	{
 		return 1;
 	}
