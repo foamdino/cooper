@@ -95,38 +95,37 @@ We need to extend the cpu.h lib to support retrieving the number of cores.
   * Native lib load/unload events
   * CPU clock cycles integration (v1 done)
 
+
 <!-- TOKEI-START -->
 ## 📊 Code Statistics
 
-**Generated:** 2025-09-09 11:29:44 UTC for release `v0.0.3-alpha`
+**Generated:** 2025-09-12 08:39:55 UTC for release `v0.0.4-alpha`
 
-This report tracks project complexity to maintain our goal of a minimal, dependency-free JVM agent.
+This report tracks project complexity to maintain the goal of a minimal, dependency-free JVM agent.
 
 ```
 ===============================================================================
  Language            Files        Lines         Code     Comments       Blanks
 ===============================================================================
- C                      24        10416         7208         1614         1594
- C Header               24         4058         2431         1081          546
+ C                      24        10641         7321         1693         1627
+ C Header               24         4136         2498         1082          556
  Shell                   2          301          216           53           32
  Java                    3          256          142           62           52
  Batch                   1          149          134            0           15
- INI                     2           86           42           26           18
+ INI                     2           87           43           26           18
  XML                     1           37           35            0            2
  BASH                    1           35           21            7            7
 -------------------------------------------------------------------------------
- Markdown                4          327            0          231           96
+ Markdown                4          366            0          264          102
  |- BASH                 1            7            4            2            1
  |- INI                  1           23           13            5            5
- (Total)                            357           17          238          102
+ (Total)                            396           17          271          108
 ===============================================================================
- Total                  62        15665        10229         3074         2362
+ Total                  62        16008        10410         3187         2411
 ===============================================================================
 ```
 
 **Key Metrics:**
-- **Total C Lines:** 21
-- **Total C Files:** 46
 - **External Dependencies:** 0 (excluding system libraries)
 - **Build Tool:** Custom (nob.c)
 
