@@ -114,20 +114,17 @@ jobs:
         echo "LIBTUI_SIZE=$LIBTUI_SIZE" >> $GITHUB_ENV
         
     - name: Generate comprehensive changelog
-      id: changelog
       run: |
         CURRENT_TAG=${GITHUB_REF#refs/tags/}
         PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "^$CURRENT_TAG$" | head -1)
         
         echo "Generating changelog from $PREVIOUS_TAG to $CURRENT_TAG"
         
-        # Create changelog with categorized commits
         {
           echo "## 🚀 Changes in $CURRENT_TAG"
           echo ""
           
           if [ -n "$PREVIOUS_TAG" ]; then
-            # Features
             FEATURES=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..$CURRENT_TAG | grep -i "feat\|add\|new" || true)
             if [ -n "$FEATURES" ]; then
               echo "### ✨ New Features"
@@ -135,7 +132,6 @@ jobs:
               echo ""
             fi
             
-            # Fixes
             FIXES=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..$CURRENT_TAG | grep -i "fix\|bug\|patch" || true)
             if [ -n "$FIXES" ]; then
               echo "### 🐛 Bug Fixes"
@@ -143,7 +139,6 @@ jobs:
               echo ""
             fi
             
-            # Other changes
             OTHER=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..$CURRENT_TAG | grep -vi "feat\|add\|new\|fix\|bug\|patch" || true)
             if [ -n "$OTHER" ]; then
               echo "### 🔧 Other Changes"
@@ -156,73 +151,41 @@ jobs:
             echo "### 🎉 Initial Release"
             git log --pretty=format:"- %s (%h)" | head -10
           fi
+          
+          echo ""
+          echo "## 📦 Release Assets"
+          echo ""
+          echo "| File | Size | Description |"
+          echo "|------|------|-------------|"
+          echo "| \`cli\` | $CLI_SIZE bytes | Cooper command-line monitoring tool |"
+          echo "| \`libcooper.so\` | $AGENT_SIZE bytes | Cooper Java agent shared library |"
+          echo "| \`libtui.so\` | $LIBTUI_SIZE bytes | TUI library |"
+          
+          echo ""
+          echo "## 🏗️ Build Information"
+          echo "- **Platform**: Linux x86_64"
+          echo "- **Compiler**: GCC (default)"
+          echo "- **Built**: ${{ github.run_id }} on ${{ github.run_attempt }}"
+          echo "- **Commit**: [\`${{ github.sha }}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})"
+          
+          echo ""
+          echo "<!-- TODO: Add ARM64 builds for broader compatibility -->"
+          echo "<!-- TODO: Add GPG signatures for artifact verification -->"
+          echo "<!-- TODO: Add SHA256 checksums for integrity validation -->"
         } > CHANGELOG.md
-        
-        # Set multiline output
-        echo "changelog<<EOF" >> $GITHUB_OUTPUT
-        cat CHANGELOG.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-        
-    - name: Create GitHub Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create GitHub Release and Upload Assets
+      uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        release_name: ${{ github.ref_name }}
-        body: |
-          ${{ steps.changelog.outputs.changelog }}
-          
-          ## 📦 Release Assets
-          
-          | File | Size | Description |
-          |------|------|-------------|
-          | `cli` | ${{ env.CLI_SIZE }} bytes | Cooper command-line monitoring tool |
-          | `libcooper.so` | ${{ env.AGENT_SIZE }} bytes | Cooper Java agent shared library |
-          | `libtui.so` | ${{ env.LIBTUI_SIZE }} bytes | TUI library |
-          
-          ## 🏗️ Build Information
-          - **Platform**: Linux x86_64
-          - **Compiler**: GCC (default)
-          - **Built**: ${{ github.run_id }} on ${{ github.run_attempt }}
-          - **Commit**: [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
-          
-          <!-- TODO: Add ARM64 builds for broader compatibility -->
-          <!-- TODO: Add GPG signatures for artifact verification -->
-          <!-- TODO: Add SHA256 checksums for integrity validation -->
-        draft: false
-        prerelease: false
-        
-    - name: Upload cli executable
-      uses: actions/upload-release-asset@v1
+        name: ${{ github.ref_name }}
+        body_path: CHANGELOG.md
+        files: |
+          ./build/cli
+          ./build/libtui.so
+          ./build/libcooper.so
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./build/cli
-        asset_name: cli
-        asset_content_type: application/octet-stream
-
-    - name: Upload libtui ui lib for cli
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./build/libtui.so
-        asset_name: libtui.so
-        asset_content_type: application/octet-stream
-        
-    - name: Upload cooper shared library
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./build/libcooper.so
-        asset_name: libcooper.so
-        asset_content_type: application/octet-stream
 
     - name: Commit README updates to main
       run: |
