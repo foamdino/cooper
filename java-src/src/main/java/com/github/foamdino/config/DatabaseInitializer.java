@@ -29,7 +29,7 @@ public class DatabaseInitializer {
    public void initialize() {
       try (Connection connection = dataSource.getConnection()) {
          Statement statement = connection.createStatement();
-         InputStream inputStream = this.getClass().getResourceAsStream("/tmp/tables-sqlite.sql");
+         InputStream inputStream = this.getClass().getResourceAsStream("/tables-sqlite.sql");
          BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
          String line;
          StringBuilder script = new StringBuilder();
