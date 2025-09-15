@@ -29,7 +29,6 @@
 #include "../lib/arena_str.h"
 #include "../lib/log.h"
 #include "../lib/cpu.h"
-#include "../lib/cache.h"
 #include "../lib/thread_util.h"
 #include "../lib/heap.h"
 #include "../lib/ht.h"

@@ -2107,9 +2107,6 @@ Agent_OnUnload(JavaVM *vm)
 
 		cleanup(global_ctx);
 
-		/* Clean up all thread-local storage systems */
-		cache_tls_cleanup(); /* Clean up cache TLS system */
-
 		/* Free the current thread's TLS data */
 		thread_context_t *context = pthread_getspecific(context_key);
 		if (context)
