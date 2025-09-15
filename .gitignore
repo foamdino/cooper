@@ -6,3 +6,4 @@ java-src/com/github/foamdino/*.class
 .vscode/launch.json
 *.log
 java-src/.idea
+java-src/*.db
