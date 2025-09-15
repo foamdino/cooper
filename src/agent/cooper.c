@@ -664,8 +664,8 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 	if (method_info == NULL || method_info->sample_index < 0)
 		return;
 
-	LOG_DEBUG("Found method: %s in interesting_methods hashtable",
-	          method_info->full_name);
+	LOG_INFO("Found method: %s in interesting_methods hashtable",
+	         method_info->full_name);
 
 	/* We found a method to track. Atomically increment its total call count. */
 	uint64_t current_calls = atomic_fetch_add_explicit(
@@ -1176,27 +1176,48 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	          safe_sz);
 }
 
-static inline int
-should_process_class(const package_filter_t *filter, const char *class_sig)
+/* Check if a full method signature matches any filter */
+pattern_filter_entry_t *
+find_matching_filter(const pattern_filter_t *filter,
+                     const char *class_sig,
+                     const char *method_name,
+                     const char *method_sig)
 {
-	/* If no filters configured, process everything */
-	if (filter->num_packages == 0)
-		return 1;
+	assert(filter != NULL);
+	assert(class_sig != NULL);
+	assert(method_name != NULL);
+	assert(method_sig != NULL);
 
-	/* Linear search through package filters */
-	/* For 5-7 packages, this is faster than any complex structure */
-	for (size_t i = 0; i < filter->num_packages; i++)
+	for (size_t i = 0; i < filter->num_entries; i++)
 	{
-		if (strncmp(class_sig,
-		            filter->include_packages[i],
-		            filter->package_lengths[i])
-		    == 0)
+		pattern_filter_entry_t *entry = &filter->entries[i];
+
+		if (config_pattern_match(entry->class_pattern, class_sig)
+		    && config_pattern_match(entry->method_pattern, method_name)
+		    && config_pattern_match(entry->signature_pattern, method_sig))
 		{
-			return 1; /* Found a match */
+			return entry;
 		}
 	}
 
-	return 0; /* No match found, skip this class */
+	return NULL;
+}
+
+static inline int
+should_cache_class(const pattern_filter_t *filter, const char *class_sig)
+{
+	/* If no filters configured, don't cache anything */
+	if (filter->num_entries == 0)
+		return 0;
+
+	/* Check if any filter pattern could match this class */
+	for (size_t i = 0; i < filter->num_entries; i++)
+	{
+		if (config_pattern_match(filter->entries[i].class_pattern, class_sig))
+			return 1;
+	}
+
+	return 0;
 }
 
 static void JNICALL
@@ -1213,7 +1234,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		return;
 
 	/* Fast filter check - no allocations */
-	if (!should_process_class(&global_ctx->package_filter, class_sig))
+	if (!should_cache_class(&global_ctx->unified_filter, class_sig))
 	{
 		/* Class filtered out, skip processing */
 		goto cleanup;
@@ -1259,6 +1280,7 @@ cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
+// TODO this is unfinished
 static void JNICALL
 class_file_load_callback(jvmtiEnv *jvmti_env,
                          JNIEnv *jni_env,
@@ -1290,7 +1312,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(class_data);
 
 	/* Fast filter check - no allocations */
-	if (!should_process_class(&global_ctx->package_filter, name))
+	if (!should_cache_class(&global_ctx->unified_filter, name))
 		return;
 
 	/* Class passed filter, enqueue for background processing */
@@ -1456,73 +1478,53 @@ load_config(agent_context_t *ctx, const char *cf)
 	ctx->config.export_method       = config.export_method;
 	ctx->config.export_interval     = config.export_interval;
 	ctx->config.mem_sample_interval = config.mem_sample_interval;
-	ctx->config.num_filters         = 0; /* We'll track this as we add methods */
+	/* Copy unified filter data from parsed config to agent context */
+	ctx->unified_filter.num_entries = config.unified_filter.num_entries;
+	ctx->unified_filter.capacity    = config.unified_filter.capacity;
 
-	/* Convert method filters to metrics entries */
-	for (size_t i = 0; i < config.num_filters; i++)
+	LOG_INFO("Loaded %zu pattern filters", ctx->unified_filter.num_entries);
+
+	/* No filters configured - this is valid but nothing will be cached */
+	if (ctx->unified_filter.num_entries == 0)
 	{
-		method_filter_entry_t *filter = &config.filters[i];
-
-		/* Build full signature for matching */
-		char full_sig[1024];
-		int written = snprintf(full_sig,
-		                       sizeof(full_sig),
-		                       "%s %s %s",
-		                       filter->class_signature,
-		                       filter->method_name,
-		                       filter->method_signature);
-
-		if (written < 0 || written >= (int)sizeof(full_sig))
-		{
-			LOG_ERROR("Method signature too long: %s:%s:%s\n",
-			          filter->class_signature,
-			          filter->method_name,
-			          filter->method_signature);
-			continue;
-		}
-
-		/* Add to metrics structure */
-		int method_index = add_method_to_metrics(
-		    ctx, full_sig, filter->sample_rate, filter->metric_flags);
-		if (method_index < 0)
-		{
-			LOG_ERROR("Failed to add method filter: %s\n", full_sig);
-			continue;
-		}
-
-		ctx->config.num_filters++;
+		LOG_WARN("No pattern filters configured, no methods will be sampled");
+		return COOPER_OK;
 	}
 
-	/* Copy data from the cooper_config package_filter to the ctx */
-	ctx->package_filter.num_packages = config.package_filter.num_packages;
-	LOG_INFO("Considering %d packages for filtering",
-	         ctx->package_filter.num_packages);
+	/* Allocate filter entries array in context using config arena */
+	ctx->unified_filter.entries = arena_alloc(
+	    config_arena, ctx->unified_filter.capacity * sizeof(pattern_filter_entry_t));
 
-	/* No packages to configure */
-	if (ctx->package_filter.num_packages == 0)
-		return COOPER_OK;
-
-	/* Allocate the arrays in ctx BEFORE copying */
-
-	ctx->package_filter.include_packages =
-	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(char *));
-	ctx->package_filter.package_lengths =
-	    arena_alloc(config_arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
-
-	if (!ctx->package_filter.include_packages || !ctx->package_filter.package_lengths)
+	if (!ctx->unified_filter.entries)
 	{
-		LOG_ERROR("Failed to allocate package filter arrays in context\n");
+		LOG_ERROR("Failed to allocate unified filter entries in context\n");
 		return COOPER_ERR;
 	}
 
-	/* Now safe to copy */
-	for (size_t i = 0; i < config.package_filter.num_packages; i++)
+	/* Copy all filter entries - strings are already allocated in config_arena */
+	for (size_t i = 0; i < ctx->unified_filter.num_entries; i++)
 	{
-		ctx->package_filter.include_packages[i] =
-		    arena_strdup(config_arena, config.package_filter.include_packages[i]);
-		ctx->package_filter.package_lengths[i] =
-		    config.package_filter.package_lengths[i];
+		pattern_filter_entry_t *src = &config.unified_filter.entries[i];
+		pattern_filter_entry_t *dst = &ctx->unified_filter.entries[i];
+
+		/* Copy the pointers - strings already allocated by config parsing */
+		dst->class_pattern     = src->class_pattern;
+		dst->method_pattern    = src->method_pattern;
+		dst->signature_pattern = src->signature_pattern;
+		dst->sample_rate       = src->sample_rate;
+		dst->metric_flags      = src->metric_flags;
+
+		LOG_DEBUG("Filter %zu: %s:%s:%s (rate=%d, flags=%u)",
+		          i,
+		          dst->class_pattern,
+		          dst->method_pattern,
+		          dst->signature_pattern,
+		          dst->sample_rate,
+		          dst->metric_flags);
 	}
+
+	LOG_INFO("Successfully loaded configuration with %zu unified filters",
+	         ctx->unified_filter.num_entries);
 
 	return COOPER_OK;
 }
@@ -1632,7 +1634,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			continue;
 
 		/* Class filtered out, skip processing */
-		if (!should_process_class(&global_ctx->package_filter, class_sig))
+		if (!should_cache_class(&global_ctx->unified_filter, class_sig))
 			goto deallocate;
 
 		/* Create a global reference for the class */
@@ -1861,8 +1863,6 @@ cleanup(agent_context_t *ctx)
 	ctx->config.num_filters      = 0;
 	ctx->config.sample_file_path = NULL;
 	ctx->config.export_method    = NULL;
-	ctx->method_filters          = NULL;
-	ctx->num_filters             = 0;
 }
 
 /*
@@ -1926,13 +1926,17 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	}
 
 	/* make interesting classes available for class file load callback */
-	global_ctx->interesting_classes = ht_create(
-	    global_ctx->arenas[CLASS_CACHE_ARENA_ID], 100, 0.75, hash_string, cmp_string);
+	global_ctx->interesting_classes =
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
+	              1000,
+	              0.75,
+	              hash_string,
+	              cmp_string);
 
 	/* cache for jmethodid -> method_info_t */
 	global_ctx->interesting_methods =
 	    ht_create(global_ctx->arenas[METHOD_CACHE_ARENA_ID],
-	              100,
+	              1000,
 	              0.75,
 	              hash_jmethodid,
 	              cmp_jmethodid);

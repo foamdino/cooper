@@ -20,19 +20,24 @@
 #define MAX_FILTER_ENTRIES  256
 #define MAX_PACKAGE_FILTERS 32
 
-typedef struct method_filter_entry method_filter_entry_t;
+typedef struct pattern_filter_entry pattern_filter_entry_t;
+typedef struct pattern_filter pattern_filter_t;
 typedef struct cooper_config cooper_config_t;
 
-/**
- * Represents a single method filter from the configuration
- */
-struct method_filter_entry
+struct pattern_filter_entry
 {
-	char *class_signature;     /**< Class signature pattern */
-	char *method_name;         /**< Method name pattern */
-	char *method_signature;    /**< Method signature pattern */
-	int sample_rate;           /**< Sample rate for this method */
-	unsigned int metric_flags; /**< Bitfield of metrics to collect */
+	char *class_pattern;     /**< e.g. "Lcom/github/foamdino/\*" */
+	char *method_pattern;    /**< e.g. "handle*" or "*" "*/
+	char *signature_pattern; /**< e.g. "*" or "()V" */
+	int sample_rate;
+	unsigned int metric_flags;
+};
+
+struct pattern_filter
+{
+	pattern_filter_entry_t *entries;
+	size_t num_entries;
+	size_t capacity;
 };
 
 /**
@@ -47,12 +52,7 @@ struct cooper_config
 	int export_interval;     /**< Export interval in seconds */
 	int mem_sample_interval; /**< Memory sampling interval in seconds */
 
-	/* Method filters */
-	method_filter_entry_t *filters; /**< Array of method filters */
-	size_t num_filters;             /**< Number of filters */
-	size_t filters_capacity;        /**< Capacity of filters array */
-	package_filter_t
-	    package_filter; /**< Filter to only worry about specific packages */
+	pattern_filter_t unified_filter;
 };
 
 /**
@@ -92,5 +92,7 @@ char *config_extract_and_trim_value(arena_t *arena, const char *line);
  * @return          Processed line, or NULL on error
  */
 char *config_process_config_line(arena_t *arena, const char *line);
+
+int config_pattern_match(const char *pattern, const char *text);
 
 #endif /* CONFIG_H */

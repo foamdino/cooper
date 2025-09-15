@@ -56,12 +56,8 @@ init_test_context()
 		return NULL;
 
 	ctx->jvmti_env               = NULL;
-	ctx->method_filters          = NULL;
-	ctx->num_filters             = 0;
 	ctx->log_file                = NULL;
 	ctx->config.rate             = 1;
-	ctx->config.filters          = NULL;
-	ctx->config.num_filters      = 0;
 	ctx->config.sample_file_path = NULL;
 	ctx->config.export_method    = NULL;
 	ctx->config.export_interval  = 60;
@@ -347,18 +343,13 @@ test_load_config()
 	    "# Default sample rate for methods without a specific rate\n"
 	    "rate = 5\n"
 	    "\n"
-	    "[method_signatures]\n"
-	    "filters = [\n"
-	    "    # Format: "
-	    "class_signature:method_name:method_signature:sample_rate:metrics\n"
-	    "    # Sample every invocation (rate=1) of method a in Test class\n"
-	    "    # Collect time, memory, and CPU metrics\n"
-	    "    Lcom/github/foamdino/Test;:a:()V:1:time,memory,cpu\n"
-	    "    \n"
-	    "    # Sample every 10th invocation of method b in Test class\n"
-	    "    # Collect only timing information\n"
-	    "    Lcom/github/foamdino/Test;:b:()V:10:time\n"
-	    "]\n"
+	    "[filters]\n"
+	    "# Format: class_pattern:method_pattern:signature_pattern:rate:metrics\n"
+	    "# Supports wildcards (*) and can match at any level\n"
+	    "Lcom/github/foamdino/*:*:*:1:time,memory,cpu\n"
+	    "Lcom/github/foamdino/Test;:b:()Ljava/lang/String;:10:time\n"
+	    "Lcom/github/foamdino/Test;:recursive*:*:5:time,cpu\n"
+	    "Lorg/springframework/web/*:handle*:*:50:time,memory\n"
 	    "\n"
 	    "[sample_file_location]\n"
 	    "path = \"/tmp/test.txt\"\n"
@@ -374,44 +365,53 @@ test_load_config()
 
 	assert(result == 0);
 	assert(ctx->config.rate == 5);
-	assert(ctx->config.num_filters == 2);
 	assert(strcmp(ctx->config.sample_file_path, "/tmp/test.txt") == 0);
 	assert(strcmp(ctx->config.export_method, "file") == 0);
 	assert(ctx->config.export_interval == 30);
 
-	/* Check that the metrics have been added correctly */
-	assert(ctx->metrics != NULL);
-	assert(ctx->metrics->count >= 2);
+	/* Test unified filter loading */
+	assert(ctx->unified_filter.num_entries == 4);
+	assert(ctx->unified_filter.capacity == MAX_FILTER_ENTRIES);
+	assert(ctx->unified_filter.entries != NULL);
 
-	/* Check first method filter */
-	int method1_index =
-	    find_method_index(ctx->metrics, "Lcom/github/foamdino/Test; a ()V");
-
-	/* Try alternative format if needed */
-	if (method1_index < 0)
-	{
-		method1_index =
-		    find_method_index(ctx->metrics, "Lcom/github/foamdino/Test;:a:()V");
-	}
-
-	assert(method1_index >= 0);
-	assert(ctx->metrics->sample_rates[method1_index] == 1);
-	assert(ctx->metrics->metric_flags[method1_index]
+	/* Check first filter entry */
+	pattern_filter_entry_t *filter0 = &ctx->unified_filter.entries[0];
+	assert(strcmp(filter0->class_pattern, "Lcom/github/foamdino/*") == 0);
+	assert(strcmp(filter0->method_pattern, "*") == 0);
+	assert(strcmp(filter0->signature_pattern, "*") == 0);
+	assert(filter0->sample_rate == 1);
+	assert(filter0->metric_flags
 	       == (METRIC_FLAG_TIME | METRIC_FLAG_MEMORY | METRIC_FLAG_CPU));
 
-	/* Check second method filter */
-	int method2_index =
-	    find_method_index(ctx->metrics, "Lcom/github/foamdino/Test; b ()V");
+	/* Check second filter entry */
+	pattern_filter_entry_t *filter1 = &ctx->unified_filter.entries[1];
+	assert(strcmp(filter1->class_pattern, "Lcom/github/foamdino/Test;") == 0);
+	assert(strcmp(filter1->method_pattern, "b") == 0);
+	assert(strcmp(filter1->signature_pattern, "()Ljava/lang/String;") == 0);
+	assert(filter1->sample_rate == 10);
+	assert(filter1->metric_flags == METRIC_FLAG_TIME);
 
-	if (method2_index < 0)
-	{
-		method2_index =
-		    find_method_index(ctx->metrics, "Lcom/github/foamdino/Test;:b:()V");
-	}
+	/* Check third filter entry */
+	pattern_filter_entry_t *filter2 = &ctx->unified_filter.entries[2];
+	assert(strcmp(filter2->class_pattern, "Lcom/github/foamdino/Test;") == 0);
+	assert(strcmp(filter2->method_pattern, "recursive*") == 0);
+	assert(strcmp(filter2->signature_pattern, "*") == 0);
+	assert(filter2->sample_rate == 5);
+	assert(filter2->metric_flags == (METRIC_FLAG_TIME | METRIC_FLAG_CPU));
 
-	assert(method2_index >= 0);
-	assert(ctx->metrics->sample_rates[method2_index] == 10);
-	assert(ctx->metrics->metric_flags[method2_index] == METRIC_FLAG_TIME);
+	/* Check fourth filter entry */
+	pattern_filter_entry_t *filter3 = &ctx->unified_filter.entries[3];
+	assert(strcmp(filter3->class_pattern, "Lorg/springframework/web/*") == 0);
+	assert(strcmp(filter3->method_pattern, "handle*") == 0);
+	assert(strcmp(filter3->signature_pattern, "*") == 0);
+	assert(filter3->sample_rate == 50);
+	assert(filter3->metric_flags == (METRIC_FLAG_TIME | METRIC_FLAG_MEMORY));
+
+	/* Metrics should be initialized but empty since no classes have been processed
+	 * yet */
+	assert(ctx->metrics != NULL);
+	assert(ctx->metrics->count == 0); /* No methods added yet */
+	assert(ctx->metrics->capacity == initial_capacity);
 
 	/* Clean up log system */
 	cleanup_log_system();

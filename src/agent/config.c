@@ -6,6 +6,52 @@
 
 #include "config.h"
 
+/* Glob-style pattern matching with * wildcard support */
+int
+config_pattern_match(const char *pattern, const char *text)
+{
+	assert(pattern != NULL);
+	assert(text != NULL);
+
+	const char *p            = pattern;
+	const char *t            = text;
+	const char *star_pattern = NULL;
+	const char *star_text    = NULL;
+
+	while (*t != '\0')
+	{
+		if (*p == '*')
+		{
+			/* Record positions for backtracking */
+			star_pattern = ++p;
+			star_text    = t;
+		}
+		else if (*p == *t)
+		{
+			/* Characters match, advance both */
+			p++;
+			t++;
+		}
+		else if (star_pattern != NULL)
+		{
+			/* Mismatch but we have a star, backtrack */
+			p = star_pattern;
+			t = ++star_text;
+		}
+		else
+		{
+			/* No match and no star to backtrack to */
+			return 0;
+		}
+	}
+
+	/* Skip any trailing stars in pattern */
+	while (*p == '*')
+		p++;
+
+	return *p == '\0'; /* Match if we consumed entire pattern */
+}
+
 /**
  * Extract value part from a "key = value" string and trim it, using arena allocation
  * Also handles quoted values by removing surrounding quotes
@@ -110,57 +156,6 @@ config_parse_metric_flags(const char *metrics_str)
 	return flags;
 }
 
-/**
- * Add a method filter to the configuration
- */
-static int
-config_add_method_filter(arena_t *arena,
-                         cooper_config_t *config,
-                         const char *class_sig,
-                         const char *method_name,
-                         const char *method_sig,
-                         int sample_rate,
-                         unsigned int metric_flags)
-{
-	assert(arena != NULL);
-	assert(config != NULL);
-
-	/* Check if we have space */
-	if (config->num_filters >= config->filters_capacity)
-	{
-		LOG_ERROR("Maximum number of method filters reached (%zu)\n",
-		          config->filters_capacity);
-		return 1;
-	}
-
-	method_filter_entry_t *filter = &config->filters[config->num_filters];
-
-	/* Allocate and copy strings */
-	filter->class_signature  = arena_strdup(arena, class_sig);
-	filter->method_name      = arena_strdup(arena, method_name);
-	filter->method_signature = arena_strdup(arena, method_sig);
-
-	if (!filter->class_signature || !filter->method_name || !filter->method_signature)
-	{
-		LOG_ERROR("Failed to allocate memory for method filter\n");
-		return 1;
-	}
-
-	filter->sample_rate  = sample_rate;
-	filter->metric_flags = metric_flags;
-
-	config->num_filters++;
-
-	LOG_INFO("Added filter: %s:%s:%s (rate=%d, flags=%u)\n",
-	         class_sig,
-	         method_name,
-	         method_sig,
-	         sample_rate,
-	         metric_flags);
-
-	return 0;
-}
-
 int
 config_init(arena_t *arena, cooper_config_t *config)
 {
@@ -176,18 +171,23 @@ config_init(arena_t *arena, cooper_config_t *config)
 	config->default_sample_rate = 100;
 	config->export_interval     = 60;
 	config->mem_sample_interval = 1;
-	config->filters_capacity    = MAX_FILTER_ENTRIES;
 
-	/* Allocate filters array */
-	config->filters =
-	    arena_alloc(arena, MAX_FILTER_ENTRIES * sizeof(method_filter_entry_t));
-	if (!config->filters)
+	/* Initialize unified filter */
+	config->unified_filter.capacity    = MAX_FILTER_ENTRIES;
+	config->unified_filter.num_entries = 0;
+
+	/* Allocate unified filter entries array */
+	config->unified_filter.entries =
+	    arena_alloc(arena, MAX_FILTER_ENTRIES * sizeof(pattern_filter_entry_t));
+	if (!config->unified_filter.entries)
 	{
-		LOG_ERROR("Failed to allocate memory for filters array\n");
+		LOG_ERROR("Failed to allocate memory for unified filter entries array\n");
 		return 1;
 	}
 
-	memset(config->filters, 0, MAX_FILTER_ENTRIES * sizeof(method_filter_entry_t));
+	memset(config->unified_filter.entries,
+	       0,
+	       MAX_FILTER_ENTRIES * sizeof(pattern_filter_entry_t));
 
 	/* Set default export method */
 	config->export_method = arena_strdup(arena, "file");
@@ -266,57 +266,60 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				}
 			}
 		}
-		else if (strcmp(current_section, "[method_signatures]") == 0)
+		else if (strcmp(current_section, "[filters]") == 0)
 		{
-			/* Skip filter array markers */
-			if (strncmp(processed, "filters =", 9) == 0
-			    || processed[0] == ']')
-				continue;
-
-			/* Parse filter entry:
-			 * class_signature:method_name:method_signature:sample_rate:metrics
-			 */
-			char class_sig[256], method_name[256], method_sig[256];
+			/* Parse unified filter entry */
+			char class_pattern[256], method_pattern[256], sig_pattern[256];
 			int sample_rate;
 			char metrics[256] = {0};
 
-			/* Initialize with defaults */
-			strcpy(method_name, "*");
-			strcpy(method_sig, "*");
-			sample_rate = config->default_sample_rate;
-
-			/* Try to parse the filter entry */
 			int parsed = sscanf(processed,
 			                    "%255[^:]:%255[^:]:%255[^:]:%d:%255s",
-			                    class_sig,
-			                    method_name,
-			                    method_sig,
+			                    class_pattern,
+			                    method_pattern,
+			                    sig_pattern,
 			                    &sample_rate,
 			                    metrics);
 
-			if (parsed < 1)
+			if (parsed < 4)
 			{
-				LOG_ERROR("Invalid method filter format: %s\n",
-				          processed);
+				LOG_ERROR("Invalid filter format: %s\n", processed);
 				continue;
 			}
 
-			/* Parse metric flags */
-			unsigned int metric_flags = config_parse_metric_flags(metrics);
-
-			/* Add the filter */
-			if (config_add_method_filter(arena,
-			                             config,
-			                             class_sig,
-			                             method_name,
-			                             method_sig,
-			                             sample_rate,
-			                             metric_flags)
-			    != 0)
+			/* Check capacity */
+			if (config->unified_filter.num_entries >= MAX_FILTER_ENTRIES)
 			{
-				LOG_ERROR("Failed to add method filter: %s\n", processed);
+				LOG_ERROR("Maximum filters reached\n");
 				continue;
 			}
+
+			/* Add filter entry */
+			pattern_filter_entry_t *entry =
+			    &config->unified_filter
+				 .entries[config->unified_filter.num_entries];
+
+			entry->class_pattern     = arena_strdup(arena, class_pattern);
+			entry->method_pattern    = arena_strdup(arena, method_pattern);
+			entry->signature_pattern = arena_strdup(arena, sig_pattern);
+			entry->sample_rate =
+			    sample_rate > 0 ? sample_rate : config->default_sample_rate;
+			entry->metric_flags = config_parse_metric_flags(metrics);
+
+			if (!entry->class_pattern || !entry->method_pattern
+			    || !entry->signature_pattern)
+			{
+				LOG_ERROR("Failed to allocate filter strings\n");
+				continue;
+			}
+
+			config->unified_filter.num_entries++;
+			LOG_INFO("Added filter: %s:%s:%s (rate=%d, flags=%u)\n",
+			         class_pattern,
+			         method_pattern,
+			         sig_pattern,
+			         entry->sample_rate,
+			         entry->metric_flags);
 		}
 		else if (strcmp(current_section, "[sample_file_location]") == 0)
 		{
@@ -348,71 +351,16 @@ config_parse(arena_t *arena, const char *config_file, cooper_config_t *config)
 				}
 			}
 		}
-		else if (strcmp(current_section, "[packages]") == 0)
-		{
-			/* Skip filter array markers */
-			if (strncmp(processed, "include =", 9) == 0
-			    || processed[0] == ']')
-				continue;
-
-			/* Initialize arrays once on first package entry */
-			if (config->package_filter.include_packages == NULL)
-			{
-				config->package_filter.include_packages = arena_alloc(
-				    arena, MAX_PACKAGE_FILTERS * sizeof(char *));
-				config->package_filter.package_lengths = arena_alloc(
-				    arena, MAX_PACKAGE_FILTERS * sizeof(size_t));
-				config->package_filter.num_packages = 0;
-
-				if (!config->package_filter.include_packages
-				    || !config->package_filter.package_lengths)
-				{
-					LOG_ERROR(
-					    "Failed to allocate package filter arrays\n");
-					continue;
-				}
-			}
-
-			/* Parse package line */
-			if (config->package_filter.num_packages < MAX_PACKAGE_FILTERS)
-			{
-				char package[256];
-				if (sscanf(processed, "%255s", package) == 1)
-				{
-					size_t len     = strlen(package);
-					char *pkg_copy = arena_strdup(arena, package);
-					if (pkg_copy)
-					{
-						config->package_filter.include_packages
-						    [config->package_filter
-						         .num_packages] = pkg_copy;
-						config->package_filter.package_lengths
-						    [config->package_filter
-						         .num_packages] = len;
-						config->package_filter.num_packages++;
-						LOG_INFO("Added package filter: %s "
-						         "(len=%zu)\n",
-						         package,
-						         len);
-					}
-				}
-			}
-			else
-				LOG_WARN(
-				    "Maximum package filters reached, ignoring: %s\n",
-				    processed);
-		}
 	}
 
 	fclose(fp);
 
 	LOG_INFO("Config loaded: default_rate=%d, method_filters=%zu, "
-	         "package_filters=%zu, path=%s, "
+	         "path=%s, "
 	         "export_method=%s, "
 	         "export_interval=%d\n",
 	         config->default_sample_rate,
-	         config->num_filters,
-	         config->package_filter.num_packages,
+	         config->unified_filter.num_entries,
 	         config->sample_file_path ? config->sample_file_path : "NULL",
 	         config->export_method ? config->export_method : "NULL",
 	         config->export_interval);

@@ -1407,40 +1407,6 @@ cleanup_classes:
 	(*jvmti)->Deallocate(jvmti, (unsigned char *)classes);
 }
 
-/**
- * Finds the index for a method in the metrics array based on filter rules.
- * This is a read-only, non-locking function used during class loading.
- *
- * @return The index into the metrics array if a match is found, otherwise -1.
- */
-static int
-find_method_filter_index(agent_context_t *ctx,
-                         const char *class_signature,
-                         const char *method_name,
-                         const char *method_signature)
-{
-	char full_sig[MAX_SIG_SZ];
-
-	/* Check for an exact match first */
-	snprintf(full_sig,
-	         sizeof(full_sig),
-	         "%s %s %s",
-	         class_signature,
-	         method_name,
-	         method_signature);
-	int method_index = find_method_index(ctx->metrics, full_sig);
-	if (method_index >= 0)
-		return method_index;
-
-	/* If no exact match, try a class-level wildcard match */
-	snprintf(full_sig, sizeof(full_sig), "%s * *", class_signature);
-	method_index = find_method_index(ctx->metrics, full_sig);
-	if (method_index >= 0)
-		return method_index;
-
-	return -1; /* No matching filter found */
-}
-
 /* Caches class and method info using SetTag */
 static void
 cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jclass klass)
@@ -1494,8 +1460,6 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	{
 		char *method_name = NULL;
 		char *method_sig  = NULL;
-		char buf[1024];
-		info->methods[i].method_id = methods[i];
 
 		/* Skip any method where we cannot get name */
 		if ((*jvmti_env)
@@ -1504,26 +1468,85 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 		    != JVMTI_ERROR_NONE)
 			continue;
 
-		/* Store arena-allocated copies of the names */
-		info->methods[i].method_name      = arena_strdup(arena, method_name);
-		info->methods[i].method_signature = arena_strdup(arena, method_sig);
-		snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
-		info->methods[i].full_name = arena_strdup(arena, buf);
+		/* Check if this specific method matches any filter */
+		pattern_filter_entry_t *matching_filter = find_matching_filter(
+		    &ctx->unified_filter, class_sig, method_name, method_sig);
 
-		info->methods[i].sample_index =
-		    find_method_filter_index(ctx, class_sig, method_name, method_sig);
+		/* Mark method as not interesting first */
+		info->methods[i].sample_index = -1;
 
-		/* Only add interesting methods to cache */
-		if (info->methods[i].sample_index >= 0)
+		if (matching_filter)
 		{
-			if (ht_put(ctx->interesting_methods,
-			           info->methods[i].method_id,
-			           &info->methods[i])
-			    != COOPER_OK)
-				LOG_WARN("Failed to cache method %s",
-				         info->methods[i].method_name);
+			char buf[1024];
+			info->methods[i].method_id = methods[i];
+			/* Store arena-allocated copies of the names */
+			info->methods[i].method_name = arena_strdup(arena, method_name);
+			info->methods[i].method_signature =
+			    arena_strdup(arena, method_sig);
+			snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
+			info->methods[i].full_name = arena_strdup(arena, buf);
+
+			// info->methods[i].sample_index =
+			// 	find_method_filter_index(ctx, class_sig, method_name,
+			// method_sig);
+
+			/* Build full signature for metrics structure */
+			char full_sig[1024];
+			int written = snprintf(full_sig,
+			                       sizeof(full_sig),
+			                       "%s %s %s",
+			                       class_sig,
+			                       method_name,
+			                       method_sig);
+
+			if (written < 0 || written >= (int)sizeof(full_sig))
+			{
+				LOG_ERROR("Method signature too long: %s:%s:%s\n",
+				          class_sig,
+				          method_name,
+				          method_sig);
+				goto next_method;
+			}
+
+			/* Add method to metrics structure using filter configuration */
+			int sample_index =
+			    add_method_to_metrics(ctx,
+			                          full_sig,
+			                          matching_filter->sample_rate,
+			                          matching_filter->metric_flags);
+
+			/* Only add interesting methods to cache */
+			if (sample_index >= 0)
+			{
+				info->methods[i].sample_index = sample_index;
+
+				/* Add to interesting methods hashtable */
+				if (ht_put(ctx->interesting_methods,
+				           info->methods[i].method_id,
+				           &info->methods[i])
+				    != COOPER_OK)
+				{
+					LOG_WARN("Failed to cache method %s",
+					         info->methods[i].method_name);
+				}
+				else
+				{
+					LOG_INFO("Cached method: %s (sample_rate=%d, "
+					         "flags=%u, index=%d)",
+					         info->methods[i].full_name,
+					         matching_filter->sample_rate,
+					         matching_filter->metric_flags,
+					         sample_index);
+				}
+			}
+			else
+			{
+				LOG_ERROR("Failed to add method to metrics: %s\n",
+				          full_sig);
+			}
 		}
 
+	next_method:
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_name);
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)method_sig);
 	}
