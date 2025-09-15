@@ -378,9 +378,7 @@ struct agent_context
 	jclass java_thread_class; /**< Global reference for java.lang.Thread class */
 	jmethodID getId_method;   /**< Cached Thread.getId() method ID */
 	callbacks_t callbacks;    /**< Centralized callback structures */
-	char **method_filters;    /**< Method filter list */
-	int num_filters;          /**< Number of filters */
-	package_filter_t package_filter;   /**< Set of packages to look for */
+	pattern_filter_t unified_filter;   /**< Unified filter from config */
 	FILE *log_file;                    /**< Log output file */
 	pthread_t log_thread;              /**< Logging thread */
 	thread_manager_ctx_t tm_ctx;       /**< Holds state/threads for thread_manager */
@@ -407,6 +405,11 @@ struct agent_context
 };
 
 int load_config(agent_context_t *ctx, const char *cf);
+
+pattern_filter_entry_t *find_matching_filter(const pattern_filter_t *filter,
+                                             const char *class_sig,
+                                             const char *method_name,
+                                             const char *method_sig);
 
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
