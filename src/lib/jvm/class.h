@@ -130,4 +130,12 @@ struct class_file
 	attr_info_t *attributes;
 };
 
+u2 read_u2(const u1 *data, int *offset);
+
+u4 read_u4(const u1 *data, int *offset);
+
+void write_u2(u1 *data, int *offset, u2 value);
+
+void write_u4(u1 *data, int *offset, u4 value);
+
 #endif /* JVM_CLASS_H */

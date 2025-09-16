@@ -167,7 +167,7 @@ int main(int argc, char **argv)
     /* compile test_bytecode.c */
     nob_cmd_append(&test_bytecode_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-g",
          "-o", BUILD_FOLDER"test_bytecode");
-    add_sources_from_dir(&test_cmd, LIB_FOLDER);
+    add_sources_from_dir(&test_bytecode_cmd, LIB_FOLDER);
     nob_cmd_append(&test_bytecode_cmd, SRC_FOLDER"test/test_bytecode.c", "-pthread", "-lrt");
     if (!nob_cmd_run_sync(test_bytecode_cmd)) return 1;
 
