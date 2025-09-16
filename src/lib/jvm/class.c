@@ -7,7 +7,7 @@
 #include "class.h"
 
 /*
-A set of functions to read data from a class file:
+A set of functions to read/write data to/from a class file:
 
 ClassFile {
     u4             magic;
@@ -46,4 +46,20 @@ read_u4(const u1 *data, int *offset)
 	       | (data[*offset + 2] << 8) | data[*offset + 3];
 	*offset += 4;
 	return v;
+}
+
+void
+write_u2(u1 *data, int *offset, u2 value)
+{
+	data[(*offset)++] = (u1)(value >> 8);
+	data[(*offset)++] = (u1)(value & 0xFF);
+}
+
+void
+write_u4(u1 *data, int *offset, u4 value)
+{
+	data[(*offset)++] = (u1)(value >> 24);
+	data[(*offset)++] = (u1)(value >> 16);
+	data[(*offset)++] = (u1)(value >> 8);
+	data[(*offset)++] = (u1)(value & 0xFF);
 }

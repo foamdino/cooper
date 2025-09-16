@@ -91,6 +91,7 @@ int main(int argc, char **argv)
     Nob_Cmd test_cmd = {0};
     Nob_Cmd cli_cmd = {0};
     Nob_Cmd tui_cmd = {0};
+    Nob_Cmd test_bytecode_cmd = {0};
 
     const char *JAVA_HOME = getenv("JAVA_HOME");
     assert(JAVA_HOME != NULL);
@@ -146,7 +147,7 @@ int main(int argc, char **argv)
     add_sources_from_dir(&test_cmd, LIB_FOLDER);
     add_sources_from_dir(&test_cmd, AGENT_FOLDER);
     // add_sources_from_dir(&test_cmd, SRC_FOLDER);
-    add_sources_from_dir(&test_cmd, TEST_FOLDER);
+    nob_cmd_append(&test_cmd, SRC_FOLDER"test/test_cooper.c");
     nob_cmd_append(&test_cmd, "-pthread", "-lrt");
     
     if (!nob_cmd_run_sync(test_cmd)) return 1;
@@ -162,6 +163,13 @@ int main(int argc, char **argv)
         SRC_FOLDER"tui/tui_loader.c", SRC_FOLDER"cli/cli.c", "-lrt", "-ldl");
 
     if (!nob_cmd_run_sync(cli_cmd)) return 1;
+
+    /* compile test_bytecode.c */
+    nob_cmd_append(&test_bytecode_cmd, "cc", "-Wall", "-Wextra", "-fPIC", JAVA_INC, LINUX_INC, "-I.", "-g",
+         "-o", BUILD_FOLDER"test_bytecode");
+    add_sources_from_dir(&test_cmd, LIB_FOLDER);
+    nob_cmd_append(&test_bytecode_cmd, SRC_FOLDER"test/test_bytecode.c", "-pthread", "-lrt");
+    if (!nob_cmd_run_sync(test_bytecode_cmd)) return 1;
 
     return 0;
 }
