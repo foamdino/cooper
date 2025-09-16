@@ -1,0 +1,1 @@
+Example enterprise springboot app based on https://github.com/opcruz/springboot-sqlite

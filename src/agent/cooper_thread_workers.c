@@ -1064,21 +1064,10 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 }
 
 static jint JNICALL
-heap_object_callback(jvmtiHeapReferenceKind reference_kind,
-                     const jvmtiHeapReferenceInfo *reference_info,
-                     jlong class_tag,
-                     jlong referrer_class_tag,
-                     jlong size,
-                     jlong *tag_ptr,
-                     jlong *referrer_tag,
-                     jint length,
-                     void *user_data)
+heap_object_callback(
+    jlong class_tag, jlong size, jlong *tag_ptr, jint length, void *user_data)
 {
-	UNUSED(reference_kind);
-	UNUSED(reference_info);
-	UNUSED(referrer_class_tag);
 	UNUSED(tag_ptr);
-	UNUSED(referrer_tag);
 	UNUSED(length);
 
 	/* No-op */
@@ -1298,12 +1287,12 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 	LOG_INFO("Starting heap analysis");
 	jvmtiHeapCallbacks callbacks      = {0};
-	callbacks.heap_reference_callback = heap_object_callback;
+	callbacks.heap_iteration_callback = heap_object_callback;
 
-	err = (*jvmti)->FollowReferences(jvmti, 0, NULL, NULL, &callbacks, &iter_ctx);
+	err = (*jvmti)->IterateThroughHeap(jvmti, 0, NULL, &callbacks, &iter_ctx);
 	if (err != JVMTI_ERROR_NONE)
 	{
-		LOG_ERROR("FollowReferences failed: %d", err);
+		LOG_ERROR("IterateThroughHeap failed: %d", err);
 		goto cleanup_tags;
 	}
 
@@ -1486,9 +1475,10 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 			snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
 			info->methods[i].full_name = arena_strdup(arena, buf);
 
-			// info->methods[i].sample_index =
-			// 	find_method_filter_index(ctx, class_sig, method_name,
-			// method_sig);
+			// TODO calculate and store a multiplier for deep size
+			// see heap_object_callback for heuristic
+			// class_stats[i].deep_multiplier =
+			// calculate_deep_multiplier(class_sig);
 
 			/* Build full signature for metrics structure */
 			char full_sig[1024];
@@ -1531,12 +1521,12 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 				}
 				else
 				{
-					LOG_INFO("Cached method: %s (sample_rate=%d, "
-					         "flags=%u, index=%d)",
-					         info->methods[i].full_name,
-					         matching_filter->sample_rate,
-					         matching_filter->metric_flags,
-					         sample_index);
+					LOG_DEBUG("Cached method: %s (sample_rate=%d, "
+					          "flags=%u, index=%d)",
+					          info->methods[i].full_name,
+					          matching_filter->sample_rate,
+					          matching_filter->metric_flags,
+					          sample_index);
 				}
 			}
 			else
