@@ -31,7 +31,7 @@ ClassFile {
 
 /* Read big endian 16bit value */
 u2
-read_u2(const u1 *data, int *offset)
+read_u2_and_advance(const u1 *data, int *offset)
 {
 	u2 v = (data[*offset] << 8) | data[*offset + 1];
 	*offset += 2;
@@ -40,7 +40,7 @@ read_u2(const u1 *data, int *offset)
 
 /* Read big endian 32bit value */
 u4
-read_u4(const u1 *data, int *offset)
+read_u4_and_advance(const u1 *data, int *offset)
 {
 	u4 v = (data[*offset] << 24) | (data[*offset + 1] << 16)
 	       | (data[*offset + 2] << 8) | data[*offset + 3];
@@ -49,14 +49,14 @@ read_u4(const u1 *data, int *offset)
 }
 
 void
-write_u2(u1 *data, int *offset, u2 value)
+write_u2_and_advance(u1 *data, int *offset, u2 value)
 {
 	data[(*offset)++] = (u1)(value >> 8);
 	data[(*offset)++] = (u1)(value & 0xFF);
 }
 
 void
-write_u4(u1 *data, int *offset, u4 value)
+write_u4_and_advance(u1 *data, int *offset, u4 value)
 {
 	data[(*offset)++] = (u1)(value >> 24);
 	data[(*offset)++] = (u1)(value >> 16);

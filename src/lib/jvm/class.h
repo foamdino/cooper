@@ -53,6 +53,16 @@ struct cp_info
 		} methodref;
 		struct
 		{
+			u2 class_index;
+			u2 name_and_type_index;
+		} fieldref;
+		struct
+		{
+			u2 class_index;
+			u2 name_and_type_index;
+		} interfaceref;
+		struct
+		{
 			u2 name_index;
 			u2 descriptor_index;
 		} name_and_type;
@@ -61,7 +71,7 @@ struct cp_info
 			u2 name_index;
 		} class_info;
 		u4 integer;
-		/* TODO add more if required */
+
 	} info;
 };
 
@@ -76,7 +86,7 @@ struct method_info
 	u2 access_flags;
 	u2 name_index;
 	u2 descriptor_index;
-	u2 attributes_counts;
+	u2 attributes_count;
 	attr_info_t *attributes;
 };
 
@@ -85,7 +95,7 @@ struct field_info
 	u2 access_flags;
 	u2 name_index;
 	u2 descriptor_index;
-	u2 attributes_counts;
+	u2 attributes_count;
 	attr_info_t *attributes;
 };
 
@@ -130,12 +140,12 @@ struct class_file
 	attr_info_t *attributes;
 };
 
-u2 read_u2(const u1 *data, int *offset);
+u2 read_u2_and_advance(const u1 *data, int *offset);
 
-u4 read_u4(const u1 *data, int *offset);
+u4 read_u4_and_advance(const u1 *data, int *offset);
 
-void write_u2(u1 *data, int *offset, u2 value);
+void write_u2_and_advance(u1 *data, int *offset, u2 value);
 
-void write_u4(u1 *data, int *offset, u4 value);
+void write_u4_and_advance(u1 *data, int *offset, u4 value);
 
 #endif /* JVM_CLASS_H */
