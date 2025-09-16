@@ -1794,15 +1794,17 @@ init_jvm_capabilities(agent_context_t *ctx)
 	/* Set event callbacks */
 	memset(
 	    &ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
-	ctx->callbacks.event_callbacks.MethodEntry   = &method_entry_callback;
-	ctx->callbacks.event_callbacks.MethodExit    = &method_exit_callback;
-	ctx->callbacks.event_callbacks.Exception     = &exception_callback;
+	ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
+	ctx->callbacks.event_callbacks.MethodExit  = &method_exit_callback;
+
+	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
+
 	ctx->callbacks.event_callbacks.VMObjectAlloc = &object_alloc_callback;
 	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
 	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
+	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
+	// ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
@@ -1981,7 +1983,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	}
 
 	/* TODO create const for initial_capacity at some point */
-	size_t initial_capacity = 256;
+	size_t initial_capacity = 10000;
 	global_ctx->metrics     = init_method_metrics(metrics_arena, initial_capacity);
 	if (!global_ctx->metrics)
 	{
