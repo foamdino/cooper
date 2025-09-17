@@ -26,17 +26,11 @@ bytecode_get_class_name(const class_file_t *cf)
 {
 	assert(cf != NULL);
 
-	printf("getting class name");
-
 	if (cf->this_class >= cf->constant_pool_count)
 		return NULL;
 
-	printf("here");
-
 	if (cf->constant_pool[cf->this_class].tag != CONSTANT_Class)
 		return NULL;
-
-	printf("after checks");
 
 	u2 name_idx = cf->constant_pool[cf->this_class].info.class_info.name_index;
 	return bytecode_get_utf8_constant(cf, name_idx);
@@ -67,7 +61,10 @@ bytecode_get_field_descriptor(const class_file_t *cf, u2 method_index)
 }
 
 static bytecode_result_e
-parse_cp_entry(arena_t *arena, const u1 *data, int *offset, cp_info_t *entry)
+parse_constant_pool_entry(arena_t *arena,
+                          const u1 *data,
+                          int *offset,
+                          constant_pool_info_t *entry)
 {
 
 	entry->tag = data[(*offset)++];
@@ -88,6 +85,11 @@ parse_cp_entry(arena_t *arena, const u1 *data, int *offset, cp_info_t *entry)
 			((u1 *)entry->info.utf8.bytes)[entry->info.utf8.length] = 0;
 			/* advance pointer */
 			*offset += entry->info.utf8.length;
+			break;
+
+		/* Entry pointing to an instance of CONSTANT_Utf8 */
+		case CONSTANT_String:
+			entry->info.string = read_u2_and_advance(data, offset);
 			break;
 
 		case CONSTANT_Class:
@@ -113,11 +115,8 @@ parse_cp_entry(arena_t *arena, const u1 *data, int *offset, cp_info_t *entry)
 			entry->info.integer = read_u4_and_advance(data, offset);
 			break;
 
-		case CONSTANT_Long:
-		case CONSTANT_Double:
-			/* These take 2 constant pool slots */
-			read_u4_and_advance(data, offset); /* high bytes */
-			read_u4_and_advance(data, offset); /* low bytes */
+		case CONSTANT_Float:
+			entry->info.flowt = read_u4_and_advance(data, offset);
 			break;
 
 		case CONSTANT_Fieldref:
@@ -131,6 +130,57 @@ parse_cp_entry(arena_t *arena, const u1 *data, int *offset, cp_info_t *entry)
 			entry->info.interfaceref.class_index =
 			    read_u2_and_advance(data, offset);
 			entry->info.interfaceref.name_and_type_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		/* These take 2 constant pool slots */
+		case CONSTANT_Long:
+			entry->info.long_info.high_bytes =
+			    read_u4_and_advance(data, offset);
+			entry->info.long_info.low_bytes =
+			    read_u4_and_advance(data, offset);
+			break;
+
+		case CONSTANT_Double:
+			entry->info.double_info.high_bytes =
+			    read_u4_and_advance(data, offset);
+			entry->info.double_info.low_bytes =
+			    read_u4_and_advance(data, offset);
+			break;
+
+		case CONSTANT_MethodHandle:
+			entry->info.methodhandle_info.reference_kind =
+			    read_u1_and_advance(data, offset);
+			entry->info.methodhandle_info.reference_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		case CONSTANT_MethodType:
+			entry->info.methodtype_info.descriptor_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		case CONSTANT_Dynamic:
+			entry->info.dynamic_info.bootstrap_method_attr_index =
+			    read_u2_and_advance(data, offset);
+			entry->info.dynamic_info.name_and_type_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		case CONSTANT_InvokeDynamic:
+			entry->info.invokedynamic_info.bootstrap_method_attr_index =
+			    read_u2_and_advance(data, offset);
+			entry->info.invokedynamic_info.name_and_type_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		case CONSTANT_Module:
+			entry->info.module_info.name_index =
+			    read_u2_and_advance(data, offset);
+			break;
+
+		case CONSTANT_Package:
+			entry->info.module_info.name_index =
 			    read_u2_and_advance(data, offset);
 			break;
 
@@ -194,27 +244,41 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 	cf->minor_version       = read_u2_and_advance(data, &offset);
 	cf->constant_pool_count = read_u2_and_advance(data, &offset);
 
-	/* constant pool must have at least 2 entries for a concrete class */
+	/* Constant pool must have at least 2 entries for a concrete class */
 	if (cf->constant_pool_count < 2)
 		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
 	cf->constant_pool =
-	    arena_alloc(arena, cf->constant_pool_count * sizeof(cp_info_t));
+	    arena_alloc(arena, cf->constant_pool_count * sizeof(constant_pool_info_t));
 	if (!cf->constant_pool)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* We set these if the _count is > 0 */
+	cf->interfaces = NULL;
+	cf->fields     = NULL;
+	cf->methods    = NULL;
 
 	/* Parse constant pool entries */
 	for (u2 i = 1; i < cf->constant_pool_count; i++)
 	{
-		bytecode_result_e rc =
-		    parse_cp_entry(arena, data, &offset, &cf->constant_pool[i]);
+		bytecode_result_e rc = parse_constant_pool_entry(
+		    arena, data, &offset, &cf->constant_pool[i]);
 		if (rc != BYTECODE_SUCCESS)
 			return rc;
 
 		/* Long and Double are two slots */
 		if (cf->constant_pool[i].tag == CONSTANT_Long
 		    || cf->constant_pool[i].tag == CONSTANT_Double)
-			i++;
+		{
+			i++; /* advance pointer */
+
+			/* Mark this slot as unusable
+			required by jvm spec:
+			The constant_pool index n+1 must be valid but is considered
+			unusable.*/
+			if (i < cf->constant_pool_count)
+				cf->constant_pool[i].tag = 0;
+		}
 	}
 
 	/* Parse the class info */
@@ -233,8 +297,6 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 		for (u2 i = 0; i < cf->interfaces_count; i++)
 			cf->interfaces[i] = read_u2_and_advance(data, &offset);
 	}
-	else
-		cf->interfaces = NULL;
 
 	/* Parse fields */
 	cf->fields_count = read_u2_and_advance(data, &offset);
@@ -246,6 +308,8 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 
 		for (u2 i = 0; i < cf->fields_count; i++)
 		{
+			// TODO refactor into parse_field(arena, data, &offset,
+			// &cf->fields[i]);
 			cf->fields[i].access_flags = read_u2_and_advance(data, &offset);
 			cf->fields[i].name_index   = read_u2_and_advance(data, &offset);
 			cf->fields[i].descriptor_index =
@@ -265,8 +329,6 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 			}
 		}
 	}
-	else
-		cf->fields = NULL;
 
 	/* Parse methods */
 	cf->methods_count = read_u2_and_advance(data, &offset);
@@ -285,8 +347,6 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 				return rc;
 		}
 	}
-	else
-		cf->methods = NULL;
 
 	/* Parse attributes */
 	*result = cf;
@@ -298,18 +358,19 @@ bytecode_print_class_info(const class_file_t *cf)
 {
 	printf("Class File Information:\n");
 	printf("  Magic: 0x%08X\n", cf->magic);
-	// TODO need to complete class file parsing
 	printf("  Version: %d.%d\n", cf->major_version, cf->minor_version);
 	printf("  Class: %s\n", bytecode_get_class_name(cf));
-	// printf("  Constant Pool: %d entries\n", cf->constant_pool_count - 1);
-	// printf("  Methods: %d\n", cf->methods_count);
-	// printf("  Fields: %d\n", cf->fields_count);
+	printf("  Constant Pool: %d entries\n", cf->constant_pool_count - 1);
+	printf("  Methods: %d\n", cf->methods_count);
+	printf("  Fields: %d\n", cf->fields_count);
 
-	// printf("\nMethods:\n");
-	// for (u2 i = 0; i < cf->methods_count; i++) {
-	//     const char* name = bytecode_get_utf8_constant(cf,
-	//     cf->methods[i].name_index); const char* desc =
-	//     bytecode_get_utf8_constant(cf, cf->methods[i].descriptor_index); printf("
-	//     [%d] %s %s\n", i, name ? name : "?", desc ? desc : "?");
-	// }
+	printf("\nMethods:\n");
+	for (u2 i = 0; i < cf->methods_count; i++)
+	{
+		const char *name =
+		    bytecode_get_utf8_constant(cf, cf->methods[i].name_index);
+		const char *desc =
+		    bytecode_get_utf8_constant(cf, cf->methods[i].descriptor_index);
+		printf("[%d] %s %s\n", i, name ? name : "?", desc ? desc : "?");
+	}
 }

@@ -29,6 +29,15 @@ ClassFile {
 }
 */
 
+/* Read a byte */
+u1
+read_u1_and_advance(const u1 *data, int *offset)
+{
+	u1 v = (data[*offset]);
+	(*offset)++;
+	return v;
+}
+
 /* Read big endian 16bit value */
 u2
 read_u2_and_advance(const u1 *data, int *offset)

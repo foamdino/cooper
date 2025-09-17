@@ -28,16 +28,19 @@ typedef uint32_t u4;
 #define CONSTANT_NameAndType        12
 #define CONSTANT_MethodHandle       15
 #define CONSTANT_MethodType         16
+#define CONSTANT_Dynamic            17
 #define CONSTANT_InvokeDynamic      18
+#define CONSTANT_Module             19
+#define CONSTANT_Package            20
 
-typedef struct cp_info cp_info_t;
+typedef struct constant_pool_info constant_pool_info_t;
 typedef struct method_info method_info_t;
 typedef struct attr_info attr_info_t;
 typedef struct field_info field_info_t;
 typedef struct class_file class_file_t;
 
 /* Constant pool */
-struct cp_info
+struct constant_pool_info
 {
 	u1 tag;
 	union {
@@ -70,7 +73,51 @@ struct cp_info
 		{
 			u2 name_index;
 		} class_info;
+		u2 string; /* Pointer to utf8 */
 		u4 integer;
+		u4 flowt; /* float is C */
+
+		struct
+		{
+			u4 high_bytes;
+			u4 low_bytes;
+		} long_info;
+
+		struct
+		{
+			u4 high_bytes;
+			u4 low_bytes;
+		} double_info;
+
+		struct
+		{
+			u1 reference_kind;
+			u2 reference_index;
+		} methodhandle_info;
+
+		struct
+		{
+			u2 descriptor_index;
+		} methodtype_info;
+
+		struct
+		{
+			u2 bootstrap_method_attr_index;
+			u2 name_and_type_index;
+		} dynamic_info;
+		struct
+		{
+			u2 bootstrap_method_attr_index;
+			u2 name_and_type_index;
+		} invokedynamic_info;
+		struct
+		{
+			u2 name_index;
+		} module_info;
+		struct
+		{
+			u2 name_index;
+		};
 
 	} info;
 };
@@ -100,7 +147,7 @@ struct field_info
 };
 
 /* Class file representation
-https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html
+https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.4
 ClassFile {
     u4             magic;
     u2             minor_version;
@@ -126,7 +173,7 @@ struct class_file
 	u2 minor_version;
 	u2 major_version;
 	u2 constant_pool_count;
-	cp_info_t *constant_pool;
+	constant_pool_info_t *constant_pool;
 	u2 access_flags;
 	u2 this_class;
 	u2 super_class;
@@ -139,6 +186,8 @@ struct class_file
 	u2 attributes_count;
 	attr_info_t *attributes;
 };
+
+u1 read_u1_and_advance(const u1 *data, int *offset);
 
 u2 read_u2_and_advance(const u1 *data, int *offset);
 
