@@ -39,7 +39,7 @@ typedef struct attr_info attr_info_t;
 typedef struct field_info field_info_t;
 typedef struct class_file class_file_t;
 
-/* Constant pool */
+/* Constant pool info entry */
 struct constant_pool_info
 {
 	u1 tag;

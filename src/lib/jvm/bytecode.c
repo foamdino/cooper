@@ -36,29 +36,36 @@ bytecode_get_class_name(const class_file_t *cf)
 	return bytecode_get_utf8_constant(cf, name_idx);
 }
 
+// TODO not sure we need these
+
 const char *
 bytecode_get_method_name(const class_file_t *cf, u2 method_index)
 {
-	return NULL;
+	assert(cf != NULL);
+
+	if (method_index >= cf->methods_count)
+		return NULL;
+
+	return bytecode_get_utf8_constant(cf, cf->methods[method_index].name_index);
 }
 
-const char *
-bytecode_get_method_descriptor(const class_file_t *cf, u2 method_index)
-{
-	return NULL;
-}
+// const char *
+// bytecode_get_method_descriptor(const class_file_t *cf, u2 method_index)
+// {
+// 	return NULL;
+// }
 
-const char *
-bytecode_get_field_name(const class_file_t *cf, u2 method_index)
-{
-	return NULL;
-}
+// const char *
+// bytecode_get_field_name(const class_file_t *cf, u2 method_index)
+// {
+// 	return NULL;
+// }
 
-const char *
-bytecode_get_field_descriptor(const class_file_t *cf, u2 method_index)
-{
-	return NULL;
-}
+// const char *
+// bytecode_get_field_descriptor(const class_file_t *cf, u2 method_index)
+// {
+// 	return NULL;
+// }
 
 static bytecode_result_e
 parse_constant_pool_entry(arena_t *arena,
