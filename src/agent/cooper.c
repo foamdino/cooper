@@ -1204,7 +1204,7 @@ find_matching_filter(const pattern_filter_t *filter,
 }
 
 static inline int
-should_cache_class(const pattern_filter_t *filter, const char *class_sig)
+should_process_class(const pattern_filter_t *filter, const char *class_sig)
 {
 	/* If no filters configured, don't cache anything */
 	if (filter->num_entries == 0)
@@ -1233,12 +1233,9 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 		return;
 
-	/* Fast filter check - no allocations */
-	if (!should_cache_class(&global_ctx->unified_filter, class_sig))
-	{
-		/* Class filtered out, skip processing */
+	/* Class filtered out, skip processing */
+	if (!should_process_class(&global_ctx->unified_filter, class_sig))
 		goto cleanup;
-	}
 
 	/* Create global reference for the class */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
@@ -1312,7 +1309,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(class_data);
 
 	/* Fast filter check - no allocations */
-	if (!should_cache_class(&global_ctx->unified_filter, name))
+	if (!should_process_class(&global_ctx->unified_filter, name))
 		return;
 
 	/* Class passed filter, enqueue for background processing */
@@ -1634,7 +1631,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			continue;
 
 		/* Class filtered out, skip processing */
-		if (!should_cache_class(&global_ctx->unified_filter, class_sig))
+		if (!should_process_class(&global_ctx->unified_filter, class_sig))
 			goto deallocate;
 
 		/* Create a global reference for the class */
