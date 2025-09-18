@@ -255,7 +255,7 @@ parse_field(arena_t *arena, u1 *data, int *offset, field_info_t *field)
 			    read_u4_and_advance(data, offset);
 			field->attributes[i].info = &data[*offset];
 
-			offset += field->attributes[i].attribute_length;
+			*offset += field->attributes[i].attribute_length;
 		}
 	}
 
