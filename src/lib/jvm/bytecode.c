@@ -262,6 +262,37 @@ parse_field(arena_t *arena, u1 *data, int *offset, field_info_t *field)
 	return BYTECODE_SUCCESS;
 }
 
+static bytecode_result_e
+parse_attribute(arena_t *arena, u1 *data, int *offset, attr_info_t *attr)
+{
+	attr->attribute_name_index = read_u2_and_advance(data, offset);
+	attr->attribute_length     = read_u4_and_advance(data, offset);
+	attr->info                 = &data[*offset];
+	*offset += attr->attribute_length;
+
+	return BYTECODE_SUCCESS;
+}
+
+/* Class file representation
+https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.4
+ClassFile {
+    u4             magic;
+    u2             minor_version;
+    u2             major_version;
+    u2             constant_pool_count;
+    cp_info        constant_pool[constant_pool_count-1];
+    u2             access_flags;
+    u2             this_class;
+    u2             super_class;
+    u2             interfaces_count;
+    u2             interfaces[interfaces_count];
+    u2             fields_count;
+    field_info     fields[fields_count];
+    u2             methods_count;
+    method_info    methods[methods_count];
+    u2             attributes_count;
+    attribute_info attributes[attributes_count];
+} */
 bytecode_result_e
 bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 {
@@ -278,8 +309,8 @@ bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 	if (cf->magic != CLASS_FILE_MAGIC)
 		return BYTECODE_ERROR_INVALID_MAGIC;
 
-	cf->major_version       = read_u2_and_advance(data, &offset);
 	cf->minor_version       = read_u2_and_advance(data, &offset);
+	cf->major_version       = read_u2_and_advance(data, &offset);
 	cf->constant_pool_count = read_u2_and_advance(data, &offset);
 
 	/* Constant pool must have at least 2 entries for a concrete class */
@@ -295,6 +326,7 @@ bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 	cf->interfaces = NULL;
 	cf->fields     = NULL;
 	cf->methods    = NULL;
+	cf->attributes = NULL;
 
 	/* Parse constant pool entries */
 	for (u2 i = 1; i < cf->constant_pool_count; i++)
@@ -372,6 +404,23 @@ bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 	}
 
 	/* Parse attributes */
+	cf->attributes_count = read_u2_and_advance(data, &offset);
+	if (cf->attributes_count > 0)
+	{
+		cf->attributes =
+		    arena_alloc(arena, cf->attributes_count * sizeof(attr_info_t));
+		if (!cf->attributes)
+			return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+		for (u2 i = 0; i < cf->attributes_count; i++)
+		{
+			bytecode_result_e rc =
+			    parse_attribute(arena, data, &offset, &cf->attributes[i]);
+			if (rc != BYTECODE_SUCCESS)
+				return rc;
+		}
+	}
+
 	*result = cf;
 	return BYTECODE_SUCCESS;
 }

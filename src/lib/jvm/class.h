@@ -33,6 +33,13 @@ typedef uint32_t u4;
 #define CONSTANT_Module             19
 #define CONSTANT_Package            20
 
+/* These are the num bytes for
+the fixed size (not including the variable array)
+*/
+#define ATTR_INFO_HDR_SZ   6
+#define METHOD_INFO_HDR_SZ 8
+#define FIELD_INFO_HDR_SZ  8
+
 typedef struct constant_pool_info constant_pool_info_t;
 typedef struct method_info method_info_t;
 typedef struct attr_info attr_info_t;
