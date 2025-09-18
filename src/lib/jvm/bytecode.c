@@ -200,12 +200,13 @@ parse_constant_pool_entry(arena_t *arena,
 }
 
 static bytecode_result_e
-parse_method(arena_t *arena, const u1 *data, int *offset, method_info_t *method)
+parse_method(arena_t *arena, u1 *data, int *offset, method_info_t *method)
 {
 	method->access_flags     = read_u2_and_advance(data, offset);
 	method->name_index       = read_u2_and_advance(data, offset);
 	method->descriptor_index = read_u2_and_advance(data, offset);
 	method->attributes_count = read_u2_and_advance(data, offset);
+	method->attributes       = NULL;
 
 	if (method->attributes_count > 0)
 	{
@@ -225,14 +226,44 @@ parse_method(arena_t *arena, const u1 *data, int *offset, method_info_t *method)
 			*offset += method->attributes[i].attribute_length;
 		}
 	}
-	else
-		method->attributes = NULL;
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_field(arena_t *arena, u1 *data, int *offset, field_info_t *field)
+{
+	field->access_flags     = read_u2_and_advance(data, offset);
+	field->name_index       = read_u2_and_advance(data, offset);
+	field->descriptor_index = read_u2_and_advance(data, offset);
+	field->attributes_count = read_u2_and_advance(data, offset);
+
+	field->attributes = NULL;
+
+	if (field->attributes_count > 0)
+	{
+		field->attributes =
+		    arena_alloc(arena, field->attributes_count * sizeof(attr_info_t));
+		if (!field->attributes)
+			return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+		for (u2 i = 0; i < field->attributes_count; i++)
+		{
+			field->attributes[i].attribute_name_index =
+			    read_u2_and_advance(data, offset);
+			field->attributes[i].attribute_length =
+			    read_u4_and_advance(data, offset);
+			field->attributes[i].info = &data[*offset];
+
+			offset += field->attributes[i].attribute_length;
+		}
+	}
 
 	return BYTECODE_SUCCESS;
 }
 
 bytecode_result_e
-bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **result)
+bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 {
 	if (!arena || !data || !result)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
@@ -315,25 +346,10 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 
 		for (u2 i = 0; i < cf->fields_count; i++)
 		{
-			// TODO refactor into parse_field(arena, data, &offset,
-			// &cf->fields[i]);
-			cf->fields[i].access_flags = read_u2_and_advance(data, &offset);
-			cf->fields[i].name_index   = read_u2_and_advance(data, &offset);
-			cf->fields[i].descriptor_index =
-			    read_u2_and_advance(data, &offset);
-			cf->fields[i].attributes_count =
-			    read_u2_and_advance(data, &offset);
-
-			/* TODO complete this */
-			for (u2 j = 0; j < cf->fields[i].attributes_count; j++)
-			{
-				/* attribute_name_index */
-				read_u2_and_advance(
-				    data, &offset); // TODO don't just discard this
-				u4 attr_len = read_u4_and_advance(data, &offset);
-				/* advance the pointer */
-				offset += attr_len;
-			}
+			bytecode_result_e rc =
+			    parse_field(arena, data, &offset, &cf->fields[i]);
+			if (rc != BYTECODE_SUCCESS)
+				return rc;
 		}
 	}
 
@@ -379,5 +395,56 @@ bytecode_print_class_info(const class_file_t *cf)
 		const char *desc =
 		    bytecode_get_utf8_constant(cf, cf->methods[i].descriptor_index);
 		printf("[%d] %s %s\n", i, name ? name : "?", desc ? desc : "?");
+	}
+}
+
+void
+bytecode_print_method_details(const class_file_t *cf, u2 method_idx)
+{
+	if (method_idx >= cf->methods_count)
+	{
+		printf("Invalid method index: %d\n", method_idx);
+		return;
+	}
+
+	const method_info_t *method = &cf->methods[method_idx];
+	const char *name            = bytecode_get_method_name(cf, method_idx);
+	// const char* desc = bytecode_get_method_descriptor(cf, method_idx);
+	char *desc = "?";
+	printf("\nMethod [%d]: %s%s\n", method_idx, name ? name : "?", desc ? desc : "?");
+	printf("  Access flags: 0x%04X\n", method->access_flags);
+	printf("  Attributes: %d\n", method->attributes_count);
+
+	/* Look for Code attribute */
+	for (u2 i = 0; i < method->attributes_count; i++)
+	{
+		const char *attr_name = bytecode_get_utf8_constant(
+		    cf, method->attributes[i].attribute_name_index);
+		printf("    [%d] %s (length: %d)\n",
+		       i,
+		       attr_name ? attr_name : "?",
+		       method->attributes[i].attribute_length);
+
+		if (attr_name && strcmp(attr_name, "Code") == 0)
+		{
+			/* Parse Code attribute to show bytecode size */
+			int offset          = 0;
+			const u1 *code_data = method->attributes[i].info;
+			u2 max_stack        = read_u2_and_advance(code_data, &offset);
+			u2 max_locals       = read_u2_and_advance(code_data, &offset);
+			u4 code_length      = read_u4_and_advance(code_data, &offset);
+
+			printf("      Max stack: %d, Max locals: %d\n",
+			       max_stack,
+			       max_locals);
+			printf("      Bytecode length: %d bytes\n", code_length);
+
+			/* Show first few bytes of bytecode */
+			printf("      First 16 bytes: ");
+			for (u4 j = 0; j < 16 && j < code_length; j++)
+				printf("%02X ", code_data[offset + j]);
+
+			printf("\n");
+		}
 	}
 }

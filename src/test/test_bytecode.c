@@ -77,6 +77,12 @@ test_injection(const char *filename)
 
 	printf("Original class parsed successfully\n");
 	bytecode_print_class_info(cf);
+	/* Show details for first few methods BEFORE injection */
+	printf("\nBEFORE injection - Method details:\n");
+	for (u2 i = 0; i < (cf->methods_count < 3 ? cf->methods_count : 3); i++)
+	{
+		bytecode_print_method_details(cf, i);
+	}
 
 	/* Configure injection */
 	injection_config_t config = {
@@ -98,6 +104,11 @@ test_injection(const char *filename)
 
 	printf("Injection completed!\n");
 	bytecode_print_class_info(cf);
+	printf("\nAFTER injection - Method details:\n");
+	for (u2 i = 0; i < (cf->methods_count < 3 ? cf->methods_count : 3); i++)
+	{
+		bytecode_print_method_details(cf, i);
+	}
 
 	arena_destroy(arena);
 	free(class_data);

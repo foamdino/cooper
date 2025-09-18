@@ -217,7 +217,9 @@ inject_method_bytecode(arena_t *arena,
                        class_file_t *cf,
                        method_info_t *method,
                        u2 entry_method_ref,
-                       u2 exit_method_ref)
+                       u2 exit_method_ref,
+                       u2 class_name_index,
+                       u2 method_name_index)
 {
 
 	assert(arena != NULL);
@@ -267,43 +269,159 @@ inject_method_bytecode(arena_t *arena,
 	u4 code_len         = read_u4_and_advance(code_data, &offset);
 	/* Beginning of byte array containing the method */
 	const u1 *existing_code = &code_data[offset];
+	offset += code_len;
 
-	/* Calculate the size of new bytecode */
-	/* Entry:
-	ldc class_name, ldc method_name, ldc method_sig, invokestatic
-	*/
-	u4 entry_injection_sz = 8; // approx
+	/* Skip exception table and atributes for now */
+	u2 exception_table_len = read_u2_and_advance(code_data, &offset);
+	/* Each exception entry is 8 bytes */
+	offset += exception_table_len * 8;
 
-	/* Exit:
-	ldc class_name, ldc method_name, ldc method_sig, invokestatic
-	*/
-	u4 exit_injection_sz = 8; // approx
+	u2 code_attributes_count = read_u2_and_advance(code_data, &offset);
 
-	u4 new_code_len = code_len + entry_injection_sz;
+	/* Skip code attributes */
+	for (u2 i = 0; i < code_attributes_count; i++)
+	{
+		offset += 2; /* attribute_name_index */
+		u4 attr_len = read_u4_and_advance(code_data, &offset);
+		offset += attr_len;
+	}
 
-	/* Create new buffer */
-	u1 *new_code = arena_alloc(arena, new_code_len);
+	// TODO refactor this into a function?
+	/* Build entry injection bytecode:
+	 * ldc_w #class_name_index    (3 bytes)
+	 * ldc_w #method_name_index   (3 bytes)
+	 * ldc_w #method_descriptor   (3 bytes)
+	 * invokestatic #entry_methodref (3 bytes)
+	 * Total: 12 bytes
+	 */
+	u1 entry_injection[12] = {
+	    0x13,
+	    (u1)(class_name_index >> 8),
+	    (u1)(class_name_index & 0xFF), /* ldc_w class_name */
+	    0x13,
+	    (u1)(method_name_index >> 8),
+	    (u1)(method_name_index & 0xFF), /* ldc_w method_name */
+	    0x13,
+	    (u1)(method->descriptor_index >> 8),
+	    (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0xB8,
+	    (u1)(entry_method_ref >> 8),
+	    (u1)(entry_method_ref & 0xFF) /* invokestatic entry_method */
+	};
+
+	/* Build exit injection for return instructions:
+	 * Similar to entry but for exit callback
+	 */
+	u1 exit_injection[12] = {
+	    0x13,
+	    (u1)(class_name_index >> 8),
+	    (u1)(class_name_index & 0xFF), /* ldc_w class_name */
+	    0x13,
+	    (u1)(method_name_index >> 8),
+	    (u1)(method_name_index & 0xFF), /* ldc_w method_name */
+	    0x13,
+	    (u1)(method->descriptor_index >> 8),
+	    (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0xB8,
+	    (u1)(exit_method_ref >> 8),
+	    (u1)(exit_method_ref & 0xFF) /* invokestatic exit_method */
+	};
+
+	/* Calculate new size - estimate */
+	u4 estimated_new_sz = code_len + sizeof(entry_injection);
+
+	/* Scan for return instructions to inject exit calls */
+	u4 return_count = 0;
+	for (u4 i = 0; i < code_len; i++)
+	{
+		u1 opcode = existing_code[i];
+		if (opcode == 0xB1 || /* return */
+		    opcode == 0xAC || /* ireturn */
+		    opcode == 0xAD || /* lreturn */
+		    opcode == 0xAE || /* freturn */
+		    opcode == 0xAF || /* dreturn */
+		    opcode == 0xB0)
+		{ /* areturn */
+			return_count++;
+		}
+	}
+
+	estimated_new_sz += return_count * sizeof(exit_injection);
+
+	/* Create new code buffer */
+	u1 *new_code = arena_alloc(arena, estimated_new_sz);
 	if (!new_code)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
-	/* Inject entry tracking at method start */
-	// TODO actually inject new code here
-	memcpy(new_code, existing_code, code_len);
+	u4 new_code_pos = 0;
 
-	/* Create a new Code attribute */
-	u4 new_attr_len   = 12 + new_code_len; /* Code attr header + code */
+	/* Inject entry tracking at method start */
+	memcpy(&new_code[new_code_pos], entry_injection, sizeof(entry_injection));
+	new_code_pos += sizeof(entry_injection);
+
+	/* Copy exiting bytecode,
+	injecting the exit calls before returns */
+	for (u4 i = 0; i < code_len; i++)
+	{
+		u1 opcode = existing_code[i];
+		/* Check if opcode is a return */
+		if (opcode == 0xB1 || /* return */
+		    opcode == 0xAC || /* ireturn */
+		    opcode == 0xAD || /* lreturn */
+		    opcode == 0xAE || /* freturn */
+		    opcode == 0xAF || /* dreturn */
+		    opcode == 0xB0)   /* areturn */
+		{
+			/* inject exit tracking */
+			memcpy(&new_code[new_code_pos],
+			       exit_injection,
+			       sizeof(exit_injection));
+			new_code_pos += sizeof(exit_injection);
+		}
+
+		/* Copy original instruction */
+		new_code[new_code_pos++] = opcode;
+
+		/* Handle instructions with operands
+		simplified for common cases
+		TODO: Complete instruction parsing for precise operand handling
+		*/
+		switch (opcode)
+		{
+			case 0x10: /* bipush */
+			case 0x12: /* ldc */
+				new_code[new_code_pos++] =
+				    existing_code[++i]; /* 1 operand byte */
+				break;
+			case 0x11: /* sipush */
+			case 0x13: /* ldc_w */
+			case 0x14: /* ldc2_w */
+				new_code[new_code_pos++] =
+				    existing_code[++i]; /*2 operand byte */
+				new_code[new_code_pos++] = existing_code[++i];
+				break;
+				/* Add more operand handling as required... */
+		}
+	}
+
+	u4 final_new_code_len = new_code_pos;
+
+	/* Create new Code attribute */
+	u4 new_attr_len = 12 + final_new_code_len;
+	/* Code attr header + new code + empty exception/attr tables */
 	u1 *new_attr_data = arena_alloc(arena, new_attr_len);
 	if (!new_attr_data)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
-	offset = 0;
-	write_u2_and_advance(new_attr_data, &offset, max_stack + 3);
-	write_u2_and_advance(new_attr_data, &offset, max_locals);
-	write_u4_and_advance(new_attr_data, &offset, new_code_len);
-	memcpy(&new_attr_data[offset], new_code, new_code_len);
-	offset += new_code_len;
+	int attr_offset = 0;
+	/* We need to increase the stack for our code */
+	write_u2_and_advance(new_attr_data, &attr_offset, max_stack + 3);
+	write_u2_and_advance(new_attr_data, &attr_offset, max_locals);
+	write_u4_and_advance(new_attr_data, &attr_offset, final_new_code_len);
+	memcpy(&new_attr_data[attr_offset], new_code, final_new_code_len);
+	attr_offset += final_new_code_len;
 
-	/* Exception table, copy as-is for now */
+	/* Empty exception table for now */
 	write_u2_and_advance(new_attr_data, &offset, 0); /* exception_table_len */
 	write_u2_and_advance(new_attr_data, &offset, 0); /* attributes_count */
 
@@ -323,6 +441,15 @@ injection_add_method_tracking(arena_t *arena,
 	assert(cf != NULL);
 	assert(config != NULL);
 
+	/* Get class name for callbacks */
+	const char *class_name = bytecode_get_class_name(cf);
+	if (!class_name)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+
+	u2 class_name_idx = injection_find_or_add_utf8_constant(arena, cf, class_name);
+	if (class_name_idx == 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
 	/* Add required constant pool entries */
 	u2 entry_methodref = injection_find_or_add_methodref_constant(
 	    arena, cf, config->callback_class, config->entry_method, config->entry_sig);
@@ -336,6 +463,7 @@ injection_add_method_tracking(arena_t *arena,
 	if (entry_methodref == 0)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
+	size_t methods_modified = 0;
 	/* Now inject the tracking into all methods */
 	for (u2 i = 0; i < cf->methods_count; i++)
 	{
@@ -343,11 +471,24 @@ injection_add_method_tracking(arena_t *arena,
 		/* Inject into every method apart from ctor */
 		if (method_name && strcmp(method_name, "<clinit>") != 0)
 		{
-			bytecode_result_e res = inject_method_bytecode(
-			    arena, cf, &cf->methods[i], entry_methodref, exit_methodref);
+			u2 method_name_idx =
+			    injection_find_or_add_utf8_constant(arena, cf, method_name);
+
+			if (method_name_idx == 0)
+				continue;
+
+			bytecode_result_e res = inject_method_bytecode(arena,
+			                                               cf,
+			                                               &cf->methods[i],
+			                                               entry_methodref,
+			                                               exit_methodref,
+			                                               class_name_idx,
+			                                               method_name_idx);
 
 			if (res != BYTECODE_SUCCESS)
 				return res;
+
+			methods_modified++;
 		}
 	}
 
