@@ -435,6 +435,7 @@ bytecode_print_class_info(const class_file_t *cf)
 	printf("  Constant Pool: %d entries\n", cf->constant_pool_count - 1);
 	printf("  Methods: %d\n", cf->methods_count);
 	printf("  Fields: %d\n", cf->fields_count);
+	printf("  Attributes: %d\n", cf->attributes_count);
 
 	printf("\nMethods:\n");
 	for (u2 i = 0; i < cf->methods_count; i++)
@@ -444,6 +445,13 @@ bytecode_print_class_info(const class_file_t *cf)
 		const char *desc =
 		    bytecode_get_utf8_constant(cf, cf->methods[i].descriptor_index);
 		printf("[%d] %s %s\n", i, name ? name : "?", desc ? desc : "?");
+	}
+	printf("\nAttributes:\n");
+	for (u2 i = 0; i < cf->attributes_count; i++)
+	{
+		const char *name = bytecode_get_utf8_constant(
+		    cf, cf->attributes[i].attribute_name_index);
+		printf("[%d] %s\n", i, name ? name : "?");
 	}
 }
 
