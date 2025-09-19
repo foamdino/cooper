@@ -200,6 +200,17 @@ parse_constant_pool_entry(arena_t *arena,
 }
 
 static bytecode_result_e
+parse_attribute(u1 *data, int *offset, attr_info_t *attr)
+{
+	attr->attribute_name_index = read_u2_and_advance(data, offset);
+	attr->attribute_length     = read_u4_and_advance(data, offset);
+	attr->info                 = &data[*offset];
+	*offset += attr->attribute_length;
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
 parse_method(arena_t *arena, u1 *data, int *offset, method_info_t *method)
 {
 	method->access_flags     = read_u2_and_advance(data, offset);
@@ -217,13 +228,10 @@ parse_method(arena_t *arena, u1 *data, int *offset, method_info_t *method)
 
 		for (u2 i = 0; i < method->attributes_count; i++)
 		{
-			method->attributes[i].attribute_name_index =
-			    read_u2_and_advance(data, offset);
-			method->attributes[i].attribute_length =
-			    read_u4_and_advance(data, offset);
-			method->attributes[i].info = &data[*offset];
-			/* advance pointer */
-			*offset += method->attributes[i].attribute_length;
+			bytecode_result_e rc =
+			    parse_attribute(data, offset, &method->attributes[i]);
+			if (rc != BYTECODE_SUCCESS)
+				return rc;
 		}
 	}
 
@@ -249,26 +257,12 @@ parse_field(arena_t *arena, u1 *data, int *offset, field_info_t *field)
 
 		for (u2 i = 0; i < field->attributes_count; i++)
 		{
-			field->attributes[i].attribute_name_index =
-			    read_u2_and_advance(data, offset);
-			field->attributes[i].attribute_length =
-			    read_u4_and_advance(data, offset);
-			field->attributes[i].info = &data[*offset];
-
-			*offset += field->attributes[i].attribute_length;
+			bytecode_result_e rc =
+			    parse_attribute(data, offset, &field->attributes[i]);
+			if (rc != BYTECODE_SUCCESS)
+				return rc;
 		}
 	}
-
-	return BYTECODE_SUCCESS;
-}
-
-static bytecode_result_e
-parse_attribute(arena_t *arena, u1 *data, int *offset, attr_info_t *attr)
-{
-	attr->attribute_name_index = read_u2_and_advance(data, offset);
-	attr->attribute_length     = read_u4_and_advance(data, offset);
-	attr->info                 = &data[*offset];
-	*offset += attr->attribute_length;
 
 	return BYTECODE_SUCCESS;
 }
@@ -415,7 +409,7 @@ bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 		for (u2 i = 0; i < cf->attributes_count; i++)
 		{
 			bytecode_result_e rc =
-			    parse_attribute(arena, data, &offset, &cf->attributes[i]);
+			    parse_attribute(data, &offset, &cf->attributes[i]);
 			if (rc != BYTECODE_SUCCESS)
 				return rc;
 		}
