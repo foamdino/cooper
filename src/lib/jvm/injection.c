@@ -294,38 +294,28 @@ inject_method_bytecode(arena_t *arena,
 	 * invokestatic #entry_methodref (3 bytes)
 	 * Total: 12 bytes
 	 */
-	u1 entry_injection[12] = {
-	    0x13,
-	    (u1)(class_name_index >> 8),
-	    (u1)(class_name_index & 0xFF), /* ldc_w class_name */
-	    0x13,
-	    (u1)(method_name_index >> 8),
-	    (u1)(method_name_index & 0xFF), /* ldc_w method_name */
-	    0x13,
-	    (u1)(method->descriptor_index >> 8),
-	    (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
-	    0xB8,
-	    (u1)(entry_method_ref >> 8),
-	    (u1)(entry_method_ref & 0xFF) /* invokestatic entry_method */
+	/* clang-format off */
+	u1 entry_injection[12] = 
+	{
+	    0x13, (u1)(class_name_index >> 8), (u1)(class_name_index & 0xFF), /* ldc_w class_name */
+	    0x13, (u1)(method_name_index >> 8), (u1)(method_name_index & 0xFF), /* ldc_w method_name */
+	    0x13, (u1)(method->descriptor_index >> 8), (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0xB8, (u1)(entry_method_ref >> 8), (u1)(entry_method_ref & 0xFF) /* invokestatic entry_method */
 	};
+	/* clang-format on */
 
 	/* Build exit injection for return instructions:
 	 * Similar to entry but for exit callback
 	 */
-	u1 exit_injection[12] = {
-	    0x13,
-	    (u1)(class_name_index >> 8),
-	    (u1)(class_name_index & 0xFF), /* ldc_w class_name */
-	    0x13,
-	    (u1)(method_name_index >> 8),
-	    (u1)(method_name_index & 0xFF), /* ldc_w method_name */
-	    0x13,
-	    (u1)(method->descriptor_index >> 8),
-	    (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
-	    0xB8,
-	    (u1)(exit_method_ref >> 8),
-	    (u1)(exit_method_ref & 0xFF) /* invokestatic exit_method */
+	/* clang-format off */
+	u1 exit_injection[12] = 
+	{
+	    0x13, (u1)(class_name_index >> 8), (u1)(class_name_index & 0xFF), /* ldc_w class_name */
+	    0x13, (u1)(method_name_index >> 8), (u1)(method_name_index & 0xFF), /* ldc_w method_name */
+	    0x13, (u1)(method->descriptor_index >> 8), (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0xB8, (u1)(exit_method_ref >> 8), (u1)(exit_method_ref & 0xFF) /* invokestatic exit_method */
 	};
+	/* clang-format on */
 
 	/* Calculate new size - estimate */
 	u4 estimated_new_sz = code_len + sizeof(entry_injection);
@@ -382,26 +372,26 @@ inject_method_bytecode(arena_t *arena,
 		/* Copy original instruction */
 		new_code[new_code_pos++] = opcode;
 
-		/* Handle instructions with operands
-		simplified for common cases
-		TODO: Complete instruction parsing for precise operand handling
-		*/
-		switch (opcode)
-		{
-			case 0x10: /* bipush */
-			case 0x12: /* ldc */
-				new_code[new_code_pos++] =
-				    existing_code[++i]; /* 1 operand byte */
-				break;
-			case 0x11: /* sipush */
-			case 0x13: /* ldc_w */
-			case 0x14: /* ldc2_w */
-				new_code[new_code_pos++] =
-				    existing_code[++i]; /*2 operand byte */
-				new_code[new_code_pos++] = existing_code[++i];
-				break;
-				/* Add more operand handling as required... */
-		}
+		// /* Handle instructions with operands
+		// simplified for common cases
+		// TODO: Complete instruction parsing for precise operand handling
+		// */
+		// switch (opcode)
+		// {
+		// 	case 0x10: /* bipush */
+		// 	case 0x12: /* ldc */
+		// 		new_code[new_code_pos++] =
+		// 		    existing_code[++i]; /* 1 operand byte */
+		// 		break;
+		// 	case 0x11: /* sipush */
+		// 	case 0x13: /* ldc_w */
+		// 	case 0x14: /* ldc2_w */
+		// 		new_code[new_code_pos++] =
+		// 		    existing_code[++i]; /*2 operand byte */
+		// 		new_code[new_code_pos++] = existing_code[++i];
+		// 		break;
+		// 		/* Add more operand handling as required... */
+		// }
 	}
 
 	u4 final_new_code_len = new_code_pos;
@@ -422,8 +412,8 @@ inject_method_bytecode(arena_t *arena,
 	attr_offset += final_new_code_len;
 
 	/* Empty exception table for now */
-	write_u2_and_advance(new_attr_data, &offset, 0); /* exception_table_len */
-	write_u2_and_advance(new_attr_data, &offset, 0); /* attributes_count */
+	write_u2_and_advance(new_attr_data, &attr_offset, 0); /* exception_table_len */
+	write_u2_and_advance(new_attr_data, &attr_offset, 0); /* attributes_count */
 
 	/* Update the method's Code attribute */
 	code_attr->info             = new_attr_data;
@@ -460,7 +450,7 @@ injection_add_method_tracking(arena_t *arena,
 	u2 exit_methodref = injection_find_or_add_methodref_constant(
 	    arena, cf, config->callback_class, config->exit_method, config->exit_sig);
 
-	if (entry_methodref == 0)
+	if (exit_methodref == 0)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	size_t methods_modified = 0;
