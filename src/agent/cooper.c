@@ -66,6 +66,8 @@ static const unsigned char TRACKER_CLASS_BYTECODE[] =
 };
 /* clang-format on */
 
+static const char *TRACKER_CLASS = "com/github/foamdino/cooper/agent/NativeTracker";
+
 /* Get current time in nanoseconds */
 uint64_t
 get_current_time_ns()
@@ -1246,6 +1248,10 @@ should_process_class(const pattern_filter_t *filter, const char *class_sig)
 	if (filter->num_entries == 0)
 		return 0;
 
+	/* Never process our tracking class */
+	if (strcmp(TRACKER_CLASS, class_sig))
+		return 0;
+
 	/* Check if any filter pattern could match this class */
 	for (size_t i = 0; i < filter->num_entries; i++)
 	{
@@ -1347,7 +1353,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 
 	/* Injection config for native callbacks */
 	injection_config_t cfg = {
-	    .callback_class = "com/github/foamdino/cooper/agent/NativeTracker",
+	    .callback_class = TRACKER_CLASS,
 	    .entry_method   = "onMethodEntry",
 	    .exit_method    = "onMethodExit",
 	    .entry_sig      = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
@@ -1529,9 +1535,8 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 jclass
 create_tracker_class(JNIEnv *jni_env)
 {
-	const char *class_name = "com/github/foamdino/cooper/agent/NativeTracker";
 
-	jclass tracker = (*jni_env)->FindClass(jni_env, class_name);
+	jclass tracker = (*jni_env)->FindClass(jni_env, TRACKER_CLASS);
 	if (tracker != NULL)
 	{
 		LOG_DEBUG("Found existing tracking class");
@@ -1541,7 +1546,7 @@ create_tracker_class(JNIEnv *jni_env)
 	(*jni_env)->ExceptionClear(jni_env);
 
 	tracker = (*jni_env)->DefineClass(jni_env,
-	                                  class_name,
+	                                  TRACKER_CLASS,
 	                                  NULL,
 	                                  TRACKER_CLASS_BYTECODE,
 	                                  sizeof(TRACKER_CLASS_BYTECODE));
