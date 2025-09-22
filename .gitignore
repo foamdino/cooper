@@ -3,6 +3,7 @@ nob.old
 build/
 target/
 java-src/com/github/foamdino/*.class
+java-src/com/github/foamdino/cooper/agent/*.class
 .vscode/launch.json
 *.log
 java-src/.idea
