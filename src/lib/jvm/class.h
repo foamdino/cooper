@@ -133,7 +133,7 @@ struct attr_info
 {
 	u2 attribute_name_index;
 	u4 attribute_length;
-	u1 *info;
+	const u1 *info;
 };
 struct method_info
 {

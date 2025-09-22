@@ -32,7 +32,7 @@ static const arena_config_t arena_configs[] =
 };
 
 /* Output from xxd -i */
-static const unsigned char TRACKER_CLASS_BYTECODE[] =
+static const signed char TRACKER_CLASS_BYTECODE[] =
 {
   0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x44, 0x00, 0x10, 0x0a, 0x00,
   0x02, 0x00, 0x03, 0x07, 0x00, 0x04, 0x0c, 0x00, 0x05, 0x00, 0x06, 0x01,
@@ -1332,6 +1332,11 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
                          unsigned char **new_class_data)
 {
 
+	UNUSED(jni_env);
+	UNUSED(class_being_redefined);
+	UNUSED(loader);
+	UNUSED(protection_domain);
+
 	/* Fast filter check */
 	if (!should_process_class(&global_ctx->unified_filter, name))
 		return; /* No modification - use original class */
@@ -1395,10 +1400,10 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	*new_class_data     = jvmti_buf;
 	*new_class_data_len = mod_sz;
 
-	LOG_DEBUG("Successfully injected tracking into class %s (%d -> %d bytes)",
-	          name,
-	          class_data_len,
-	          mod_sz);
+	LOG_INFO("Successfully injected tracking into class %s (%d -> %d bytes)",
+	         name,
+	         class_data_len,
+	         mod_sz);
 
 	// /* Class passed filter, enqueue for background processing */
 	// arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
@@ -1500,6 +1505,8 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
                                                                   jstring methodName,
                                                                   jstring methodSignature)
 {
+	UNUSED(clazz);
+
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
@@ -1521,6 +1528,8 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
                                                                  jstring methodName,
                                                                  jstring methodSignature)
 {
+	UNUSED(clazz);
+
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
 	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
@@ -2041,8 +2050,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	/* Set event callbacks */
 	memset(
 	    &ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
-	ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
-	ctx->callbacks.event_callbacks.MethodExit  = &method_exit_callback;
+	// ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
+	ctx->callbacks.event_callbacks.MethodExit = &method_exit_callback;
 
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 
@@ -2050,8 +2059,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
 	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
-	// ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
+	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
+	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
