@@ -34,6 +34,8 @@
 #include "../lib/ht.h"
 #include "../lib/q.h"
 #include "../lib/ring/ring_channel.h"
+#include "../lib/jvm/class.h"
+#include "../lib/jvm/injection.h"
 
 /* agent includes */
 #include "cooper_types.h"
@@ -64,6 +66,7 @@
 #define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
 #define FLAMEGRAPH_ARENA_SZ   1024 * 1024
 #define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
+#define BYTECODE_ARENA_SZ     8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define EXCEPTION_ARENA_BLOCKS    1024
@@ -78,6 +81,7 @@
 #define CALL_STACK_ARENA_BLOCKS   1024
 #define FLAMEGRAPH_ARENA_BLOCKS   1024
 #define METHOD_CACHE_ARENA_BLOCKS 1024
+#define BYTECODE_ARENA_BLOCKS     1024
 
 /* Arena Names */
 #define EXCEPTION_ARENA_NAME    "exception_arena"
@@ -91,19 +95,16 @@
 #define CALL_STACK_ARENA_NAME   "call_stack_arena"
 #define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
 #define METHOD_CACHE_ARENA_NAME "method_cache_arena"
+#define BYTECODE_ARENA_NAME     "bytecode_arena"
 
 /* Ok/Err */
-#define COOPER_OK  0
-#define COOPER_ERR 1
+#define COOPER_OK        0
+#define COOPER_ERR       1
 
-/* Method cache */
-#define METHOD_CACHE_NAME        "method_cache"
-#define METHOD_CACHE_MAX_ENTRIES 16
+#define MIN_HASH_SIZE    1000
+#define MAX_HASH_SIZE    20000
 
-#define MIN_HASH_SIZE            1000
-#define MAX_HASH_SIZE            20000
-
-#define MAX_STACK_FRAMES         64
+#define MAX_STACK_FRAMES 64
 
 typedef struct package_filter package_filter_t;
 typedef struct config config_t;
@@ -123,8 +124,8 @@ typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
 typedef struct callbacks callbacks_t;
 
-typedef struct method_info method_info_t;
-typedef struct class_info class_info_t;
+typedef struct cooper_method_info cooper_method_info_t;
+typedef struct cooper_class_info cooper_class_info_t;
 
 enum arenas
 {
@@ -139,6 +140,7 @@ enum arenas
 	CALL_STACK_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
 	METHOD_CACHE_ARENA_ID,
+	BYTECODE_ARENA_ID,
 	ARENA_ID__LAST
 };
 
@@ -150,7 +152,8 @@ enum thread_workers_status
 	HEAP_STATS_RUNNING        = (1 << 3),
 	CLASS_CACHE_RUNNING       = (1 << 4),
 	CALL_STACK_RUNNNG         = (1 << 5),
-	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6)
+	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6),
+	METHOD_EVENTS_RUNNING     = (1 << 7)
 };
 
 struct call_stack_sample
@@ -313,7 +316,7 @@ struct thread_context
 	    *sample; /**< Current top of method sample stack - most recent call */
 };
 
-struct method_info
+struct cooper_method_info
 {
 	jmethodID method_id;
 	char *method_name;
@@ -322,12 +325,12 @@ struct method_info
 	char *full_name;
 };
 
-struct class_info
+struct cooper_class_info
 {
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
 	uint32_t method_count;
-	method_info_t *methods; /**< Array of methods for this class */
+	cooper_method_info_t *methods; /**< Array of methods for this class */
 };
 
 struct thread_alloc
@@ -385,6 +388,7 @@ struct agent_context
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */
 	q_t *class_queue;                  /**< q for class caching background thread */
+	q_t *method_queue;                 /**< q for method events background thread */
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
 	hashtable_t
 	    *interesting_classes; /**< Hashtable of scanned classes we care about */

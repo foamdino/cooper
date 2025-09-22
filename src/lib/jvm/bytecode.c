@@ -200,7 +200,7 @@ parse_constant_pool_entry(arena_t *arena,
 }
 
 static bytecode_result_e
-parse_attribute(u1 *data, int *offset, attr_info_t *attr)
+parse_attribute(const u1 *data, int *offset, attr_info_t *attr)
 {
 	attr->attribute_name_index = read_u2_and_advance(data, offset);
 	attr->attribute_length     = read_u4_and_advance(data, offset);
@@ -211,7 +211,7 @@ parse_attribute(u1 *data, int *offset, attr_info_t *attr)
 }
 
 static bytecode_result_e
-parse_method(arena_t *arena, u1 *data, int *offset, method_info_t *method)
+parse_method(arena_t *arena, const u1 *data, int *offset, method_info_t *method)
 {
 	method->access_flags     = read_u2_and_advance(data, offset);
 	method->name_index       = read_u2_and_advance(data, offset);
@@ -239,7 +239,7 @@ parse_method(arena_t *arena, u1 *data, int *offset, method_info_t *method)
 }
 
 static bytecode_result_e
-parse_field(arena_t *arena, u1 *data, int *offset, field_info_t *field)
+parse_field(arena_t *arena, const u1 *data, int *offset, field_info_t *field)
 {
 	field->access_flags     = read_u2_and_advance(data, offset);
 	field->name_index       = read_u2_and_advance(data, offset);
@@ -288,7 +288,7 @@ ClassFile {
     attribute_info attributes[attributes_count];
 } */
 bytecode_result_e
-bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
+bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **result)
 {
 	if (!arena || !data || !result)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
@@ -416,6 +416,14 @@ bytecode_parse_class(arena_t *arena, u1 *data, u4 len, class_file_t **result)
 	}
 
 	*result = cf;
+	return BYTECODE_SUCCESS;
+}
+
+bytecode_result_e
+bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *length)
+{
+	// TODO finish this
+
 	return BYTECODE_SUCCESS;
 }
 

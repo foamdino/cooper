@@ -20,6 +20,7 @@ enum q_entry_type
 {
 	Q_ENTRY_CLASS = 1,
 	Q_ENTRY_LOG,
+	Q_ENTRY_METHOD,
 	Q_ENTRY__LAST
 };
 

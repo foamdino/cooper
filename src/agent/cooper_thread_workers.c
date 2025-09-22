@@ -625,11 +625,11 @@ flamegraph_export_thread(void *arg)
 			if (tag == 0)
 				continue;
 
-			class_info_t *info = (class_info_t *)(intptr_t)tag;
+			cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
 
 			/* Linear search for matching method_id (could later be a hash
 			 * map) */
-			method_info_t *mi = NULL;
+			cooper_method_info_t *mi = NULL;
 			for (uint32_t m = 0; m < info->method_count; m++)
 			{
 				if (info->methods[m].method_id == mid)
@@ -1096,7 +1096,7 @@ heap_object_callback(
 	}
 
 	/* class_tag should be a pointer to class_info_t struct */
-	class_info_t *info = (class_info_t *)(intptr_t)class_tag;
+	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)class_tag;
 	if (!info->in_heap_iteration)
 	{
 		LOG_DEBUG("Class %s not in iteration", info->class_sig);
@@ -1281,8 +1281,8 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 		if (tag != 0)
 		{
-			class_info_t *info      = (class_info_t *)(intptr_t)tag;
-			info->in_heap_iteration = 1;
+			cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
+			info->in_heap_iteration   = 1;
 		}
 	}
 	LOG_INFO("Starting heap analysis");
@@ -1387,8 +1387,8 @@ cleanup_tags:
 
 		if (tag != 0)
 		{
-			class_info_t *info      = (class_info_t *)(intptr_t)tag;
-			info->in_heap_iteration = 0;
+			cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
+			info->in_heap_iteration   = 0;
 		}
 	}
 
@@ -1425,7 +1425,7 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 		goto deallocate;
 
 	/* Allocate the main class_info struct from the class cache arena */
-	class_info_t *info = arena_alloc(arena, sizeof(class_info_t));
+	cooper_class_info_t *info = arena_alloc(arena, sizeof(cooper_class_info_t));
 	if (info == NULL)
 		goto deallocate;
 
@@ -1433,7 +1433,7 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	info->in_heap_iteration = 0;
 
 	/* Allocate space for the method info array in the same arena */
-	info->methods      = arena_alloc(arena, sizeof(method_info_t) * method_count);
+	info->methods = arena_alloc(arena, sizeof(cooper_method_info_t) * method_count);
 	info->method_count = method_count;
 
 	/* If we are unable to allocate mem for methods,
@@ -1959,7 +1959,8 @@ call_stack_sampling_thread_func(void *arg)
 				if (tag == 0)
 					continue;
 
-				class_info_t *info = (class_info_t *)(intptr_t)tag;
+				cooper_class_info_t *info =
+				    (cooper_class_info_t *)(intptr_t)tag;
 
 				/* linear search - replace at some point */
 				for (uint32_t m = 0; m < info->method_count; m++)
@@ -1990,5 +1991,67 @@ call_stack_sampling_thread_func(void *arg)
 
 	LOG_INFO("Call stack sampling thread exiting");
 
+	return NULL;
+}
+
+/**
+ *
+ */
+void *
+method_event_thread_func(void *arg)
+{
+	agent_context_t *ctx = (agent_context_t *)arg;
+	q_t *queue           = ctx->method_queue;
+
+	/* Get JNI environment for this thread */
+	JNIEnv *jni = NULL;
+	jvmtiError err;
+	jvmtiPhase jvm_phase;
+
+	jint res =
+	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
+	if (res != JNI_OK || jni == NULL)
+	{
+		LOG_ERROR("Failed to attach method event thread to JVM");
+		return NULL;
+	}
+
+	LOG_INFO("Method event thread started, queue has %d entries", queue->count);
+
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING))
+	{
+		q_entry_t *entry = q_deq(queue);
+
+		/* Q shutdown or error */
+		if (entry == NULL)
+			break;
+
+		if (entry->type != Q_ENTRY_METHOD)
+		{
+			LOG_ERROR(
+			    "Queue entry type: %d, not a method entry type in method "
+			    "queue!!",
+			    entry->type);
+			break;
+		}
+
+		method_q_entry_t *me = (method_q_entry_t *)entry->data;
+
+		if (me->event_type == METHOD_ENTRY)
+		{
+			// create the sample
+		}
+		else // METHOD_EXIT
+		{
+			// calculate total time etc...
+		}
+	}
+
+	/* Detach from JVM */
+	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
+	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
+		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+
+	LOG_INFO("Method events thread exiting");
 	return NULL;
 }

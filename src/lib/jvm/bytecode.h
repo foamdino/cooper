@@ -24,9 +24,14 @@ enum bytecode_result
 };
 
 bytecode_result_e bytecode_parse_class(arena_t *arena,
-                                       u1 *data,
+                                       const u1 *data,
                                        u4 len,
                                        class_file_t **result);
+
+bytecode_result_e bytecode_write_class(arena_t *arena,
+                                       class_file_t *cf,
+                                       u1 **data,
+                                       u4 *len);
 
 /* Utility functions */
 const char *bytecode_get_class_name(const class_file_t *cf);

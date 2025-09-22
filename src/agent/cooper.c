@@ -27,7 +27,42 @@ static const arena_config_t arena_configs[] =
     {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS},
 	{CALL_STACK_ARENA_ID, CALL_STACK_ARENA_NAME, CALL_STACK_ARENA_SZ, CALL_STACK_ARENA_BLOCKS},
 	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
-	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS}
+	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS},
+	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ, BYTECODE_ARENA_BLOCKS}
+};
+
+/* Output from xxd -i */
+static const unsigned char TRACKER_CLASS_BYTECODE[] =
+{
+  0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x44, 0x00, 0x10, 0x0a, 0x00,
+  0x02, 0x00, 0x03, 0x07, 0x00, 0x04, 0x0c, 0x00, 0x05, 0x00, 0x06, 0x01,
+  0x00, 0x10, 0x6a, 0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f,
+  0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x01, 0x00, 0x06, 0x3c, 0x69, 0x6e,
+  0x69, 0x74, 0x3e, 0x01, 0x00, 0x03, 0x28, 0x29, 0x56, 0x07, 0x00, 0x08,
+  0x01, 0x00, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x67, 0x69, 0x74, 0x68, 0x75,
+  0x62, 0x2f, 0x66, 0x6f, 0x61, 0x6d, 0x64, 0x69, 0x6e, 0x6f, 0x2f, 0x63,
+  0x6f, 0x6f, 0x70, 0x65, 0x72, 0x2f, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x2f,
+  0x4e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x54, 0x72, 0x61, 0x63, 0x6b, 0x65,
+  0x72, 0x01, 0x00, 0x04, 0x43, 0x6f, 0x64, 0x65, 0x01, 0x00, 0x0f, 0x4c,
+  0x69, 0x6e, 0x65, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x54, 0x61, 0x62,
+  0x6c, 0x65, 0x01, 0x00, 0x0d, 0x6f, 0x6e, 0x4d, 0x65, 0x74, 0x68, 0x6f,
+  0x64, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x01, 0x00, 0x39, 0x28, 0x4c, 0x6a,
+  0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72,
+  0x69, 0x6e, 0x67, 0x3b, 0x4c, 0x6a, 0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61,
+  0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x3b, 0x4c, 0x6a,
+  0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72,
+  0x69, 0x6e, 0x67, 0x3b, 0x29, 0x56, 0x01, 0x00, 0x0c, 0x6f, 0x6e, 0x4d,
+  0x65, 0x74, 0x68, 0x6f, 0x64, 0x45, 0x78, 0x69, 0x74, 0x01, 0x00, 0x0a,
+  0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x46, 0x69, 0x6c, 0x65, 0x01, 0x00,
+  0x12, 0x4e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x54, 0x72, 0x61, 0x63, 0x6b,
+  0x65, 0x72, 0x2e, 0x6a, 0x61, 0x76, 0x61, 0x00, 0x21, 0x00, 0x07, 0x00,
+  0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0x00,
+  0x06, 0x00, 0x01, 0x00, 0x09, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x01, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x05, 0x2a, 0xb7, 0x00, 0x01, 0xb1, 0x00, 0x00,
+  0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00,
+  0x00, 0x03, 0x01, 0x09, 0x00, 0x0b, 0x00, 0x0c, 0x00, 0x00, 0x01, 0x09,
+  0x00, 0x0d, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0e, 0x00, 0x00,
+  0x00, 0x02, 0x00, 0x0f
 };
 /* clang-format on */
 
@@ -161,8 +196,8 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
 	if (tag == 0)
 		return COOPER_ERR;
 
-	class_info_t *info = (class_info_t *)(intptr_t)tag;
-	*output_buffer     = info->class_sig;
+	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
+	*output_buffer            = info->class_sig;
 	return COOPER_OK;
 }
 
@@ -657,7 +692,8 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 	UNUSED(jni);
 	UNUSED(thread);
 
-	method_info_t *method_info = ht_get(global_ctx->interesting_methods, method);
+	cooper_method_info_t *method_info =
+	    ht_get(global_ctx->interesting_methods, method);
 
 	/* We either didn't find the method (should be rare) or it's not one we're
 	 * configured to sample. */
@@ -1277,7 +1313,6 @@ cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
-// TODO this is unfinished
 static void JNICALL
 class_file_load_callback(jvmtiEnv *jvmti_env,
                          JNIEnv *jni_env,
@@ -1290,54 +1325,264 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
                          jint *new_class_data_len,
                          unsigned char **new_class_data)
 {
-	// TODO finish this - we need to adjust the class_load_callback
-	// we also need to work on th jvm/class.c etc to pull out the
-	// annotations for the class so we can add them here and process
-	// in class_load_callback - this is unfinished
-	return;
 
-	UNUSED(jvmti_env);
-	UNUSED(jni_env);
-	UNUSED(class_being_redefined);
-	UNUSED(loader);
-	UNUSED(protection_domain);
-	UNUSED(new_class_data_len);
-	UNUSED(new_class_data);
-
-	// TODO we will use these when we actually parse the class data
-	UNUSED(class_data_len);
-	UNUSED(class_data);
-
-	/* Fast filter check - no allocations */
+	/* Fast filter check */
 	if (!should_process_class(&global_ctx->unified_filter, name))
-		return;
+		return; /* No modification - use original class */
 
-	/* Class passed filter, enqueue for background processing */
-	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	class_q_entry_t *class_entry =
-	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+	/* Get the temp bytecode arena and rest */
+	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
+	arena_reset(bc_arena);
 
-	if (!entry || !class_entry)
+	/* Parse the class file */
+	class_file_t *cf = NULL;
+	bytecode_result_e bc_res =
+	    bytecode_parse_class(bc_arena, class_data, class_data_len, &cf);
+
+	if (bc_res != BYTECODE_SUCCESS)
 	{
-		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		LOG_WARN("Failed to parse class %s, using original", name);
 		return;
 	}
 
-	/* Create our q entry */
-	class_entry->class_sig = arena_strdup(q_entry_arena, name);
-	entry->type            = Q_ENTRY_CLASS;
+	/* Injection config for native callbacks */
+	injection_config_t cfg = {
+	    .callback_class = "com/github/foamdino/cooper/agent/NativeTracker",
+	    .entry_method   = "onMethodEntry",
+	    .exit_method    = "onMethodExit",
+	    .entry_sig      = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	    .exit_sig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"};
 
-	/* Scan class_data for annotations */
-	// TODO build out class file parsing in lib/jvm to deal with class_data
-	//... use class_data_len and class_data, add result to class_entry->annotations
-	// array
-	entry->data = class_entry;
-	/* Store the q entry in a hashtable
-	we look up the q entry in the class_load_callback and add it to the q for
-	background processing
-	*/
-	ht_put(global_ctx->interesting_classes, name, class_entry);
+	/* Inject */
+	bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
+
+	if (bc_res != BYTECODE_SUCCESS)
+	{
+		LOG_WARN("Failed to inject tracking into class %s, using original", name);
+		return;
+	}
+
+	/* Serialize modified class to bytecode */
+	u1 *mod_bytecode;
+	u4 mod_sz;
+	bc_res = bytecode_write_class(bc_arena, cf, &mod_bytecode, &mod_sz);
+
+	if (bc_res != BYTECODE_SUCCESS)
+	{
+		LOG_WARN("Failed to serialize modified class %s, using original", name);
+		return;
+	}
+
+	unsigned char *jvmti_buf;
+	jvmtiError err = (*jvmti_env)->Allocate(jvmti_env, mod_sz, &jvmti_buf);
+
+	if (err != JVMTI_ERROR_NONE)
+	{
+		LOG_WARN("JVMTI allocation failed for class %s, using original", name);
+		return;
+	}
+
+	/* Copy modified bytecode */
+	memcpy(jvmti_buf, mod_bytecode, mod_sz);
+
+	/* Return modified class to JVM */
+	*new_class_data     = jvmti_buf;
+	*new_class_data_len = mod_sz;
+
+	LOG_DEBUG("Successfully injected tracking into class %s (%d -> %d bytes)",
+	          name,
+	          class_data_len,
+	          mod_sz);
+
+	// /* Class passed filter, enqueue for background processing */
+	// arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	// q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	// class_q_entry_t *class_entry =
+	//     arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+	// if (!entry || !class_entry)
+	// {
+	// 	LOG_ERROR("Unable to allocate room from arena for q entries!");
+	// 	return;
+	// }
+
+	// /* Create our q entry */
+	// class_entry->class_sig = arena_strdup(q_entry_arena, name);
+	// entry->type            = Q_ENTRY_CLASS;
+
+	// /* Scan class_data for annotations */
+	// // TODO build out class file parsing in lib/jvm to deal with class_data
+	// //... use class_data_len and class_data, add result to class_entry->annotations
+	// // array
+	// entry->data = class_entry;
+	// /* Store the q entry in a hashtable
+	// we look up the q entry in the class_load_callback and add it to the q for
+	// background processing
+	// */
+	// ht_put(global_ctx->interesting_classes, name, class_entry);
+}
+
+static uint64_t
+get_current_thread_id()
+{
+	jvmtiEnv *jvmti_env = global_ctx->jvmti_env;
+	jvmtiPhase jvm_phase;
+	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
+	    || jvm_phase != JVMTI_PHASE_LIVE)
+	{
+		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
+		          jvm_phase);
+		return 0;
+	}
+
+	jthread current_thread;
+	jvmtiError err = (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
+	if (err != JVMTI_ERROR_NONE)
+	{
+		LOG_ERROR("GetCurrentThread failed with error %d", err);
+		return 0;
+	}
+
+	// TODO finish me
+
+	return 0;
+}
+
+/* Record method events via queue system */
+void
+record_method_event(method_event_type_e event_type,
+                    const char *class_name,
+                    const char *method_name,
+                    const char *method_sig)
+{
+	/* Reuse your existing queue infrastructure */
+	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+	method_q_entry_t *method_entry =
+	    arena_alloc(q_entry_arena, sizeof(method_q_entry_t));
+
+	if (!entry || !method_entry)
+	{
+		LOG_ERROR("Failed to allocate queue entry for method event");
+		return;
+	}
+
+	/* Populate method event */
+	method_entry->event_type  = event_type;
+	method_entry->class_name  = arena_strdup(q_entry_arena, class_name);
+	method_entry->method_name = arena_strdup(q_entry_arena, method_name);
+	method_entry->method_sig  = arena_strdup(q_entry_arena, method_sig);
+	method_entry->timestamp   = get_current_time_ns();
+	method_entry->thread_id   = get_current_thread_id();
+
+	entry->type = Q_ENTRY_METHOD;
+	entry->data = method_entry;
+
+	/* Enqueue for background processing */
+	if (q_enq(global_ctx->method_queue, entry) != 0)
+	{
+		LOG_ERROR("Failed to enqueue method event");
+		arena_free(q_entry_arena, entry);
+		arena_free(q_entry_arena, method_entry);
+	}
+}
+
+JNIEXPORT void JNICALL
+Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
+                                                                  jclass clazz,
+                                                                  jstring className,
+                                                                  jstring methodName,
+                                                                  jstring methodSignature)
+{
+	/* Convert Java strings to C strings */
+	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
+	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
+	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
+
+	/* Record entry event using your existing infrastructure */
+	record_method_event(METHOD_ENTRY, class_cstr, method_cstr, sig_cstr);
+
+	/* Release strings */
+	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+}
+
+JNIEXPORT void JNICALL
+Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jstring className,
+                                                                 jstring methodName,
+                                                                 jstring methodSignature)
+{
+	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
+	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
+	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
+
+	record_method_event(METHOD_EXIT, class_cstr, method_cstr, sig_cstr);
+
+	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+}
+
+jclass
+create_tracker_class(JNIEnv *jni_env)
+{
+	const char *class_name = "com/github/foamdino/cooper/agent/NativeTracker";
+
+	jclass tracker = (*jni_env)->FindClass(jni_env, class_name);
+	if (tracker != NULL)
+	{
+		LOG_DEBUG("Found existing tracking class");
+		return tracker;
+	}
+
+	(*jni_env)->ExceptionClear(jni_env);
+
+	tracker = (*jni_env)->DefineClass(jni_env,
+	                                  class_name,
+	                                  NULL,
+	                                  TRACKER_CLASS_BYTECODE,
+	                                  sizeof(TRACKER_CLASS_BYTECODE));
+
+	if (!tracker)
+	{
+		LOG_ERROR("Failed to create tracking class from bytecode");
+		return NULL;
+	}
+
+	return tracker;
+}
+
+int
+register_native_callbacks(JNIEnv *jni_env)
+{
+	jclass tracker = create_tracker_class(jni_env);
+	if (!tracker)
+	{
+		LOG_ERROR("Failed to create/find tracker class");
+		return COOPER_ERR;
+	}
+
+	/* Define native method sigs */
+	JNINativeMethod methods[] = {
+	    {"onMethodEntry",
+	     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	     (void *)Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry},
+	    {"onMethodExit",
+	     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	     (void *)Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit}};
+
+	jint res = (*jni_env)->RegisterNatives(jni_env, tracker, methods, 2);
+	if (res != JNI_OK)
+	{
+		LOG_ERROR("Failed to register native methods: %d", res);
+		return COOPER_ERR;
+	}
+
+	LOG_INFO("Successfully registered native tracking methods");
+	return COOPER_OK;
 }
 
 static void JNICALL
