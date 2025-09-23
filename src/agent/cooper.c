@@ -1276,11 +1276,9 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		return;
 
 	/* Class filtered out, skip processing */
+	// Lorg/springframework/web/servlet/config/annotation/AsyncSupportConfigurer;
 	if (!should_process_class(&global_ctx->unified_filter, class_sig))
-	{
-		// LOG_INFO("Class load callback, skipping %s", class_sig);
 		goto cleanup;
-	}
 
 	LOG_INFO("Class load callback, processing %s", class_sig);
 
@@ -1324,6 +1322,21 @@ cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
+static char *
+class_name_to_sig(const char *name)
+{
+	/* Nothing to do if name is NULL*/
+	if (!name)
+		return NULL;
+
+	/* Use scratch arena */
+	arena_t *arena = global_ctx->arenas[SCRATCH_ARENA_ID];
+	/* We need "L" + name + ";" + '\0' */
+	char *sig = arena_alloc(arena, strlen(name) + 3);
+	sprintf(sig, "L%s;", name);
+	return sig;
+}
+
 static void JNICALL
 class_file_load_callback(jvmtiEnv *jvmti_env,
                          JNIEnv *jni_env,
@@ -1342,10 +1355,15 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(loader);
 	UNUSED(protection_domain);
 
+	// LOG_INFO("class_file_load_callback called for %s", name);
+
+	// org/springdoc/core/customizers/RouterOperationCustomizer
 	/* Fast filter check */
-	if (!should_process_class(&global_ctx->unified_filter, name))
+	char *sig = class_name_to_sig(name);
+	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
 
+	LOG_INFO("injecting bytecode for %s", name);
 	/* Get the temp bytecode arena and rest */
 	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
 	arena_reset(bc_arena);
@@ -1512,6 +1530,8 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 {
 	UNUSED(clazz);
 
+	LOG_INFO("JNICALL onMethodEntry");
+
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
@@ -1534,6 +1554,8 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
                                                                  jstring methodSignature)
 {
 	UNUSED(clazz);
+
+	LOG_INFO("JNICALL onMethodEntry");
 
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
@@ -1995,6 +2017,7 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 		LOG_ERROR("Failed to register native class");
 		goto error;
 	}
+	LOG_INFO("Native callbacks registered.");
 
 	/* Release local reference */
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
