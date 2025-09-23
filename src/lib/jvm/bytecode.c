@@ -123,7 +123,7 @@ parse_constant_pool_entry(arena_t *arena,
 			break;
 
 		case CONSTANT_Float:
-			entry->info.flowt = read_u4_and_advance(data, offset);
+			entry->info.float_info = read_u4_and_advance(data, offset);
 			break;
 
 		case CONSTANT_Fieldref:
@@ -187,7 +187,7 @@ parse_constant_pool_entry(arena_t *arena,
 			break;
 
 		case CONSTANT_Package:
-			entry->info.module_info.name_index =
+			entry->info.package_info.name_index =
 			    read_u2_and_advance(data, offset);
 			break;
 
@@ -422,10 +422,253 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 	return BYTECODE_SUCCESS;
 }
 
-bytecode_result_e
-bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *length)
+static bytecode_result_e
+write_constant_pool_entry(u1 *buf, int *offset, const constant_pool_info_t *entry)
+
 {
-	// TODO finish this
+	/* Write the tag */
+	buf[(*offset)++] = entry->tag;
+
+	/* What do we have to write ...*/
+	switch (entry->tag)
+	{
+		case CONSTANT_Utf8:
+			write_u2_and_advance(buf, offset, entry->info.utf8.length);
+			memcpy(&buf[*offset],
+			       entry->info.utf8.bytes,
+			       entry->info.utf8.length);
+			*offset += entry->info.utf8.length;
+			break;
+
+		/* Entry pointing to an instance of CONSTANT_Utf8 */
+		case CONSTANT_String:
+			write_u2_and_advance(buf, offset, entry->info.string);
+			break;
+
+		case CONSTANT_Class:
+			write_u2_and_advance(
+			    buf, offset, entry->info.class_info.name_index);
+			break;
+
+		case CONSTANT_Methodref:
+			write_u2_and_advance(
+			    buf, offset, entry->info.methodref.class_index);
+			write_u2_and_advance(
+			    buf, offset, entry->info.methodref.name_and_type_index);
+			break;
+
+		case CONSTANT_NameAndType:
+			write_u2_and_advance(
+			    buf, offset, entry->info.name_and_type.name_index);
+			write_u2_and_advance(
+			    buf, offset, entry->info.name_and_type.descriptor_index);
+			break;
+
+		case CONSTANT_Integer:
+			write_u4_and_advance(buf, offset, entry->info.integer);
+			break;
+
+		case CONSTANT_Float:
+			write_u4_and_advance(buf, offset, entry->info.float_info);
+			break;
+
+		case CONSTANT_Fieldref:
+			write_u2_and_advance(
+			    buf, offset, entry->info.fieldref.class_index);
+			write_u2_and_advance(
+			    buf, offset, entry->info.fieldref.name_and_type_index);
+			break;
+
+		case CONSTANT_InterfaceMethodref:
+			write_u2_and_advance(
+			    buf, offset, entry->info.interfaceref.class_index);
+			write_u2_and_advance(
+			    buf, offset, entry->info.interfaceref.name_and_type_index);
+			break;
+
+		/* These take 2 constant pool slots */
+		case CONSTANT_Long:
+			write_u4_and_advance(
+			    buf, offset, entry->info.long_info.high_bytes);
+			write_u4_and_advance(
+			    buf, offset, entry->info.long_info.low_bytes);
+			break;
+
+		case CONSTANT_Double:
+			write_u4_and_advance(
+			    buf, offset, entry->info.double_info.high_bytes);
+			write_u4_and_advance(
+			    buf, offset, entry->info.double_info.low_bytes);
+			break;
+
+		case CONSTANT_MethodHandle:
+			write_u1_and_advance(
+			    buf, offset, entry->info.methodhandle_info.reference_kind);
+			write_u2_and_advance(
+			    buf, offset, entry->info.methodhandle_info.reference_index);
+			break;
+
+		case CONSTANT_MethodType:
+			write_u2_and_advance(
+			    buf, offset, entry->info.methodtype_info.descriptor_index);
+			break;
+
+		case CONSTANT_Dynamic:
+			write_u2_and_advance(
+			    buf,
+			    offset,
+			    entry->info.dynamic_info.bootstrap_method_attr_index);
+			write_u2_and_advance(
+			    buf, offset, entry->info.dynamic_info.name_and_type_index);
+			break;
+
+		case CONSTANT_InvokeDynamic:
+			write_u2_and_advance(
+			    buf,
+			    offset,
+			    entry->info.invokedynamic_info.bootstrap_method_attr_index);
+			write_u2_and_advance(
+			    buf,
+			    offset,
+			    entry->info.invokedynamic_info.name_and_type_index);
+			break;
+
+		case CONSTANT_Module:
+			write_u2_and_advance(
+			    buf, offset, entry->info.module_info.name_index);
+			break;
+
+		case CONSTANT_Package:
+			write_u2_and_advance(
+			    buf, offset, entry->info.package_info.name_index);
+			break;
+
+		default:
+			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	return BYTECODE_SUCCESS;
+}
+
+bytecode_result_e
+bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
+{
+	assert(arena != NULL);
+	assert(cf != NULL);
+	assert(data != NULL);
+	assert(len != NULL);
+
+	if (!arena || !cf || !data || !len)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* Calc ~size needed */
+	u4 est_sz = 1024;
+	est_sz += cf->constant_pool_count * 64;
+	est_sz += cf->methods_count * 512;
+
+	u1 *buf = arena_alloc(arena, est_sz);
+	if (!buf)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	int offset = 0;
+
+	/* Write header */
+	write_u4_and_advance(buf, &offset, cf->magic);
+	write_u2_and_advance(buf, &offset, cf->minor_version);
+	write_u2_and_advance(buf, &offset, cf->major_version);
+
+	/* Constant pool */
+	write_u2_and_advance(buf, &offset, cf->constant_pool_count);
+
+	for (u2 i = 1; i < cf->constant_pool_count; i++)
+	{
+		const constant_pool_info_t *entry = &cf->constant_pool[i];
+		if (entry->tag == 0)
+			continue;
+
+		bytecode_result_e res = write_constant_pool_entry(buf, &offset, entry);
+
+		/* Should only happen if we are writing incorrect data */
+		if (res != BYTECODE_SUCCESS)
+			return res;
+	}
+
+	/* Write class information */
+	write_u2_and_advance(buf, &offset, cf->access_flags);
+	write_u2_and_advance(buf, &offset, cf->this_class);
+	write_u2_and_advance(buf, &offset, cf->super_class);
+
+	/* Write interfaces */
+	write_u2_and_advance(buf, &offset, cf->interfaces_count);
+	for (u2 i = 0; i < cf->interfaces_count; i++)
+	{
+		write_u2_and_advance(buf, &offset, cf->interfaces[i]);
+	}
+
+	/* Write fields */
+	write_u2_and_advance(buf, &offset, cf->fields_count);
+	for (u2 i = 0; i < cf->fields_count; i++)
+	{
+		const field_info_t *field = &cf->fields[i];
+		write_u2_and_advance(buf, &offset, field->access_flags);
+		write_u2_and_advance(buf, &offset, field->name_index);
+		write_u2_and_advance(buf, &offset, field->descriptor_index);
+
+		/* Write field attributes */
+		write_u2_and_advance(buf, &offset, field->attributes_count);
+		for (u2 j = 0; j < field->attributes_count; j++)
+		{
+			write_u2_and_advance(
+			    buf, &offset, field->attributes[j].attribute_name_index);
+			write_u4_and_advance(
+			    buf, &offset, field->attributes[j].attribute_length);
+			memcpy(&buf[offset],
+			       field->attributes[j].info,
+			       field->attributes[j].attribute_length);
+			offset += field->attributes[j].attribute_length;
+		}
+	}
+
+	/* Write methods */
+	write_u2_and_advance(buf, &offset, cf->methods_count);
+	for (u2 i = 0; i < cf->methods_count; i++)
+	{
+		const method_info_t *method = &cf->methods[i];
+		write_u2_and_advance(buf, &offset, method->access_flags);
+		write_u2_and_advance(buf, &offset, method->name_index);
+		write_u2_and_advance(buf, &offset, method->descriptor_index);
+
+		/* Write method attributes */
+		write_u2_and_advance(buf, &offset, method->attributes_count);
+		for (u2 j = 0; j < method->attributes_count; j++)
+		{
+			write_u2_and_advance(
+			    buf, &offset, method->attributes[j].attribute_name_index);
+			write_u4_and_advance(
+			    buf, &offset, method->attributes[j].attribute_length);
+			memcpy(&buf[offset],
+			       method->attributes[j].info,
+			       method->attributes[j].attribute_length);
+			offset += method->attributes[j].attribute_length;
+		}
+	}
+
+	/* Write class attributes */
+	write_u2_and_advance(buf, &offset, cf->attributes_count);
+	for (u2 i = 0; i < cf->attributes_count; i++)
+	{
+		write_u2_and_advance(
+		    buf, &offset, cf->attributes[i].attribute_name_index);
+		write_u4_and_advance(buf, &offset, cf->attributes[i].attribute_length);
+		memcpy(&buf[offset],
+		       cf->attributes[i].info,
+		       cf->attributes[i].attribute_length);
+		offset += cf->attributes[i].attribute_length;
+	}
+
+	/* Return results */
+	*data = buf;
+	*len  = offset;
 
 	return BYTECODE_SUCCESS;
 }

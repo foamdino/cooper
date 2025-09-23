@@ -58,6 +58,12 @@ read_u4_and_advance(const u1 *data, int *offset)
 }
 
 void
+write_u1_and_advance(u1 *data, int *offset, u1 value)
+{
+	data[(*offset)++] = value;
+}
+
+void
 write_u2_and_advance(u1 *data, int *offset, u2 value)
 {
 	data[(*offset)++] = (u1)(value >> 8);

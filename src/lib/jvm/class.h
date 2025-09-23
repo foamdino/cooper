@@ -82,7 +82,7 @@ struct constant_pool_info
 		} class_info;
 		u2 string; /* Pointer to utf8 */
 		u4 integer;
-		u4 flowt; /* float is C */
+		u4 float_info; /* float is C */
 
 		struct
 		{
@@ -124,7 +124,7 @@ struct constant_pool_info
 		struct
 		{
 			u2 name_index;
-		};
+		} package_info;
 
 	} info;
 };
@@ -199,6 +199,8 @@ u1 read_u1_and_advance(const u1 *data, int *offset);
 u2 read_u2_and_advance(const u1 *data, int *offset);
 
 u4 read_u4_and_advance(const u1 *data, int *offset);
+
+void write_u1_and_advance(u1 *data, int *offset, u1 value);
 
 void write_u2_and_advance(u1 *data, int *offset, u2 value);
 
