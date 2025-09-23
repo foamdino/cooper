@@ -137,6 +137,19 @@ start_all_threads(agent_context_t *ctx)
 	else
 		LOG_INFO("Flamegraph export thread started");
 
+	/* Start method event thread */
+	set_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
+	if (pthread_create(
+		&ctx->tm_ctx.method_event_thread, NULL, method_event_thread_func, ctx)
+	    != 0)
+	{
+		LOG_ERROR("Failed to start method event thread: %s", strerror(errno));
+		clear_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
+		return COOPER_ERR;
+	}
+	else
+		LOG_INFO("Method event thread started");
+
 	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
 }

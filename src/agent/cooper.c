@@ -157,7 +157,7 @@ init_thread_local_storage()
 }
 
 /* Get the thread-local sample structure */
-static thread_context_t *
+thread_context_t *
 get_thread_local_context()
 {
 	init_thread_local_storage();
@@ -208,7 +208,7 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
  *
  * Return NULL if it fails to allocate space in the provided arena
  */
-static method_sample_t *
+method_sample_t *
 init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
 {
 
@@ -1611,7 +1611,8 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	if (!global_ctx->getId_method)
 		return;
 
-	thread_context_t *context = pthread_getspecific(context_key);
+	// thread_context_t *context = pthread_getspecific(context_key);
+	thread_context_t *context = get_thread_local_context();
 	if (context)
 	{
 		/* No need to manually free each call since they're arena-allocated */
@@ -1984,6 +1985,12 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 		goto error;
 	}
 
+	if (register_native_callbacks(jni_env) != COOPER_OK)
+	{
+		LOG_ERROR("Failed to register native class");
+		goto error;
+	}
+
 	/* Release local reference */
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
 	LOG_INFO("Successfully initialized Thread class and getId method");
@@ -2050,8 +2057,10 @@ init_jvm_capabilities(agent_context_t *ctx)
 	/* Set event callbacks */
 	memset(
 	    &ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
+
+	// TODO delete these when the bytecode injection is finished
 	// ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
-	ctx->callbacks.event_callbacks.MethodExit = &method_exit_callback;
+	// ctx->callbacks.event_callbacks.MethodExit = &method_exit_callback;
 
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 
@@ -2220,8 +2229,15 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
-
 	global_ctx->class_queue = class_queue;
+
+	q_t *method_queue = calloc(1, sizeof(q_t));
+	if (q_init(method_queue) != COOPER_OK)
+	{
+		cleanup(global_ctx);
+		return JNI_ERR;
+	}
+	global_ctx->method_queue = method_queue;
 
 	arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
 	if (!class_cache_arena)

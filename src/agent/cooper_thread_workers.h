@@ -28,6 +28,7 @@ void *shm_export_thread_func(void *arg);
 void *class_cache_thread_func(void *arg);
 void *call_stack_sampling_thread_func(void *arg);
 void *flamegraph_export_thread(void *arg);
+void *method_event_thread_func(void *arg);
 
 /* Export functions that might be called from elsewhere */
 // void export_to_file(agent_context_t *ctx);

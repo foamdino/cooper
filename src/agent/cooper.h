@@ -369,6 +369,7 @@ struct thread_manager_ctx
 	pthread_t class_cache_thread;  /**< Class caching background thread */
 	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
 	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
+	pthread_t method_event_thread;      /**< Method event background thread */
 	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
 };
 
@@ -413,6 +414,11 @@ pattern_filter_entry_t *find_matching_filter(const pattern_filter_t *filter,
                                              const char *class_sig,
                                              const char *method_name,
                                              const char *method_sig);
+
+thread_context_t *get_thread_local_context();
+method_sample_t *init_method_sample(arena_t *arena,
+                                    int method_index,
+                                    jmethodID method_id);
 
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
