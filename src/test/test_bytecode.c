@@ -93,7 +93,7 @@ test_injection(const char *filename)
 	    .exit_sig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"};
 
 	printf("\nInjecting method tracking...\n");
-	result = injection_add_method_tracking(arena, cf, &config);
+	result = injection_add_method_tracking_clean(arena, cf, &config);
 	if (result != BYTECODE_SUCCESS)
 	{
 		printf("Injection failed: %d\n", result);

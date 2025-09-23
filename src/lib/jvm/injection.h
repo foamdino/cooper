@@ -63,6 +63,7 @@ struct bytecode_builder
 	u4 chunk_cnt;
 };
 
+// TODO have a single template as these are identical??
 static const bytecode_template_t METHOD_ENTRY_TEMPLATE = {
     .name = "method_entry",
     .len  = 12,
@@ -87,6 +88,40 @@ static const bytecode_template_t METHOD_ENTRY_TEMPLATE = {
 	},
     .placeholder_offsets = {1, 4, 7, 10},
     .placeholder_cnt     = 4};
+
+static const bytecode_template_t METHOD_EXIT_TEMPLATE = {
+    .name = "method_exit",
+    .len  = 12,
+    .bytes =
+	{
+	    0x13,
+	    0xFF,
+	    0xFF, /* ldc_w #PLACEHOLDER0 (class name) */
+	    0x13,
+	    0xFF,
+	    0xFF, /* ldc_w #PLACEHOLDER1 (method name) */
+	    0x13,
+	    0xFF,
+	    0xFF, /* ldc_w #PLACEHOLDER2 (method signature) */
+	    0xB8,
+	    0xFF,
+	    0xFF, /* invokestatic #PLACEHOLDER3 (entry callback) */
+	    0x00,
+	    0x00,
+	    0x00,
+	    0x00 /* padding */
+	},
+    .placeholder_offsets = {1, 4, 7, 10},
+    .placeholder_cnt     = 4};
+
+static const u1 RETURN_OPCODES[] = {
+    0xB1, /* return */
+    0xAC, /* ireturn */
+    0xAD, /* lreturn */
+    0xAE, /* freturn */
+    0xAF, /* dreturn */
+    0xB0  /* areturn */
+};
 
 bytecode_result_e injection_add_method_tracking(arena_t *arena,
                                                 class_file_t *cf,
