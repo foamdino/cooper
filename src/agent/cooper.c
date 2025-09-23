@@ -1249,7 +1249,7 @@ should_process_class(const pattern_filter_t *filter, const char *class_sig)
 		return 0;
 
 	/* Never process our tracking class */
-	if (strcmp(TRACKER_CLASS, class_sig))
+	if (strcmp(TRACKER_CLASS, class_sig) == 0)
 		return 0;
 
 	/* Check if any filter pattern could match this class */
@@ -1277,7 +1277,12 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	/* Class filtered out, skip processing */
 	if (!should_process_class(&global_ctx->unified_filter, class_sig))
+	{
+		// LOG_INFO("Class load callback, skipping %s", class_sig);
 		goto cleanup;
+	}
+
+	LOG_INFO("Class load callback, processing %s", class_sig);
 
 	/* Create global reference for the class */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
@@ -2064,10 +2069,9 @@ init_jvm_capabilities(agent_context_t *ctx)
 
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 
-	ctx->callbacks.event_callbacks.VMObjectAlloc = &object_alloc_callback;
-	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
-	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
-	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
+	ctx->callbacks.event_callbacks.VMObjectAlloc     = &object_alloc_callback;
+	ctx->callbacks.event_callbacks.ThreadEnd         = &thread_end_callback;
+	ctx->callbacks.event_callbacks.VMInit            = &vm_init_callback;
 	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
 	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
@@ -2090,7 +2094,8 @@ init_jvm_capabilities(agent_context_t *ctx)
 	                       JVMTI_EVENT_THREAD_END,
 	                       JVMTI_EVENT_VM_INIT,
 	                       JVMTI_EVENT_CLASS_LOAD,
-	                       JVMTI_EVENT_CLASS_PREPARE};
+	                       JVMTI_EVENT_CLASS_PREPARE,
+	                       JVMTI_EVENT_CLASS_FILE_LOAD_HOOK};
 
 	for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i)
 	{
@@ -2151,6 +2156,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	global_ctx->config.export_interval     = 60;
 	global_ctx->config.mem_sample_interval = 1;
 	pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL);
+	pthread_mutex_init(&global_ctx->tm_ctx.method_event_lock, NULL);
 
 	/* Redirect output */
 	if (options && strncmp(options, "logfile=", 8) == 0)
@@ -2423,6 +2429,7 @@ Agent_OnUnload(JavaVM *vm)
 
 		/* Destroy mutex */
 		pthread_mutex_destroy(&global_ctx->tm_ctx.samples_lock);
+		pthread_mutex_destroy(&global_ctx->tm_ctx.method_event_lock);
 
 		free(global_ctx);
 		global_ctx = NULL;

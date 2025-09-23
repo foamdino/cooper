@@ -139,6 +139,7 @@ start_all_threads(agent_context_t *ctx)
 
 	/* Start method event thread */
 	set_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
+	ctx->method_queue->running = 1;
 	if (pthread_create(
 		&ctx->tm_ctx.method_event_thread, NULL, method_event_thread_func, ctx)
 	    != 0)
@@ -243,6 +244,24 @@ stop_all_threads(agent_context_t *ctx)
 		}
 		LOG_INFO("Waiting for class caching thread to terminate");
 		int res = safe_thread_join(ctx->tm_ctx.class_cache_thread, 3);
+		if (res != 0)
+			LOG_WARN("Class caching thread did not terminate cleanly: %d",
+			         res);
+	}
+
+	if (ctx->tm_ctx.method_event_thread)
+	{
+		if (ctx->method_queue)
+		{
+			/* Signal the queue to shutdown */
+			pthread_mutex_lock(&ctx->method_queue->lock);
+			ctx->method_queue->running = 0;
+			pthread_cond_broadcast(
+			    &ctx->method_queue->cond); /* Wake up waiting thread */
+			pthread_mutex_unlock(&ctx->method_queue->lock);
+		}
+		LOG_INFO("Waiting for class caching thread to terminate");
+		int res = safe_thread_join(ctx->tm_ctx.method_event_thread, 3);
 		if (res != 0)
 			LOG_WARN("Class caching thread did not terminate cleanly: %d",
 			         res);

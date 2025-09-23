@@ -370,6 +370,7 @@ struct thread_manager_ctx
 	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
 	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
 	pthread_t method_event_thread;      /**< Method event background thread */
+	pthread_mutex_t method_event_lock;  /**< Lock for method events */
 	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
 };
 
