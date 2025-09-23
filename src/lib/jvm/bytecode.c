@@ -330,6 +330,7 @@ bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **resu
 	{
 		bytecode_result_e rc = parse_constant_pool_entry(
 		    arena, data, &offset, &cf->constant_pool[i]);
+
 		if (rc != BYTECODE_SUCCESS)
 			return rc;
 
@@ -591,7 +592,42 @@ bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
 		/* Should only happen if we are writing incorrect data */
 		if (res != BYTECODE_SUCCESS)
 			return res;
+
+		/* These take up two slots, to need to advance again */
+		if (entry->tag == CONSTANT_Long || entry->tag == CONSTANT_Double)
+			i++;
 	}
+
+	/* Add this debug in bytecode_write_class, right after writing constant pool */
+	printf("=== WRITTEN CONSTANT POOL DEBUG ===\n");
+	printf("Memory vs Written index mapping:\n");
+
+	/* Simulate what gets written */
+	u2 written_index = 1;
+	for (u2 i = 1; i < cf->constant_pool_count; i++)
+	{
+		const constant_pool_info_t *entry = &cf->constant_pool[i];
+		if (entry->tag == 0)
+		{
+			printf("Memory[%d]: tag=0 (skipped, no written equivalent)\n", i);
+			continue;
+		}
+
+		printf("Memory[%d] -> Written[%d]: tag=%d", i, written_index, entry->tag);
+		if (entry->tag == CONSTANT_Utf8)
+		{
+			printf(" UTF8='%s'", (char *)entry->info.utf8.bytes);
+		}
+		printf("\n");
+
+		written_index++;
+
+		if (entry->tag == CONSTANT_Long || entry->tag == CONSTANT_Double)
+		{
+			i++; /* Skip unusable slot in memory */
+		}
+	}
+	printf("===============================\n");
 
 	/* Write class information */
 	write_u2_and_advance(buf, &offset, cf->access_flags);

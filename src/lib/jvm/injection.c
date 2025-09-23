@@ -62,6 +62,45 @@ injection_find_or_add_utf8_constant(arena_t *arena, class_file_t *cf, const char
 }
 
 u2
+injection_find_or_add_string_constant(arena_t *arena, class_file_t *cf, const char *str)
+{
+	/* First, get or create the UTF8 constant */
+	u2 utf8_index = injection_find_or_add_utf8_constant(arena, cf, str);
+	if (utf8_index == 0)
+		return 0;
+
+	/* Check if String constant already exists */
+	for (u2 i = 1; i < cf->constant_pool_count; i++)
+	{
+		if (cf->constant_pool[i].tag == CONSTANT_String)
+		{
+			if (cf->constant_pool[i].info.string == utf8_index)
+				return i;
+		}
+	}
+
+	/* Create new String constant */
+	u2 new_size = cf->constant_pool_count + 1;
+	constant_pool_info_t *new_pool =
+	    arena_alloc(arena, new_size * sizeof(constant_pool_info_t));
+	if (!new_pool)
+		return 0;
+
+	memcpy(new_pool,
+	       cf->constant_pool,
+	       cf->constant_pool_count * sizeof(constant_pool_info_t));
+
+	u2 new_index                    = cf->constant_pool_count;
+	new_pool[new_index].tag         = CONSTANT_String;
+	new_pool[new_index].info.string = utf8_index;
+
+	cf->constant_pool       = new_pool;
+	cf->constant_pool_count = new_size;
+
+	return new_index;
+}
+
+u2
 injection_find_or_add_class_constant(arena_t *arena,
                                      class_file_t *cf,
                                      const char *class_name)
@@ -212,6 +251,390 @@ injection_find_or_add_methodref_constant(arena_t *arena,
 	return new_idx;
 }
 
+static u4
+find_new_pc(pc_mapping_t *map, u4 count, u4 original_pc)
+{
+	for (u4 i = 0; i < count; i++)
+	{
+		if (map[i].original_pc == original_pc)
+			return map[i].new_pc;
+
+		/* Return the closest preceding mapping */
+		if (map[i].original_pc > original_pc)
+		{
+			return i > 0 ? map[i - 1].new_pc
+			                   + (original_pc - map[i - 1].original_pc)
+			             : original_pc;
+		}
+	}
+	/* Fallback - should not reach here if map is complete */
+	return original_pc;
+}
+
+bytecode_builder_t *
+bb_create(arena_t *arena, u4 initial_capacity)
+{
+	bytecode_builder_t *bb = arena_alloc(arena, sizeof(bytecode_builder_t));
+
+	if (!bb)
+		return NULL;
+
+	bb->arena     = arena;
+	bb->capacity  = initial_capacity;
+	bb->len       = 0;
+	bb->chunk_cnt = 0;
+
+	bb->buf = arena_alloc(arena, initial_capacity);
+	if (!bb->buf)
+		return NULL;
+
+	return bb;
+}
+
+static int
+bb_ensure_capacity(bytecode_builder_t *bb, u4 needed)
+{
+	if (bb->len + needed <= bb->capacity)
+		return 0;
+
+	/* grow capacity */
+	u4 new_capacity = bb->capacity * 2;
+	while (new_capacity < bb->len + needed)
+		new_capacity *= 2;
+
+	u1 *new_buf = arena_alloc(bb->arena, new_capacity);
+	if (!new_buf)
+		return 1;
+
+	/* Copy over existing data */
+	memcpy(new_buf, bb->buf, bb->len);
+	bb->buf      = new_buf;
+	bb->capacity = new_capacity;
+
+	return 0;
+}
+
+int
+bb_add_template(bytecode_builder_t *bb,
+                const bytecode_template_t *tmpl,
+                const u2 indices[])
+{
+	if (bb_ensure_capacity(bb, tmpl->len) != 0)
+		return 1;
+
+	/* Copy template bytes */
+	memcpy(&bb->buf[bb->len], tmpl->bytes, tmpl->len);
+
+	/* Substitute placeholders */
+	for (u2 i = 0; i < tmpl->placeholder_cnt; i++)
+	{
+		u4 offset = bb->len + tmpl->placeholder_offsets[i];
+		u2 idx    = indices[i];
+
+		/* Write big endian */
+		bb->buf[offset]     = (u1)(idx >> 8);
+		bb->buf[offset + 1] = (u1)(idx & 0xFF);
+	}
+
+	bb->len += tmpl->len;
+	return 0;
+}
+
+int
+bb_add_original_chunk(bytecode_builder_t *bb,
+                      const u1 *original_code,
+                      u4 start_offset,
+                      u4 chunk_len)
+{
+	if (bb_ensure_capacity(bb, chunk_len) != 0)
+		return 1;
+
+	if (bb->chunk_cnt < 32)
+	{
+		pc_chunk_t *chunk     = &bb->chunks[bb->chunk_cnt];
+		chunk->original_start = start_offset;
+		chunk->original_end   = start_offset + chunk_len;
+		chunk->new_start      = bb->len;
+		chunk->new_len        = chunk_len;
+		bb->chunk_cnt++;
+	}
+
+	/* Copy the bytecode */
+	memcpy(&bb->buf[bb->len], &original_code[start_offset], chunk_len);
+	bb->len += chunk_len;
+
+	return 0;
+}
+
+u4
+bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
+{
+	for (u4 i = 0; i < bb->chunk_cnt; i++)
+	{
+		const pc_chunk_t *chunk = &bb->chunks[i];
+
+		if (original_pc >= chunk->original_start
+		    && original_pc < chunk->original_end)
+		{
+			u4 offset_in_chunk = original_pc - chunk->original_start;
+			return chunk->new_start + offset_in_chunk;
+		}
+	}
+
+	/* We cannot find pc in any chunk - should not happen */
+	return original_pc; /* fallback */
+}
+
+static int
+create_new_code_attribute(arena_t *arena,
+                          class_file_t *cf,
+                          method_info_t *method,
+                          const bytecode_builder_t *bb,
+                          const code_info_t *orig_info)
+{
+	/* Calc new attr size:
+	header + new code + exception table + empty attrs */
+	u4 exception_table_sz = orig_info->exception_table_length * 8;
+	u4 new_attr_sz        = 2 + 2 + 4 + bb->len + 2 + exception_table_sz + 2;
+
+	u1 *new_attr_data = arena_alloc(arena, new_attr_sz);
+	if (!new_attr_data)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	int offset = 0;
+
+	/* Code attr header */
+	/* Add 3 bytes for injected code */
+	write_u2_and_advance(new_attr_data, &offset, orig_info->max_stack + 3);
+	write_u2_and_advance(new_attr_data, &offset, orig_info->max_locals);
+	write_u4_and_advance(new_attr_data, &offset, bb->len);
+
+	/* Write the code */
+	memcpy(&new_attr_data[offset], bb->buf, bb->len);
+	offset += bb->len;
+
+	/* Exception table */
+	write_u2_and_advance(new_attr_data, &offset, orig_info->exception_table_length);
+
+	if (orig_info->exception_table_length > 0)
+	{
+		/* copy original exception table */
+		const u1 *orig_table = orig_info->exception_table_data;
+		int tbl_offset       = 0;
+
+		for (u2 i = 0; orig_info->exception_table_length; i++)
+		{
+			u2 start_pc   = read_u2_and_advance(orig_table, &tbl_offset);
+			u2 end_pc     = read_u2_and_advance(orig_table, &tbl_offset);
+			u2 handler_pc = read_u2_and_advance(orig_table, &tbl_offset);
+			u2 catch_type = read_u2_and_advance(orig_table, &tbl_offset);
+
+			/* Map pcs to new locations */
+			write_u2_and_advance(
+			    new_attr_data, &offset, bb_map_pc(bb, start_pc));
+			write_u2_and_advance(
+			    new_attr_data, &offset, bb_map_pc(bb, end_pc));
+			write_u2_and_advance(
+			    new_attr_data, &offset, bb_map_pc(bb, handler_pc));
+			write_u2_and_advance(new_attr_data, &offset, catch_type);
+		}
+	}
+
+	/* Empty attributes (removes StackMapTable) */
+	write_u2_and_advance(new_attr_data, &offset, 0);
+
+	/* Find and update the Code attribute */
+	for (u2 i = 0; i < method->attributes_count; i++)
+	{
+		const char *attr_name = bytecode_get_utf8_constant(
+		    cf, method->attributes[i].attribute_name_index);
+
+		if (attr_name && strcmp(attr_name, "Code") == 0)
+		{
+			method->attributes[i].info             = new_attr_data;
+			method->attributes[i].attribute_length = new_attr_sz;
+			return BYTECODE_SUCCESS;
+		}
+	}
+
+	return BYTECODE_ERROR_CORRUPT_METHODS;
+}
+
+static attr_info_t *
+find_code_attribute(const class_file_t *cf, method_info_t *method)
+{
+	for (u2 i = 0; i < method->attributes_count; i++)
+	{
+		const char *attr_name = bytecode_get_utf8_constant(
+		    cf, method->attributes[i].attribute_name_index);
+
+		if (attr_name && strcmp(attr_name, "Code") == 0)
+			return &method->attributes[i];
+	}
+
+	return NULL;
+}
+
+/* Check if Code attribute has StackMapTable */
+static int
+code_has_stackmap_table(const class_file_t *cf, const code_info_t *info)
+{
+	if (info->attributes_count == 0)
+		return 0;
+
+	int offset          = 0;
+	const u1 *attr_data = info->attributes_data;
+
+	for (u2 i = 0; i < info->attributes_count; i++)
+	{
+		u2 name_index  = read_u2_and_advance(attr_data, &offset);
+		u4 attr_length = read_u4_and_advance(attr_data, &offset);
+
+		const char *attr_name = bytecode_get_utf8_constant(cf, name_index);
+		if (attr_name && strcmp(attr_name, "StackMapTable") == 0)
+			return 1; /* Found StackMapTable */
+
+		offset += attr_length; /* Skip attribute data */
+	}
+
+	return 0; /* No StackMapTable found */
+}
+
+// TODO move to bytecode and expose in header
+/* Parse a code_attr into a code_info struct */
+static int
+parse_code_attribute(const attr_info_t *code_attr, code_info_t *info)
+{
+	if (!code_attr || !info)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	int offset        = 0;
+	const u1 *data    = code_attr->info;
+	info->max_stack   = read_u2_and_advance(data, &offset);
+	info->max_locals  = read_u2_and_advance(data, &offset);
+	info->code_length = read_u4_and_advance(data, &offset);
+	info->bytecode    = &data[offset];
+	offset += info->code_length;
+
+	info->exception_table_length = read_u2_and_advance(data, &offset);
+	info->exception_table_data   = &data[offset];
+	/* Each exception entry is 8 bytes */
+	offset += info->exception_table_length * 8;
+	info->attributes_count = read_u2_and_advance(data, &offset);
+	info->attributes_data  = &data[offset];
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+inject_single_method(arena_t *arena,
+                     class_file_t *cf,
+                     method_info_t *method,
+                     u2 entry_methodref,
+                     u2 class_name_index,
+                     u2 method_name_index,
+                     u2 descriptor_index)
+{
+	attr_info_t *code_attr = find_code_attribute(cf, method);
+	/* Nothing to do */
+	if (!code_attr)
+		return BYTECODE_SUCCESS;
+
+	/* Parse the Code attr */
+	code_info_t code_info;
+	if (parse_code_attribute(code_attr, &code_info) != 0)
+		return BYTECODE_ERROR_INVALID_BYTECODE;
+
+	/* Skip methods with StackMapTable for now - they require complex PC remapping */
+	if (code_has_stackmap_table(cf, &code_info))
+	{
+		printf("Skipping method with StackMapTable to avoid verification errors");
+		return BYTECODE_SUCCESS;
+	}
+
+	/* Build new bytecode */
+	bytecode_builder_t *bb = bb_create(arena, code_info.code_length + 64);
+	if (!bb)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	u2 entry_indices[] = {
+	    class_name_index, method_name_index, descriptor_index, entry_methodref};
+
+	/* Use template to add new method entry */
+	if (bb_add_template(bb, &METHOD_ENTRY_TEMPLATE, entry_indices) != 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* Add original code */
+	if (bb_add_original_chunk(bb, code_info.bytecode, 0, code_info.code_length) != 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* Add new Code attribute */
+	if (create_new_code_attribute(arena, cf, method, bb, &code_info) != 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	return BYTECODE_SUCCESS;
+}
+
+bytecode_result_e
+injection_add_method_tracking_clean(arena_t *arena,
+                                    class_file_t *cf,
+                                    injection_config_t *cfg)
+{
+	const char *class_name = bytecode_get_class_name(cf);
+	if (!class_name)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+
+	u2 class_idx = injection_find_or_add_string_constant(arena, cf, class_name);
+	if (class_idx == 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	u2 entry_methodref = injection_find_or_add_methodref_constant(
+	    arena, cf, cfg->callback_class, cfg->entry_method, cfg->entry_sig);
+
+	if (entry_methodref == 0)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* Inject */
+	for (u2 i = 0; i < cf->methods_count; i++)
+	{
+		const char *method_name = bytecode_get_method_name(cf, i);
+
+		/* ignore ctor */
+		if (method_name && strcmp(method_name, "<clinit>") != 0)
+		{
+			u2 method_name_idx =
+			    injection_find_or_add_string_constant(arena, cf, method_name);
+			if (method_name_idx == 0)
+				continue;
+
+			/* Get method descriptor */
+			const char *method_descriptor = bytecode_get_utf8_constant(
+			    cf, cf->methods[i].descriptor_index);
+			if (!method_descriptor)
+				continue;
+
+			u2 descriptor_string_idx = injection_find_or_add_string_constant(
+			    arena, cf, method_descriptor);
+			if (descriptor_string_idx == 0)
+				continue;
+
+			bytecode_result_e res =
+			    inject_single_method(arena,
+			                         cf,
+			                         &cf->methods[i],
+			                         entry_methodref,
+			                         class_idx,
+			                         method_name_idx,
+			                         descriptor_string_idx);
+
+			if (res != BYTECODE_SUCCESS)
+				return res;
+		}
+	}
+
+	return BYTECODE_SUCCESS;
+}
+
 static bytecode_result_e
 inject_method_bytecode(arena_t *arena,
                        class_file_t *cf,
@@ -286,6 +709,36 @@ inject_method_bytecode(arena_t *arena,
 		offset += attr_len;
 	}
 
+	if (class_name_index == 0 || class_name_index >= cf->constant_pool_count
+	    || cf->constant_pool[class_name_index].tag != CONSTANT_String)
+	{
+		printf("ERROR: Invalid class_name_index=%d\n", class_name_index);
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	if (method_name_index == 0 || method_name_index >= cf->constant_pool_count
+	    || cf->constant_pool[method_name_index].tag != CONSTANT_String)
+	{
+		printf("ERROR: Invalid method_name_index=%d\n", method_name_index);
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	const char *method_descriptor =
+	    bytecode_get_utf8_constant(cf, method->descriptor_index);
+	if (!method_descriptor)
+	{
+		printf("ERROR: Could not get method descriptor\n");
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	u2 descriptor_string_index =
+	    injection_find_or_add_string_constant(arena, cf, method_descriptor);
+	if (descriptor_string_index == 0)
+	{
+		printf("ERROR: Could not create descriptor string constant\n");
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+	}
+
 	// TODO refactor this into a function?
 	/* Build entry injection bytecode:
 	 * ldc_w #class_name_index    (3 bytes)
@@ -299,7 +752,7 @@ inject_method_bytecode(arena_t *arena,
 	{
 	    0x13, (u1)(class_name_index >> 8), (u1)(class_name_index & 0xFF), /* ldc_w class_name */
 	    0x13, (u1)(method_name_index >> 8), (u1)(method_name_index & 0xFF), /* ldc_w method_name */
-	    0x13, (u1)(method->descriptor_index >> 8), (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0x13, (u1)(method->descriptor_index >> 8), (u1)(descriptor_string_index& 0xFF), /* ldc_w method_descriptor */
 	    0xB8, (u1)(entry_method_ref >> 8), (u1)(entry_method_ref & 0xFF) /* invokestatic entry_method */
 	};
 	/* clang-format on */
@@ -312,7 +765,7 @@ inject_method_bytecode(arena_t *arena,
 	{
 	    0x13, (u1)(class_name_index >> 8), (u1)(class_name_index & 0xFF), /* ldc_w class_name */
 	    0x13, (u1)(method_name_index >> 8), (u1)(method_name_index & 0xFF), /* ldc_w method_name */
-	    0x13, (u1)(method->descriptor_index >> 8), (u1)(method->descriptor_index & 0xFF), /* ldc_w method_descriptor */
+	    0x13, (u1)(method->descriptor_index >> 8), (u1)(descriptor_string_index & 0xFF), /* ldc_w method_descriptor */
 	    0xB8, (u1)(exit_method_ref >> 8), (u1)(exit_method_ref & 0xFF) /* invokestatic exit_method */
 	};
 	/* clang-format on */
@@ -343,7 +796,11 @@ inject_method_bytecode(arena_t *arena,
 	if (!new_code)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
-	u4 new_code_pos = 0;
+	pc_mapping_t *pc_map = arena_alloc(arena, code_len * sizeof(pc_mapping_t));
+	u4 map_count         = 0;
+
+	u4 new_code_pos     = 0;
+	u4 injection_offset = sizeof(entry_injection);
 
 	/* Inject entry tracking at method start */
 	memcpy(&new_code[new_code_pos], entry_injection, sizeof(entry_injection));
@@ -354,6 +811,12 @@ inject_method_bytecode(arena_t *arena,
 	for (u4 i = 0; i < code_len; i++)
 	{
 		u1 opcode = existing_code[i];
+
+		/* Record PC mapping */
+		pc_map[map_count].original_pc = i;
+		pc_map[map_count].new_pc      = new_code_pos;
+		map_count++;
+
 		/* Check if opcode is a return */
 		if (opcode == 0xB1 || /* return */
 		    opcode == 0xAC || /* ireturn */
@@ -396,8 +859,16 @@ inject_method_bytecode(arena_t *arena,
 
 	u4 final_new_code_len = new_code_pos;
 
+	u2 orig_exception_count = read_u2_and_advance(code_data, &offset);
+
 	/* Create new Code attribute */
-	u4 new_attr_len = 12 + final_new_code_len;
+	u4 new_attr_len = 12 + final_new_code_len + 2 + (orig_exception_count * 8) + 2;
+	/*                ^   ^                     ^   ^                           ^
+	          |   |                     |   |                           |
+	          |   code bytes            |   exception entries attributes_count header
+	   exception_table_length
+	*/
+
 	/* Code attr header + new code + empty exception/attr tables */
 	u1 *new_attr_data = arena_alloc(arena, new_attr_len);
 	if (!new_attr_data)
@@ -412,14 +883,66 @@ inject_method_bytecode(arena_t *arena,
 	attr_offset += final_new_code_len;
 
 	/* Empty exception table for now */
-	write_u2_and_advance(new_attr_data, &attr_offset, 0); /* exception_table_len */
-	write_u2_and_advance(new_attr_data, &attr_offset, 0); /* attributes_count */
+	// write_u2_and_advance(new_attr_data, &attr_offset, 0); /* exception_table_len */
+	// write_u2_and_advance(new_attr_data, &attr_offset, 0); /* attributes_count */
+
+	write_u2_and_advance(new_attr_data, &attr_offset, orig_exception_count);
+
+	/* copy exception table and adjust */
+	for (u2 i = 0; i < orig_exception_count; i++)
+	{
+		u2 start_pc   = read_u2_and_advance(code_data, &offset);
+		u2 end_pc     = read_u2_and_advance(code_data, &offset);
+		u2 handler_pc = read_u2_and_advance(code_data, &offset);
+		u2 catch_type = read_u2_and_advance(code_data, &offset);
+
+		u4 new_start_pc   = find_new_pc(pc_map, map_count, start_pc);
+		u4 new_end_pc     = find_new_pc(pc_map, map_count, end_pc);
+		u4 new_handler_pc = find_new_pc(pc_map, map_count, handler_pc);
+
+		/* Now we adjust with the offset */
+		write_u2_and_advance(new_attr_data, &attr_offset, new_start_pc);
+		write_u2_and_advance(new_attr_data, &attr_offset, new_end_pc);
+		write_u2_and_advance(new_attr_data, &attr_offset, new_handler_pc);
+		write_u2_and_advance(new_attr_data, &attr_offset, catch_type);
+	}
+
+	/* Skip Code attributes for now (remove StackMapTable) */
+	write_u2_and_advance(new_attr_data, &attr_offset, 0);
 
 	/* Update the method's Code attribute */
 	code_attr->info             = new_attr_data;
 	code_attr->attribute_length = new_attr_len;
 
 	return BYTECODE_SUCCESS;
+}
+
+void
+debug_constant_pool_indices(class_file_t *cf, u2 class_idx, u2 method_idx)
+{
+	printf("=== CONSTANT POOL DEBUG ===\n");
+	printf("Total entries: %d\n", cf->constant_pool_count);
+	printf("Looking for class_idx=%d, method_idx=%d\n", class_idx, method_idx);
+
+	/* Check the specific indices being used in bytecode */
+	for (u2 i = 5; i <= 10; i++)
+	{ /* Indices 5,6,8 from your bytecode */
+		if (i < cf->constant_pool_count)
+		{
+			printf("Index %d: tag=%d", i, cf->constant_pool[i].tag);
+			if (cf->constant_pool[i].tag == CONSTANT_Utf8)
+			{
+				printf(" UTF8='%s'",
+				       (char *)cf->constant_pool[i].info.utf8.bytes);
+			}
+			printf("\n");
+		}
+		else
+		{
+			printf("Index %d: OUT OF BOUNDS\n", i);
+		}
+	}
+	printf("===========================\n");
 }
 
 bytecode_result_e
@@ -436,7 +959,7 @@ injection_add_method_tracking(arena_t *arena,
 	if (!class_name)
 		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-	u2 class_name_idx = injection_find_or_add_utf8_constant(arena, cf, class_name);
+	u2 class_name_idx = injection_find_or_add_string_constant(arena, cf, class_name);
 	if (class_name_idx == 0)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
@@ -462,7 +985,9 @@ injection_add_method_tracking(arena_t *arena,
 		if (method_name && strcmp(method_name, "<clinit>") != 0)
 		{
 			u2 method_name_idx =
-			    injection_find_or_add_utf8_constant(arena, cf, method_name);
+			    injection_find_or_add_string_constant(arena, cf, method_name);
+
+			debug_constant_pool_indices(cf, class_name_idx, method_name_idx);
 
 			if (method_name_idx == 0)
 				continue;

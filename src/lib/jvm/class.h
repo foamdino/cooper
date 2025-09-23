@@ -45,6 +45,7 @@ typedef struct method_info method_info_t;
 typedef struct attr_info attr_info_t;
 typedef struct field_info field_info_t;
 typedef struct class_file class_file_t;
+typedef struct code_info code_info_t;
 
 /* Constant pool info entry */
 struct constant_pool_info
@@ -151,6 +152,37 @@ struct field_info
 	u2 descriptor_index;
 	u2 attributes_count;
 	attr_info_t *attributes;
+};
+
+/* Code info
+https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html#jvms-4.7.3
+Code_attribute {
+    u2 attribute_name_index;
+    u4 attribute_length;
+    u2 max_stack;
+    u2 max_locals;
+    u4 code_length;
+    u1 code[code_length];
+    u2 exception_table_length;
+    {   u2 start_pc;
+        u2 end_pc;
+        u2 handler_pc;
+        u2 catch_type;
+    } exception_table[exception_table_length];
+    u2 attributes_count;
+    attribute_info attributes[attributes_count];
+}
+*/
+struct code_info
+{
+	u2 max_stack;
+	u2 max_locals;
+	u4 code_length;
+	const u1 *bytecode;
+	u2 exception_table_length;
+	const u1 *exception_table_data;
+	u2 attributes_count;
+	const u1 *attributes_data;
 };
 
 /* Class file representation

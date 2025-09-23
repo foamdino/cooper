@@ -739,8 +739,9 @@ method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID me
 	tc->sample     = sample;
 	tc->stack_depth++;
 
-	LOG_DEBUG(
-	    "[ENTRY] Sampling method %s.%s\n", info->class_sig, method_info->method_name);
+	// LOG_DEBUG(
+	//     "[ENTRY] Sampling method %s.%s\n", info->class_sig,
+	//     method_info->method_name);
 }
 
 /*
@@ -1249,8 +1250,8 @@ should_process_class(const pattern_filter_t *filter, const char *class_sig)
 		return 0;
 
 	/* Never process our tracking class */
-	if (strcmp(TRACKER_CLASS, class_sig) == 0)
-		return 0;
+	// if (strcmp(TRACKER_CLASS, class_sig) == 0)
+	// 	return 0;
 
 	/* Check if any filter pattern could match this class */
 	for (size_t i = 0; i < filter->num_entries; i++)
@@ -1280,7 +1281,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (!should_process_class(&global_ctx->unified_filter, class_sig))
 		goto cleanup;
 
-	LOG_INFO("Class load callback, processing %s", class_sig);
+	// LOG_INFO("Class load callback, processing %s", class_sig);
 
 	/* Create global reference for the class */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
@@ -1357,9 +1358,17 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 
 	// LOG_INFO("class_file_load_callback called for %s", name);
 
+	/* Never process our tracking class */
+	if (strcmp(TRACKER_CLASS, name) == 0)
+		return;
+
 	// org/springdoc/core/customizers/RouterOperationCustomizer
 	/* Fast filter check */
 	char *sig = class_name_to_sig(name);
+
+	if (!sig)
+		return;
+
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
 
@@ -1373,7 +1382,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	bytecode_result_e bc_res =
 	    bytecode_parse_class(bc_arena, class_data, class_data_len, &cf);
 
-	if (bc_res != BYTECODE_SUCCESS)
+	if (bc_res != BYTECODE_SUCCESS || !cf)
 	{
 		LOG_WARN("Failed to parse class %s, using original", name);
 		return;
@@ -1388,7 +1397,8 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	    .exit_sig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"};
 
 	/* Inject */
-	bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
+	// bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
+	bc_res = injection_add_method_tracking_clean(bc_arena, cf, &cfg);
 
 	if (bc_res != BYTECODE_SUCCESS)
 	{
@@ -1555,7 +1565,7 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 {
 	UNUSED(clazz);
 
-	LOG_INFO("JNICALL onMethodEntry");
+	LOG_INFO("JNICALL onMethodExit");
 
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
