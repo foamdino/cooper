@@ -369,22 +369,166 @@ bb_add_original_chunk(bytecode_builder_t *bb,
 u4
 bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
 {
+	u4 best_match = original_pc; /* fallback */
+
 	for (u4 i = 0; i < bb->chunk_cnt; i++)
 	{
 		const pc_chunk_t *chunk = &bb->chunks[i];
 
-		if (original_pc >= chunk->original_start
-		    && original_pc < chunk->original_end)
+		/* Exact match */
+		if (chunk->original_start == original_pc)
+			return chunk->new_start;
+
+		/* Before target - could be best match */
+		if (chunk->original_start < original_pc)
 		{
-			u4 offset_in_chunk = original_pc - chunk->original_start;
-			return chunk->new_start + offset_in_chunk;
+			u4 offset  = original_pc - chunk->original_start;
+			best_match = chunk->new_start + offset;
 		}
 	}
 
-	/* We cannot find pc in any chunk - should not happen */
-	return original_pc; /* fallback */
+	return best_match;
 }
 
+int
+bb_add_switch_inst(bytecode_builder_t *bb,
+                   const u1 *original_code,
+                   u4 original_pc,
+                   u4 inst_len)
+{
+	u1 opcode  = original_code[original_pc];
+	u4 pad     = (4 - ((original_pc + 1) % 4)) % 4;
+	u4 new_pc  = bb->len;
+	u4 new_pad = (4 - ((new_pc + 1) % 4)) % 4;
+
+	/* Allocate space */
+	if (bb_ensure_capacity(bb, inst_len + (new_pad - pad)) != 0)
+		return 1;
+
+	/* Write the opcode */
+	bb->buf[bb->len++] = opcode;
+
+	/* Write padding */
+	for (u4 i = 0; i < new_pad; i++)
+		bb->buf[bb->len++] = 0;
+
+	u4 data_offset = original_pc + 1 + pad;
+
+	/* Read and remap default offset */
+	i4 default_offset  = (i4)read_u4(&original_code[data_offset]);
+	u4 original_target = original_pc + default_offset;
+	u4 new_target      = bb_map_pc(bb, original_target);
+	i4 new_default     = (i4)(new_target - new_pc);
+	write_i4(&bb->buf[bb->len], new_default);
+	bb->len += 4; /* advance the 4 bytes we just wrote */
+
+	if (opcode == OP_tableswitch) /* tableswitch */
+	{
+		i4 low  = (i4)read_u4(&original_code[data_offset + 4]);
+		i4 high = (i4)read_u4(&original_code[data_offset + 8]);
+
+		write_i4(&bb->buf[bb->len], low);
+		bb->len += 4;
+		write_i4(&bb->buf[bb->len], high);
+		bb->len += 4;
+
+		/* Remap jump offsets */
+		for (i4 i = 0; i <= (high - low); i++)
+		{
+			i4 offset =
+			    (i4)read_u4(&original_code[data_offset + 12 + (i * 4)]);
+			original_target = original_pc + offset;
+			new_target      = bb_map_pc(bb, original_target);
+			i4 new_offset   = (i4)(new_target - new_pc);
+			write_i4(&bb->buf[bb->len], new_offset);
+			bb->len += 4;
+		}
+	}
+	else /* lookupswitch */
+	{
+		/* lookupswitch <0-3 byte pad\>
+		        defaultbyte1 defaultbyte2 defaultbyte3 defaultbyte4
+		        npairs1 npairs2 npairs3 npairs4 match-offset pairs...
+		*/
+		i4 npairs = (i4)read_u4(&original_code[data_offset + 4]);
+
+		write_i4(&bb->buf[bb->len], npairs);
+		bb->len += 4;
+
+		/* Remap match-offset pairs */
+		for (i4 i = 0; i < npairs; i++)
+		{
+			i4 match = (i4)read_u4(&original_code[data_offset + 8 + (i * 8)]);
+			i4 offset =
+			    (i4)read_u4(&original_code[data_offset + 12 + (i * 8)]);
+
+			write_i4(&bb->buf[bb->len], match);
+			bb->len += 4;
+
+			original_target = original_pc + offset;
+			new_target      = bb_map_pc(bb, original_target);
+			i4 new_offset   = (i4)(new_target - new_pc);
+			write_i4(&bb->buf[bb->len], new_offset);
+			bb->len += 4;
+		}
+	}
+
+	return 0;
+}
+
+int
+bb_add_branch_2byte(bytecode_builder_t *bb, const u1 *original_code, u4 original_pc)
+{
+	if (bb_ensure_capacity(bb, 3) != 0)
+		return 1;
+
+	u1 opcode = original_code[original_pc];
+	// i2 offset = (i2)((original_code[original_pc + 1] << 8) |
+	// 	original_code[original_pc + 2]);
+	i2 offset = (i2)read_u2(&original_code[original_pc + 1]);
+
+	/* Calculate original target */
+	u4 original_target = original_pc + offset;
+
+	/* Remap to new target */
+	u4 new_pc     = bb->len;
+	u4 new_target = bb_map_pc(bb, original_target);
+	i2 new_offset = (i2)(new_target - new_pc);
+
+	/* Write the remapped instruction */
+	bb->buf[bb->len++] = opcode;
+	bb->buf[bb->len++] = (u1)(new_offset >> 8);
+	bb->buf[bb->len++] = (u1)(new_offset & 0xff);
+
+	return 0;
+}
+
+int
+bb_add_branch_4byte(bytecode_builder_t *bb, const u1 *original_code, u4 original_pc)
+{
+	if (bb_ensure_capacity(bb, 5) != 0)
+		return 1;
+
+	u1 opcode = original_code[original_pc];
+	i4 offset = (i4)read_u4(&original_code[original_pc + 1]);
+
+	/* Calculate original target */
+	u4 original_target = original_pc + offset;
+
+	/* Remap to new target */
+	u4 new_pc     = bb->len;
+	u4 new_target = bb_map_pc(bb, original_target);
+	i4 new_offset = (i4)(new_target - new_pc);
+
+	/* Write remapped instruction */
+	bb->buf[bb->len++] = opcode;
+	write_i4(&bb->buf[bb->len], new_offset);
+	bb->len += 4;
+
+	return 0;
+}
+
+/* clang-format off */
 int
 bb_add_original_with_exit_injection(bytecode_builder_t *bb,
                                     const u1 *original_code,
@@ -399,7 +543,27 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 	while (original_pos < chunk_len)
 	{
 		u1 opcode = original_code[start_offset + original_pos];
+		u1 inst_len = get_inst_len(&original_code[start_offset], original_pos, chunk_len);
 
+		if (inst_len == 0 || original_pos + inst_len > chunk_len)
+		{
+			printf("ERROR: invalid instruction at offset %u (opcode=0x%02X, len =%u)\n",
+				original_pos, opcode, inst_len);
+			return 1;
+		}
+
+		/* Record chunk mapping */
+		if (bb->chunk_cnt < 32)
+		{
+			pc_chunk_t *chunk     = &bb->chunks[bb->chunk_cnt];
+			chunk->original_start = start_offset;
+			chunk->original_end   = start_offset + chunk_len;
+			chunk->new_start      = chunk_start;
+			chunk->new_len        = bb->len - chunk_start;
+			bb->chunk_cnt++;
+		}
+
+		//TODO use the OP_return etc instead of looping over this array
 		/* Is this a return opcode */
 		int is_return = 0;
 		for (size_t i = 0; i < sizeof(RETURN_OPCODES); i++)
@@ -417,27 +581,48 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 				return 1;
 		}
 
-		/* Copy original instruction */
-		if (bb_ensure_capacity(bb, 1) != 0)
-			return 1;
+		/* Handle variable length switches */
+		if (opcode == OP_tableswitch || opcode == OP_lookupswitch)
+		{
+			if (bb_add_switch_inst(bb, 
+					&original_code[start_offset], 
+					original_pos, 
+					inst_len) != 0)
+				return 1;
+		}
+		else if (IS_BRANCH[opcode] == 1) /* 2 byte offset */
+		{
+			if (bb_add_branch_2byte(bb, 
+					&original_code[start_offset], 
+					original_pos) != 0)
+				return 1;
+		}
+		else if (IS_BRANCH[opcode] == 2) /* 4 byte offset */
+		{
+			if (bb_add_branch_4byte(bb, 
+					&original_code[start_offset], 
+					original_pos) != 0)
+				return 1;
+		}
+		else
+		{
+			/* Copy original instruction */
+			if (bb_ensure_capacity(bb, inst_len) != 0)
+				return 1;
 
-		bb->buf[bb->len++] = opcode;
-		original_pos++;
-	}
+			memcpy(&bb->buf[bb->len], 
+               &original_code[start_offset + original_pos], 
+               inst_len);
+			
+			bb->len += inst_len;
+		}
 
-	/* Record chunk mapping */
-	if (bb->chunk_cnt < 32)
-	{
-		pc_chunk_t *chunk     = &bb->chunks[bb->chunk_cnt];
-		chunk->original_start = start_offset;
-		chunk->original_end   = start_offset + chunk_len;
-		chunk->new_start      = chunk_start;
-		chunk->new_len        = bb->len - chunk_start;
-		bb->chunk_cnt++;
+		original_pos += inst_len;
 	}
 
 	return 0;
 }
+/* clang-format on */
 
 static int
 create_new_code_attribute(arena_t *arena,

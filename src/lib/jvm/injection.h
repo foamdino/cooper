@@ -8,6 +8,7 @@
 #define JVM_INJECTION_H
 
 #include "bytecode.h"
+#include "opcode.h"
 #include "../arena.h"
 
 typedef struct injection_config injection_config_t;
@@ -114,6 +115,7 @@ static const bytecode_template_t METHOD_EXIT_TEMPLATE = {
     .placeholder_offsets = {1, 4, 7, 10},
     .placeholder_cnt     = 4};
 
+// TODO move to opcode.def X-Macro
 static const u1 RETURN_OPCODES[] = {
     0xB1, /* return */
     0xAC, /* ireturn */

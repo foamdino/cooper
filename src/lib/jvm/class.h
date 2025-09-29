@@ -12,6 +12,8 @@
 typedef uint8_t u1;
 typedef uint16_t u2;
 typedef uint32_t u4;
+typedef int16_t i2;
+typedef int32_t i4;
 
 #define CLASS_FILE_MAGIC            0xCAFEBABE
 
@@ -232,10 +234,16 @@ u2 read_u2_and_advance(const u1 *data, int *offset);
 
 u4 read_u4_and_advance(const u1 *data, int *offset);
 
+u2 read_u2(const u1 *data);
+
+u4 read_u4(const u1 *data);
+
 void write_u1_and_advance(u1 *data, int *offset, u1 value);
 
 void write_u2_and_advance(u1 *data, int *offset, u2 value);
 
 void write_u4_and_advance(u1 *data, int *offset, u4 value);
+
+void write_i4(u1 *dest, i4 value);
 
 #endif /* JVM_CLASS_H */

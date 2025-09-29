@@ -57,6 +57,20 @@ read_u4_and_advance(const u1 *data, int *offset)
 	return v;
 }
 
+u2
+read_u2(const u1 *data)
+{
+	u2 v = (data[0] << 8) | data[1];
+	return v;
+}
+
+u4
+read_u4(const u1 *data)
+{
+	u4 v = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+	return v;
+}
+
 void
 write_u1_and_advance(u1 *data, int *offset, u1 value)
 {
@@ -77,4 +91,13 @@ write_u4_and_advance(u1 *data, int *offset, u4 value)
 	data[(*offset)++] = (u1)(value >> 16);
 	data[(*offset)++] = (u1)(value >> 8);
 	data[(*offset)++] = (u1)(value & 0xFF);
+}
+
+void
+write_i4(u1 *dest, i4 value)
+{
+	dest[0] = (u1)(value >> 24);
+	dest[1] = (u1)(value >> 16);
+	dest[2] = (u1)(value >> 8);
+	dest[3] = (u1)value;
 }
