@@ -2103,7 +2103,11 @@ method_event_thread_func(void *arg)
 			}
 
 			method_sample_t *sample =
-			    init_method_sample(arena, method_info->sample_index, mid);
+			    init_method_sample(arena,
+			                       method_info->sample_index,
+			                       mid,
+			                       me->timestamp,
+			                       me->cpu);
 
 			if (!sample)
 			{
@@ -2202,7 +2206,7 @@ method_event_thread_func(void *arg)
 			/* Calculate execution time */
 			if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
 			{
-				uint64_t end_time = get_current_time_ns();
+				uint64_t end_time = me->timestamp;
 				exec_time         = end_time - target->start_time;
 			}
 
@@ -2216,7 +2220,7 @@ method_event_thread_func(void *arg)
 
 			if ((flags & METRIC_FLAG_CPU) != 0)
 			{
-				uint64_t end_cpu = cycles_end();
+				uint64_t end_cpu = me->cpu;
 
 				if (end_cpu > target->start_cpu)
 					cpu_delta = end_cpu - target->start_cpu;

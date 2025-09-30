@@ -37,8 +37,6 @@ bytecode_result_e bytecode_write_class(arena_t *arena,
 const char *bytecode_get_class_name(const class_file_t *cf);
 const char *bytecode_get_method_name(const class_file_t *cf, u2 method_index);
 const char *bytecode_get_method_descriptor(const class_file_t *cf, u2 method_index);
-void bytecode_print_class_info(const class_file_t *cf);
-void bytecode_print_method_details(const class_file_t *cf, u2 method_idx);
 
 /* Helper for getting UTF8 strings from constant pool */
 const char *bytecode_get_utf8_constant(const class_file_t *cf, u2 index);

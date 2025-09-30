@@ -209,7 +209,11 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
  * Return NULL if it fails to allocate space in the provided arena
  */
 method_sample_t *
-init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
+init_method_sample(arena_t *arena,
+                   int method_index,
+                   jmethodID method_id,
+                   uint64_t timestamp,
+                   uint64_t cpu)
 {
 
 	assert(arena != NULL);
@@ -231,10 +235,10 @@ init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
 	unsigned int flags = global_ctx->metrics->metric_flags[method_index];
 
 	if (flags & METRIC_FLAG_TIME)
-		sample->start_time = get_current_time_ns();
+		sample->start_time = timestamp;
 
 	if (flags & METRIC_FLAG_CPU)
-		sample->start_cpu = cycles_start();
+		sample->start_cpu = cpu;
 
 	return sample;
 }
@@ -248,13 +252,6 @@ record_method_execution(agent_context_t *ctx,
                         uint64_t cycles)
 {
 	method_metrics_soa_t *metrics = ctx->metrics;
-
-	// LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu,
-	// cycles=%lu\n",
-	//           method_index,
-	//           (unsigned long)exec_time_ns,
-	//           (unsigned long)memory_bytes,
-	//           (unsigned long)cycles);
 
 	/* Check for valid index */
 	if (method_index < 0 || (size_t)method_index >= metrics->count)
@@ -306,13 +303,6 @@ record_method_execution(agent_context_t *ctx,
 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
 		atomic_fetch_add_explicit(
 		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
-
-	// LOG_DEBUG(
-	//     "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
-	//     method_index,
-	//     (unsigned long)metrics->sample_counts[method_index],
-	//     (unsigned long)metrics->total_time_ns[method_index],
-	//     (unsigned long)metrics->alloc_bytes[method_index]);
 }
 
 static object_allocation_metrics_t *
@@ -684,250 +674,250 @@ find_method_index(method_metrics_soa_t *metrics, const char *signature)
 	return -1; /* Not found */
 }
 
-/*
- * Method entry callback
- */
-void JNICALL
-method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID method)
-{
-	UNUSED(jvmti);
-	UNUSED(jni);
-	UNUSED(thread);
+// /*
+//  * Method entry callback
+//  */
+// void JNICALL
+// method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID method)
+// {
+// 	UNUSED(jvmti);
+// 	UNUSED(jni);
+// 	UNUSED(thread);
 
-	cooper_method_info_t *method_info =
-	    ht_get(global_ctx->interesting_methods, method);
+// 	cooper_method_info_t *method_info =
+// 	    ht_get(global_ctx->interesting_methods, method);
 
-	/* We either didn't find the method (should be rare) or it's not one we're
-	 * configured to sample. */
-	if (method_info == NULL || method_info->sample_index < 0)
-		return;
+// 	/* We either didn't find the method (should be rare) or it's not one we're
+// 	 * configured to sample. */
+// 	if (method_info == NULL || method_info->sample_index < 0)
+// 		return;
 
-	LOG_INFO("Found method: %s in interesting_methods hashtable",
-	         method_info->full_name);
+// 	LOG_INFO("Found method: %s in interesting_methods hashtable",
+// 	         method_info->full_name);
 
-	/* We found a method to track. Atomically increment its total call count. */
-	uint64_t current_calls = atomic_fetch_add_explicit(
-	    &global_ctx->metrics->call_counts[method_info->sample_index],
-	    1,
-	    memory_order_relaxed);
+// 	/* We found a method to track. Atomically increment its total call count. */
+// 	uint64_t current_calls = atomic_fetch_add_explicit(
+// 	    &global_ctx->metrics->call_counts[method_info->sample_index],
+// 	    1,
+// 	    memory_order_relaxed);
 
-	int sample_rate =
-	    global_ctx->metrics
-		->sample_rates[method_info->sample_index]; /* Read-only after init */
+// 	int sample_rate =
+// 	    global_ctx->metrics
+// 		->sample_rates[method_info->sample_index]; /* Read-only after init */
 
-	/* Decide whether to sample this specific call based on the rate. */
-	if ((current_calls % sample_rate) != 0)
-		return; /* Don't sample this call. */
+// 	/* Decide whether to sample this specific call based on the rate. */
+// 	if ((current_calls % sample_rate) != 0)
+// 		return; /* Don't sample this call. */
 
-	/* This call will be sampled. Proceed with creating the method_sample_t. */
-	arena_t *arena = global_ctx->arenas[SAMPLE_ARENA_ID];
-	if (!arena)
-		return;
+// 	/* This call will be sampled. Proceed with creating the method_sample_t. */
+// 	arena_t *arena = global_ctx->arenas[SAMPLE_ARENA_ID];
+// 	if (!arena)
+// 		return;
 
-	thread_context_t *tc = get_thread_local_context();
-	if (!tc)
-		return;
+// 	thread_context_t *tc = get_thread_local_context();
+// 	if (!tc)
+// 		return;
 
-	method_sample_t *sample =
-	    init_method_sample(arena, method_info->sample_index, method);
+// 	method_sample_t *sample =
+// 	    init_method_sample(arena, method_info->sample_index, method);
 
-	if (!sample)
-		return;
+// 	if (!sample)
+// 		return;
 
-	/* Push the sample onto the thread's stack. */
-	sample->parent = tc->sample;
-	tc->sample     = sample;
-	tc->stack_depth++;
+// 	/* Push the sample onto the thread's stack. */
+// 	sample->parent = tc->sample;
+// 	tc->sample     = sample;
+// 	tc->stack_depth++;
 
-	// LOG_DEBUG(
-	//     "[ENTRY] Sampling method %s.%s\n", info->class_sig,
-	//     method_info->method_name);
-}
+// 	// LOG_DEBUG(
+// 	//     "[ENTRY] Sampling method %s.%s\n", info->class_sig,
+// 	//     method_info->method_name);
+// }
 
-/*
- * Method exit callback
- */
-void JNICALL
-method_exit_callback(jvmtiEnv *jvmti,
-                     JNIEnv *jni,
-                     jthread thread,
-                     jmethodID method,
-                     jboolean was_popped_by_exception,
-                     jvalue return_value)
-{
-	UNUSED(jni);
-	UNUSED(thread);
-	UNUSED(was_popped_by_exception);
-	UNUSED(return_value);
+// /*
+//  * Method exit callback
+//  */
+// void JNICALL
+// method_exit_callback(jvmtiEnv *jvmti,
+//                      JNIEnv *jni,
+//                      jthread thread,
+//                      jmethodID method,
+//                      jboolean was_popped_by_exception,
+//                      jvalue return_value)
+// {
+// 	UNUSED(jni);
+// 	UNUSED(thread);
+// 	UNUSED(was_popped_by_exception);
+// 	UNUSED(return_value);
 
-#ifndef ENABLE_DEBUG_LOGS
-	UNUSED(jvmti);
-#endif
+// #ifndef ENABLE_DEBUG_LOGS
+// 	UNUSED(jvmti);
+// #endif
 
-	/* Get thread-local context */
-	thread_context_t *context = get_thread_local_context();
+// 	/* Get thread-local context */
+// 	thread_context_t *context = get_thread_local_context();
 
-	/* Cannot do anything without the thread_context */
-	if (!context)
-		return;
+// 	/* Cannot do anything without the thread_context */
+// 	if (!context)
+// 		return;
 
-	// if (!context->sample || context->sample->method_index < 0)
-	// {
-	// 	LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
-	// 	          context,
-	// 	          context->sample);
-	// }
+// 	// if (!context->sample || context->sample->method_index < 0)
+// 	// {
+// 	// 	LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
+// 	// 	          context,
+// 	// 	          context->sample);
+// 	// }
 
-	/* We need to look in our stack to find a corresponding method entry
-	Note that the JVM doesn't guarantee ordering of method entry/exits for a variety
-	of reasons:
-	- Threading
-	- Optimizations
-	- etc
-	*/
-	method_sample_t *current = context->sample;
-	method_sample_t *parent  = NULL;
-	method_sample_t *target  = NULL;
+// 	/* We need to look in our stack to find a corresponding method entry
+// 	Note that the JVM doesn't guarantee ordering of method entry/exits for a variety
+// 	of reasons:
+// 	- Threading
+// 	- Optimizations
+// 	- etc
+// 	*/
+// 	method_sample_t *current = context->sample;
+// 	method_sample_t *parent  = NULL;
+// 	method_sample_t *target  = NULL;
 
-	/* Top of stack matches - quick case */
-	if (current != NULL && current->method_id == method)
-	{
-		target          = current;
-		context->sample = current->parent; /* Pop from top of stack */
-		context->stack_depth--;
-	}
-	else if (current != NULL)
-	{
-		/* We need to search the stack for a matching method - this seems to be
-		 * the common case */
-		// LOG_DEBUG("Method exit mismatch, searching for method [%p] in
-		// stack\n");
+// 	/* Top of stack matches - quick case */
+// 	if (current != NULL && current->method_id == method)
+// 	{
+// 		target          = current;
+// 		context->sample = current->parent; /* Pop from top of stack */
+// 		context->stack_depth--;
+// 	}
+// 	else if (current != NULL)
+// 	{
+// 		/* We need to search the stack for a matching method - this seems to be
+// 		 * the common case */
+// 		// LOG_DEBUG("Method exit mismatch, searching for method [%p] in
+// 		// stack\n");
 
-		/* Traverse stack to find target */
-		while (current)
-		{
-			if (current->method_id == method)
-			{
-				target = current;
-				/* Remove node from linked-list/stack */
-				if (parent)
-					parent->parent =
-					    current->parent; /* Skip over this node */
-				else
-					context->sample =
-					    current->parent; /* Update head of list */
+// 		/* Traverse stack to find target */
+// 		while (current)
+// 		{
+// 			if (current->method_id == method)
+// 			{
+// 				target = current;
+// 				/* Remove node from linked-list/stack */
+// 				if (parent)
+// 					parent->parent =
+// 					    current->parent; /* Skip over this node */
+// 				else
+// 					context->sample =
+// 					    current->parent; /* Update head of list */
 
-				context->stack_depth--;
-				break;
-			}
-			/* not found, move onto next */
-			parent  = current;
-			current = current->parent;
-		}
-	}
+// 				context->stack_depth--;
+// 				break;
+// 			}
+// 			/* not found, move onto next */
+// 			parent  = current;
+// 			current = current->parent;
+// 		}
+// 	}
 
-	/* Only process the exit if it matches the current method at the top of our stack
-	 * of samples */
-	if (!target)
-	{
-		// LOG_DEBUG("No matching method found for methodID [%p]\n", method);
-		return;
-	}
+// 	/* Only process the exit if it matches the current method at the top of our stack
+// 	 * of samples */
+// 	if (!target)
+// 	{
+// 		// LOG_DEBUG("No matching method found for methodID [%p]\n", method);
+// 		return;
+// 	}
 
-	// LOG_DEBUG("Matching method found for methodID [%p]\n", method);
-	unsigned int flags = 0;
+// 	// LOG_DEBUG("Matching method found for methodID [%p]\n", method);
+// 	unsigned int flags = 0;
 
-	if (target->method_index >= 0
-	    && (size_t)target->method_index < global_ctx->metrics->count)
-		flags = global_ctx->metrics->metric_flags[target->method_index];
+// 	if (target->method_index >= 0
+// 	    && (size_t)target->method_index < global_ctx->metrics->count)
+// 		flags = global_ctx->metrics->metric_flags[target->method_index];
 
-	/* Get metrics if they were enabled */
-	uint64_t exec_time    = 0;
-	uint64_t memory_delta = 0;
-	uint64_t cpu_delta    = 0;
+// 	/* Get metrics if they were enabled */
+// 	uint64_t exec_time    = 0;
+// 	uint64_t memory_delta = 0;
+// 	uint64_t cpu_delta    = 0;
 
-	/* Calculate execution time */
-	if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
-	{
-		uint64_t end_time = get_current_time_ns();
-		exec_time         = end_time - target->start_time;
-	}
+// 	/* Calculate execution time */
+// 	if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
+// 	{
+// 		uint64_t end_time = get_current_time_ns();
+// 		exec_time         = end_time - target->start_time;
+// 	}
 
-	if ((flags & METRIC_FLAG_MEMORY) != 0)
-	{
-		// LOG_DEBUG("sampling memory for %d\n", target->method_index);
-		/* JVM heap allocations during method execution */
-		memory_delta = target->current_alloc_bytes;
-	}
+// 	if ((flags & METRIC_FLAG_MEMORY) != 0)
+// 	{
+// 		// LOG_DEBUG("sampling memory for %d\n", target->method_index);
+// 		/* JVM heap allocations during method execution */
+// 		memory_delta = target->current_alloc_bytes;
+// 	}
 
-	if ((flags & METRIC_FLAG_CPU) != 0)
-	{
-		uint64_t end_cpu = cycles_end();
+// 	if ((flags & METRIC_FLAG_CPU) != 0)
+// 	{
+// 		uint64_t end_cpu = cycles_end();
 
-		if (end_cpu > target->start_cpu)
-			cpu_delta = end_cpu - target->start_cpu;
-		else
-			LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu",
-			          (unsigned long long)end_cpu,
-			          (unsigned long long)target->start_cpu);
-	}
+// 		if (end_cpu > target->start_cpu)
+// 			cpu_delta = end_cpu - target->start_cpu;
+// 		else
+// 			LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu",
+// 			          (unsigned long long)end_cpu,
+// 			          (unsigned long long)target->start_cpu);
+// 	}
 
-	/* Record the metrics */
-	record_method_execution(
-	    global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
+// 	/* Record the metrics */
+// 	record_method_execution(
+// 	    global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
 
-#ifdef ENABLE_DEBUG_LOGS
-	char *method_name      = NULL;
-	char *method_signature = NULL;
-	char *class_signature  = NULL;
-	jclass declaringClass;
-	jvmtiError err;
+// #ifdef ENABLE_DEBUG_LOGS
+// 	char *method_name      = NULL;
+// 	char *method_signature = NULL;
+// 	char *class_signature  = NULL;
+// 	jclass declaringClass;
+// 	jvmtiError err;
 
-	/* Get method details for logging */
-	if (flags != 0)
-	{
-		/* Get method name */
-		err = (*jvmti)->GetMethodName(
-		    jvmti, method, &method_name, &method_signature, NULL);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("GetMethodName failed with error %d\n", err);
-			return; /* Cannot do anything in this case */
-		}
+// 	/* Get method details for logging */
+// 	if (flags != 0)
+// 	{
+// 		/* Get method name */
+// 		err = (*jvmti)->GetMethodName(
+// 		    jvmti, method, &method_name, &method_signature, NULL);
+// 		if (err != JVMTI_ERROR_NONE)
+// 		{
+// 			LOG_ERROR("GetMethodName failed with error %d\n", err);
+// 			return; /* Cannot do anything in this case */
+// 		}
 
-		/* Get declaring class */
-		err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
-			goto deallocate;
-		}
+// 		/* Get declaring class */
+// 		err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
+// 		if (err != JVMTI_ERROR_NONE)
+// 		{
+// 			LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
+// 			goto deallocate;
+// 		}
 
-		/* Get class signature */
-		err = (*jvmti)->GetClassSignature(
-		    jvmti, declaringClass, &class_signature, NULL);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR(" GetClassSignature failed with error %d\n", err);
-			goto deallocate;
-		}
+// 		/* Get class signature */
+// 		err = (*jvmti)->GetClassSignature(
+// 		    jvmti, declaringClass, &class_signature, NULL);
+// 		if (err != JVMTI_ERROR_NONE)
+// 		{
+// 			LOG_ERROR(" GetClassSignature failed with error %d\n", err);
+// 			goto deallocate;
+// 		}
 
-		LOG_INFO("[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu "
-		         "bytes\n",
-		         class_signature,
-		         method_name,
-		         method_signature,
-		         (unsigned long long)exec_time,
-		         (unsigned long long)memory_delta);
-	}
+// 		LOG_INFO("[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu "
+// 		         "bytes\n",
+// 		         class_signature,
+// 		         method_name,
+// 		         method_signature,
+// 		         (unsigned long long)exec_time,
+// 		         (unsigned long long)memory_delta);
+// 	}
 
-deallocate:
-	/* Deallocate memory allocated by JVMTI */
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_name);
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_signature);
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)class_signature);
-#endif
-}
+// deallocate:
+// 	/* Deallocate memory allocated by JVMTI */
+// 	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_name);
+// 	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_signature);
+// 	(*jvmti)->Deallocate(jvmti, (unsigned char *)class_signature);
+// #endif
+// }
 
 /**
  * Exception callback
@@ -1356,8 +1346,6 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(loader);
 	UNUSED(protection_domain);
 
-	// LOG_INFO("class_file_load_callback called for %s", name);
-
 	/* Never process our tracking class */
 	if (strcmp(TRACKER_CLASS, name) == 0)
 		return;
@@ -1372,7 +1360,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
 
-	LOG_INFO("injecting bytecode for %s", name);
+	LOG_DEBUG("injecting bytecode for %s", name);
 	/* Get the temp bytecode arena and rest */
 	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
 	arena_reset(bc_arena);
@@ -1397,8 +1385,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	    .exit_sig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"};
 
 	/* Inject */
-	// bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
-	bc_res = injection_add_method_tracking_clean(bc_arena, cf, &cfg);
+	bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
 
 	if (bc_res != BYTECODE_SUCCESS)
 	{
@@ -1433,37 +1420,10 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	*new_class_data     = jvmti_buf;
 	*new_class_data_len = mod_sz;
 
-	LOG_INFO("Successfully injected tracking into class %s (%d -> %d bytes)",
-	         name,
-	         class_data_len,
-	         mod_sz);
-
-	// /* Class passed filter, enqueue for background processing */
-	// arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-	// q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	// class_q_entry_t *class_entry =
-	//     arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
-
-	// if (!entry || !class_entry)
-	// {
-	// 	LOG_ERROR("Unable to allocate room from arena for q entries!");
-	// 	return;
-	// }
-
-	// /* Create our q entry */
-	// class_entry->class_sig = arena_strdup(q_entry_arena, name);
-	// entry->type            = Q_ENTRY_CLASS;
-
-	// /* Scan class_data for annotations */
-	// // TODO build out class file parsing in lib/jvm to deal with class_data
-	// //... use class_data_len and class_data, add result to class_entry->annotations
-	// // array
-	// entry->data = class_entry;
-	// /* Store the q entry in a hashtable
-	// we look up the q entry in the class_load_callback and add it to the q for
-	// background processing
-	// */
-	// ht_put(global_ctx->interesting_classes, name, class_entry);
+	LOG_DEBUG("Successfully injected tracking into class %s (%d -> %d bytes)",
+	          name,
+	          class_data_len,
+	          mod_sz);
 }
 
 static uint64_t
@@ -1519,6 +1479,11 @@ record_method_event(method_event_type_e event_type,
 	method_entry->timestamp   = get_current_time_ns();
 	method_entry->thread_id   = get_current_thread_id();
 
+	if (event_type == METHOD_ENTRY)
+		method_entry->cpu = cycles_start();
+	else
+		method_entry->cpu = cycles_end();
+
 	entry->type = Q_ENTRY_METHOD;
 	entry->data = method_entry;
 
@@ -1540,7 +1505,7 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 {
 	UNUSED(clazz);
 
-	LOG_INFO("JNICALL onMethodEntry");
+	// LOG_INFO("JNICALL onMethodEntry");
 
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
@@ -1565,7 +1530,7 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 {
 	UNUSED(clazz);
 
-	LOG_INFO("JNICALL onMethodExit");
+	// LOG_INFO("JNICALL onMethodExit");
 
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
@@ -2095,10 +2060,6 @@ init_jvm_capabilities(agent_context_t *ctx)
 	/* Set event callbacks */
 	memset(
 	    &ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
-
-	// TODO delete these when the bytecode injection is finished
-	// ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
-	// ctx->callbacks.event_callbacks.MethodExit = &method_exit_callback;
 
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 

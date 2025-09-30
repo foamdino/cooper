@@ -36,8 +36,6 @@ bytecode_get_class_name(const class_file_t *cf)
 	return bytecode_get_utf8_constant(cf, name_idx);
 }
 
-// TODO not sure we need these
-
 const char *
 bytecode_get_method_name(const class_file_t *cf, u2 method_index)
 {
@@ -48,24 +46,6 @@ bytecode_get_method_name(const class_file_t *cf, u2 method_index)
 
 	return bytecode_get_utf8_constant(cf, cf->methods[method_index].name_index);
 }
-
-// const char *
-// bytecode_get_method_descriptor(const class_file_t *cf, u2 method_index)
-// {
-// 	return NULL;
-// }
-
-// const char *
-// bytecode_get_field_name(const class_file_t *cf, u2 method_index)
-// {
-// 	return NULL;
-// }
-
-// const char *
-// bytecode_get_field_descriptor(const class_file_t *cf, u2 method_index)
-// {
-// 	return NULL;
-// }
 
 static bytecode_result_e
 parse_constant_pool_entry(arena_t *arena,
@@ -598,37 +578,6 @@ bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
 			i++;
 	}
 
-	/* Add this debug in bytecode_write_class, right after writing constant pool */
-	printf("=== WRITTEN CONSTANT POOL DEBUG ===\n");
-	printf("Memory vs Written index mapping:\n");
-
-	/* Simulate what gets written */
-	u2 written_index = 1;
-	for (u2 i = 1; i < cf->constant_pool_count; i++)
-	{
-		const constant_pool_info_t *entry = &cf->constant_pool[i];
-		if (entry->tag == 0)
-		{
-			printf("Memory[%d]: tag=0 (skipped, no written equivalent)\n", i);
-			continue;
-		}
-
-		printf("Memory[%d] -> Written[%d]: tag=%d", i, written_index, entry->tag);
-		if (entry->tag == CONSTANT_Utf8)
-		{
-			printf(" UTF8='%s'", (char *)entry->info.utf8.bytes);
-		}
-		printf("\n");
-
-		written_index++;
-
-		if (entry->tag == CONSTANT_Long || entry->tag == CONSTANT_Double)
-		{
-			i++; /* Skip unusable slot in memory */
-		}
-	}
-	printf("===============================\n");
-
 	/* Write class information */
 	write_u2_and_advance(buf, &offset, cf->access_flags);
 	write_u2_and_advance(buf, &offset, cf->this_class);
@@ -707,85 +656,4 @@ bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
 	*len  = offset;
 
 	return BYTECODE_SUCCESS;
-}
-
-void
-bytecode_print_class_info(const class_file_t *cf)
-{
-	printf("Class File Information:\n");
-	printf("  Magic: 0x%08X\n", cf->magic);
-	printf("  Version: %d.%d\n", cf->major_version, cf->minor_version);
-	printf("  Class: %s\n", bytecode_get_class_name(cf));
-	printf("  Constant Pool: %d entries\n", cf->constant_pool_count - 1);
-	printf("  Methods: %d\n", cf->methods_count);
-	printf("  Fields: %d\n", cf->fields_count);
-	printf("  Attributes: %d\n", cf->attributes_count);
-
-	printf("\nMethods:\n");
-	for (u2 i = 0; i < cf->methods_count; i++)
-	{
-		const char *name =
-		    bytecode_get_utf8_constant(cf, cf->methods[i].name_index);
-		const char *desc =
-		    bytecode_get_utf8_constant(cf, cf->methods[i].descriptor_index);
-		printf("[%d] %s %s\n", i, name ? name : "?", desc ? desc : "?");
-	}
-	printf("\nAttributes:\n");
-	for (u2 i = 0; i < cf->attributes_count; i++)
-	{
-		const char *name = bytecode_get_utf8_constant(
-		    cf, cf->attributes[i].attribute_name_index);
-		printf("[%d] %s\n", i, name ? name : "?");
-	}
-}
-
-void
-bytecode_print_method_details(const class_file_t *cf, u2 method_idx)
-{
-	if (method_idx >= cf->methods_count)
-	{
-		printf("Invalid method index: %d\n", method_idx);
-		return;
-	}
-
-	const method_info_t *method = &cf->methods[method_idx];
-	const char *name            = bytecode_get_method_name(cf, method_idx);
-	// const char* desc = bytecode_get_method_descriptor(cf, method_idx);
-	char *desc = "?";
-	printf("\nMethod [%d]: %s%s\n", method_idx, name ? name : "?", desc ? desc : "?");
-	printf("  Access flags: 0x%04X\n", method->access_flags);
-	printf("  Attributes: %d\n", method->attributes_count);
-
-	/* Look for Code attribute */
-	for (u2 i = 0; i < method->attributes_count; i++)
-	{
-		const char *attr_name = bytecode_get_utf8_constant(
-		    cf, method->attributes[i].attribute_name_index);
-		printf("    [%d] %s (length: %d)\n",
-		       i,
-		       attr_name ? attr_name : "?",
-		       method->attributes[i].attribute_length);
-
-		if (attr_name && strcmp(attr_name, "Code") == 0)
-		{
-			/* Parse Code attribute to show bytecode size */
-			int offset          = 0;
-			const u1 *code_data = method->attributes[i].info;
-			u2 max_stack        = read_u2_and_advance(code_data, &offset);
-			u2 max_locals       = read_u2_and_advance(code_data, &offset);
-			u4 code_length      = read_u4_and_advance(code_data, &offset);
-
-			printf("      Max stack: %d, Max locals: %d\n",
-			       max_stack,
-			       max_locals);
-			printf("      Bytecode length: %d bytes\n", code_length);
-
-			/* Show first few bytes of bytecode */
-			printf("      First 16 bytes: ");
-			for (u4 j = 0; j < 16 && j < code_length; j++)
-				printf("%02X ", code_data[offset + j]);
-
-			printf("\n");
-		}
-	}
 }

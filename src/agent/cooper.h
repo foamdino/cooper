@@ -62,7 +62,7 @@
 #define METRICS_ARENA_SZ      8 * 1024 * 1024
 #define SCRATCH_ARENA_SZ      16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
-#define Q_ENTRY_ARENA_SZ      2048 * 1024
+#define Q_ENTRY_ARENA_SZ      4 * 1024 * 1024
 #define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
 #define FLAMEGRAPH_ARENA_SZ   1024 * 1024
 #define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
@@ -419,7 +419,9 @@ pattern_filter_entry_t *find_matching_filter(const pattern_filter_t *filter,
 thread_context_t *get_thread_local_context();
 method_sample_t *init_method_sample(arena_t *arena,
                                     int method_index,
-                                    jmethodID method_id);
+                                    jmethodID method_id,
+                                    uint64_t timestamp,
+                                    uint64_t cpu);
 
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);

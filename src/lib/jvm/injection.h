@@ -129,10 +129,6 @@ bytecode_result_e injection_add_method_tracking(arena_t *arena,
                                                 class_file_t *cf,
                                                 injection_config_t *config);
 
-bytecode_result_e injection_add_method_tracking_clean(arena_t *arena,
-                                                      class_file_t *cf,
-                                                      injection_config_t *config);
-
 /* Helper function to find or create constant pool entries */
 u2 injection_find_or_add_utf8_constant(arena_t *arena, class_file_t *cf, const char *str);
 u2 injection_find_or_add_class_constant(arena_t *arena,

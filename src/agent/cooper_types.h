@@ -52,6 +52,7 @@ struct method_q_entry
 	char *method_name;
 	char *method_sig;
 	uint64_t timestamp;
+	uint64_t cpu;
 	uint64_t thread_id;
 };
 
