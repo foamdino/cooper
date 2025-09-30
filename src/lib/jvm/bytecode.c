@@ -271,7 +271,7 @@ ClassFile {
 //  perhaps decrement len by bytes advanced and ensure that the result is 0 at end
 //  perhaps pass len to read_x_and_advance and check in these functions?
 bytecode_result_e
-bytecode_parse_class(arena_t *arena, const u1 *data, u4 len, class_file_t **result)
+bytecode_parse_class(arena_t *arena, const u1 *data, class_file_t **result)
 {
 	if (!arena || !data || !result)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;

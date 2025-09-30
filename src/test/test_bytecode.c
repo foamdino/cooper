@@ -51,8 +51,7 @@ print_method_details(const class_file_t *cf, u2 method_idx)
 
 	const method_info_t *method = &cf->methods[method_idx];
 	const char *name            = bytecode_get_method_name(cf, method_idx);
-	// const char* desc = bytecode_get_method_descriptor(cf, method_idx);
-	char *desc = "?";
+	char *desc                  = "?";
 	printf("\nMethod [%d]: %s%s\n", method_idx, name ? name : "?", desc ? desc : "?");
 	printf("  Access flags: 0x%04X\n", method->access_flags);
 	printf("  Attributes: %d\n", method->attributes_count);
@@ -145,9 +144,8 @@ test_injection(const char *filename)
 		return -1;
 	}
 
-	class_file_t *cf = NULL;
-	bytecode_result_e result =
-	    bytecode_parse_class(arena, class_data, class_size, &cf);
+	class_file_t *cf         = NULL;
+	bytecode_result_e result = bytecode_parse_class(arena, class_data, &cf);
 	if (result != BYTECODE_SUCCESS)
 	{
 		printf("Parse failed: %d\n", result);

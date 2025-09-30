@@ -25,7 +25,6 @@ enum bytecode_result
 
 bytecode_result_e bytecode_parse_class(arena_t *arena,
                                        const u1 *data,
-                                       u4 len,
                                        class_file_t **result);
 
 bytecode_result_e bytecode_write_class(arena_t *arena,
@@ -36,7 +35,6 @@ bytecode_result_e bytecode_write_class(arena_t *arena,
 /* Utility functions */
 const char *bytecode_get_class_name(const class_file_t *cf);
 const char *bytecode_get_method_name(const class_file_t *cf, u2 method_index);
-const char *bytecode_get_method_descriptor(const class_file_t *cf, u2 method_index);
 
 /* Helper for getting UTF8 strings from constant pool */
 const char *bytecode_get_utf8_constant(const class_file_t *cf, u2 index);

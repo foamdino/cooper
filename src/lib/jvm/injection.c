@@ -251,26 +251,6 @@ injection_find_or_add_methodref_constant(arena_t *arena,
 	return new_idx;
 }
 
-// static u4
-// find_new_pc(pc_mapping_t *map, u4 count, u4 original_pc)
-// {
-// 	for (u4 i = 0; i < count; i++)
-// 	{
-// 		if (map[i].original_pc == original_pc)
-// 			return map[i].new_pc;
-
-// 		/* Return the closest preceding mapping */
-// 		if (map[i].original_pc > original_pc)
-// 		{
-// 			return i > 0 ? map[i - 1].new_pc
-// 			                   + (original_pc - map[i - 1].original_pc)
-// 			             : original_pc;
-// 		}
-// 	}
-// 	/* Fallback - should not reach here if map is complete */
-// 	return original_pc;
-// }
-
 bytecode_builder_t *
 bb_create(arena_t *arena, u4 initial_capacity)
 {
@@ -483,8 +463,6 @@ bb_add_branch_2byte(bytecode_builder_t *bb, const u1 *original_code, u4 original
 		return 1;
 
 	u1 opcode = original_code[original_pc];
-	// i2 offset = (i2)((original_code[original_pc + 1] << 8) |
-	// 	original_code[original_pc + 2]);
 	i2 offset = (i2)read_u2(&original_code[original_pc + 1]);
 
 	/* Calculate original target */
@@ -538,7 +516,7 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
                                     const u2 exit_indices[])
 {
 	u4 original_pos = 0;
-	u4 chunk_start  = bb->len;
+	// u4 chunk_start  = bb->len;
 
 	while (original_pos < chunk_len)
 	{
@@ -567,19 +545,8 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 			bb->chunk_cnt++;
 		}
 
-		//TODO use the OP_return etc instead of looping over this array
-		/* Is this a return opcode */
-		int is_return = 0;
-		for (size_t i = 0; i < sizeof(RETURN_OPCODES); i++)
-		{
-			if (opcode == RETURN_OPCODES[i])
-			{
-				is_return = 1;
-				break;
-			}
-		}
-
-		if (is_return)
+		if (opcode == OP_return || opcode == OP_ireturn || opcode == OP_lreturn ||
+			opcode == OP_freturn || opcode == OP_dreturn || opcode == OP_areturn)
 		{
 			if (bb_add_template(bb, exit_template, exit_indices) != 0)
 				return 1;
@@ -806,7 +773,7 @@ inject_single_method(arena_t *arena,
 	    class_name_index, method_name_index, descriptor_index, exit_methodref};
 
 	/* Use template to add new method entry */
-	if (bb_add_template(bb, &METHOD_ENTRY_TEMPLATE, entry_indices) != 0)
+	if (bb_add_template(bb, &METHOD_TEMPLATE, entry_indices) != 0)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Add original code with exit injection */
@@ -814,7 +781,7 @@ inject_single_method(arena_t *arena,
 	                                        code_info.bytecode,
 	                                        0,
 	                                        code_info.code_length,
-	                                        &METHOD_EXIT_TEMPLATE,
+	                                        &METHOD_TEMPLATE,
 	                                        exit_indices)
 	    != 0)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;

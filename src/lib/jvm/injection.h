@@ -12,8 +12,6 @@
 #include "../arena.h"
 
 typedef struct injection_config injection_config_t;
-// TODO remove me
-typedef struct pc_mapping pc_mapping_t;
 typedef struct pc_chunk pc_chunk_t;
 typedef struct bytecode_template bytecode_template_t;
 typedef struct bytecode_builder bytecode_builder_t;
@@ -28,13 +26,6 @@ struct injection_config
 	const char
 	    *exit_sig; /**< eg.
 	                  "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V" */
-};
-
-// TODO remove me
-struct pc_mapping
-{
-	u4 original_pc;
-	u4 new_pc;
 };
 
 struct pc_chunk
@@ -64,8 +55,7 @@ struct bytecode_builder
 	u4 chunk_cnt;
 };
 
-// TODO have a single template as these are identical??
-static const bytecode_template_t METHOD_ENTRY_TEMPLATE = {
+static const bytecode_template_t METHOD_TEMPLATE = {
     .name = "method_entry",
     .len  = 12,
     .bytes =
@@ -89,41 +79,6 @@ static const bytecode_template_t METHOD_ENTRY_TEMPLATE = {
 	},
     .placeholder_offsets = {1, 4, 7, 10},
     .placeholder_cnt     = 4};
-
-static const bytecode_template_t METHOD_EXIT_TEMPLATE = {
-    .name = "method_exit",
-    .len  = 12,
-    .bytes =
-	{
-	    0x13,
-	    0xFF,
-	    0xFF, /* ldc_w #PLACEHOLDER0 (class name) */
-	    0x13,
-	    0xFF,
-	    0xFF, /* ldc_w #PLACEHOLDER1 (method name) */
-	    0x13,
-	    0xFF,
-	    0xFF, /* ldc_w #PLACEHOLDER2 (method signature) */
-	    0xB8,
-	    0xFF,
-	    0xFF, /* invokestatic #PLACEHOLDER3 (entry callback) */
-	    0x00,
-	    0x00,
-	    0x00,
-	    0x00 /* padding */
-	},
-    .placeholder_offsets = {1, 4, 7, 10},
-    .placeholder_cnt     = 4};
-
-// TODO move to opcode.def X-Macro
-static const u1 RETURN_OPCODES[] = {
-    0xB1, /* return */
-    0xAC, /* ireturn */
-    0xAD, /* lreturn */
-    0xAE, /* freturn */
-    0xAF, /* dreturn */
-    0xB0  /* areturn */
-};
 
 bytecode_result_e injection_add_method_tracking(arena_t *arena,
                                                 class_file_t *cf,
