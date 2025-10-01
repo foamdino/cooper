@@ -244,6 +244,6 @@ void write_u2_and_advance(u1 *data, int *offset, u2 value);
 
 void write_u4_and_advance(u1 *data, int *offset, u4 value);
 
-void write_i4(u1 *dest, i4 value);
+void write_u4(u1 *dest, u4 value);
 
 #endif /* JVM_CLASS_H */

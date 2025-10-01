@@ -8,247 +8,224 @@
 #include <stdio.h>
 #include "injection.h"
 
-// TODO smush these into a single helper
-// with a switch for tag, similar to the constant pool parsing
-u2
-injection_find_or_add_utf8_constant(arena_t *arena, class_file_t *cf, const char *str)
+bytecode_result_e
+injection_find_or_add_constant(arena_t *arena,
+                               class_file_t *cf,
+                               const constant_spec_t *spec,
+                               u2 *out_index)
 {
 	assert(arena != NULL);
 	assert(cf != NULL);
-	assert(str != NULL);
+	assert(spec != NULL);
+	assert(out_index != NULL);
 
-	/* Check if constant is present */
+	/* Search for existing constant */
 	for (u2 i = 1; i < cf->constant_pool_count; i++)
 	{
-		if (cf->constant_pool[i].tag == CONSTANT_Utf8)
+		if (cf->constant_pool[i].tag != spec->tag)
+			continue;
+
+		/* Tag matches, does the content also match */
+		int matches = 0;
+		switch (spec->tag)
 		{
-			const char *existing =
-			    (const char *)cf->constant_pool[i].info.utf8.bytes;
-			if (existing && strcmp(existing, str) == 0)
-				return i;
+			case CONSTANT_Utf8:
+				const char *existing =
+				    (const char *)cf->constant_pool[i].info.utf8.bytes;
+				matches = (existing
+				           && strcmp(existing, spec->data.utf8.str) == 0);
+				break;
+
+			case CONSTANT_String:
+				matches = (cf->constant_pool[i].info.string
+				           == spec->data.string.utf8_idx);
+				break;
+
+			case CONSTANT_Class:
+				matches = (cf->constant_pool[i].info.class_info.name_index
+				           == spec->data.class_info.name_idx);
+				break;
+
+			case CONSTANT_NameAndType:
+				matches =
+				    (cf->constant_pool[i].info.name_and_type.name_index
+				         == spec->data.name_and_type.name_idx
+				     && cf->constant_pool[i]
+				                .info.name_and_type.descriptor_index
+				            == spec->data.name_and_type.descriptor_idx);
+				break;
+
+			case CONSTANT_Methodref:
+				matches =
+				    (cf->constant_pool[i].info.methodref.class_index
+				         == spec->data.methodref.class_idx
+				     && cf->constant_pool[i]
+				                .info.methodref.name_and_type_index
+				            == spec->data.methodref.name_and_type_idx);
+				break;
+
+			default:
+				return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+		}
+
+		if (matches)
+		{
+			*out_index = i;
+			return BYTECODE_SUCCESS;
 		}
 	}
 
-	/* Not present, need to add */
-	u2 new_count = cf->constant_pool_count + 1;
+	/* We didn't find the constant already */
+	u2 new_cnt = cf->constant_pool_count + 1;
 	constant_pool_info_t *new_pool =
-	    arena_alloc(arena, new_count * sizeof(constant_pool_info_t));
+	    arena_alloc(arena, new_cnt * sizeof(constant_pool_info_t));
 
-	// TODO fix this, we should use a param for output and a normal result code
 	if (!new_pool)
-		return 0;
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
-	/* Copy the existing entries over */
+	/* Copy over existing entries / info */
 	memcpy(new_pool,
 	       cf->constant_pool,
 	       cf->constant_pool_count * sizeof(constant_pool_info_t));
 
-	/* Add new CONSTANT_Utf8 */
-	u2 new_idx                         = cf->constant_pool_count;
-	new_pool[new_idx].tag              = CONSTANT_Utf8;
-	new_pool[new_idx].info.utf8.length = strlen(str);
-	new_pool[new_idx].info.utf8.bytes  = arena_alloc(arena, strlen(str) + 1);
-	if (!new_pool[new_idx].info.utf8.bytes)
-		return 0; // TODO see other comment
+	/* Create the new entry based on tag, place at end of pool */
+	u2 new_idx            = cf->constant_pool_count;
+	new_pool[new_idx].tag = spec->tag;
 
-	/* Copy the bytes */
-	strcpy((char *)new_pool[new_idx].info.utf8.bytes, str);
+	switch (spec->tag)
+	{
+		case CONSTANT_Utf8:
+			size_t len                         = strlen(spec->data.utf8.str);
+			new_pool[new_idx].info.utf8.length = len;
+			new_pool[new_idx].info.utf8.bytes  = arena_alloc(arena, len + 1);
 
-	/* Update the class file constant pool */
+			if (!new_pool[new_idx].info.utf8.bytes)
+				return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+			strcpy((char *)new_pool[new_idx].info.utf8.bytes,
+			       spec->data.utf8.str);
+			break;
+
+		case CONSTANT_String:
+			new_pool[new_idx].info.string = spec->data.string.utf8_idx;
+			break;
+
+		case CONSTANT_Class:
+			new_pool[new_idx].info.class_info.name_index =
+			    spec->data.class_info.name_idx;
+			break;
+
+		case CONSTANT_NameAndType:
+			new_pool[new_idx].info.name_and_type.name_index =
+			    spec->data.name_and_type.name_idx;
+			new_pool[new_idx].info.name_and_type.descriptor_index =
+			    spec->data.name_and_type.descriptor_idx;
+			break;
+
+		case CONSTANT_Methodref:
+			new_pool[new_idx].info.methodref.class_index =
+			    spec->data.methodref.class_idx;
+			new_pool[new_idx].info.methodref.name_and_type_index =
+			    spec->data.methodref.name_and_type_idx;
+			break;
+
+		default:
+			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	/* Update class file */
 	cf->constant_pool       = new_pool;
-	cf->constant_pool_count = new_count;
+	cf->constant_pool_count = new_cnt;
 
-	return new_idx;
+	*out_index = new_idx;
+	return BYTECODE_SUCCESS;
 }
 
-u2
-injection_find_or_add_string_constant(arena_t *arena, class_file_t *cf, const char *str)
+bytecode_result_e
+injection_find_or_add_utf8_constant(arena_t *arena,
+                                    class_file_t *cf,
+                                    const char *str,
+                                    u2 *out_index)
 {
-	/* First, get or create the UTF8 constant */
-	u2 utf8_index = injection_find_or_add_utf8_constant(arena, cf, str);
-	if (utf8_index == 0)
-		return 0;
-
-	/* Check if String constant already exists */
-	for (u2 i = 1; i < cf->constant_pool_count; i++)
-	{
-		if (cf->constant_pool[i].tag == CONSTANT_String)
-		{
-			if (cf->constant_pool[i].info.string == utf8_index)
-				return i;
-		}
-	}
-
-	/* Create new String constant */
-	u2 new_size = cf->constant_pool_count + 1;
-	constant_pool_info_t *new_pool =
-	    arena_alloc(arena, new_size * sizeof(constant_pool_info_t));
-	if (!new_pool)
-		return 0;
-
-	memcpy(new_pool,
-	       cf->constant_pool,
-	       cf->constant_pool_count * sizeof(constant_pool_info_t));
-
-	u2 new_index                    = cf->constant_pool_count;
-	new_pool[new_index].tag         = CONSTANT_String;
-	new_pool[new_index].info.string = utf8_index;
-
-	cf->constant_pool       = new_pool;
-	cf->constant_pool_count = new_size;
-
-	return new_index;
+	constant_spec_t spec = {.tag = CONSTANT_Utf8, .data.utf8.str = str};
+	return injection_find_or_add_constant(arena, cf, &spec, out_index);
 }
 
-u2
+bytecode_result_e
 injection_find_or_add_class_constant(arena_t *arena,
                                      class_file_t *cf,
-                                     const char *class_name)
+                                     const char *class_name,
+                                     u2 *out_index)
 {
-	assert(arena != NULL);
-	assert(cf != NULL);
-	assert(class_name != NULL);
+	u2 class_name_index;
+	bytecode_result_e rc =
+	    injection_find_or_add_utf8_constant(arena, cf, class_name, &class_name_index);
 
-	u2 name_idx = injection_find_or_add_utf8_constant(arena, cf, class_name);
-	if (name_idx == 0)
-		return 0;
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	/* Check if this class constant exists */
-	for (u2 i = 1; i < cf->constant_pool_count; i++)
-	{
-		if (cf->constant_pool[i].tag == CONSTANT_Class)
-		{
-			if (cf->constant_pool[i].info.class_info.name_index == name_idx)
-				return i;
-		}
-	}
-
-	/* Not present, need to add */
-	u2 new_count = cf->constant_pool_count + 1;
-	constant_pool_info_t *new_pool =
-	    arena_alloc(arena, new_count * sizeof(constant_pool_info_t));
-
-	if (!new_pool)
-		return 0;
-
-	/* Copy the existing entries over */
-	memcpy(new_pool,
-	       cf->constant_pool,
-	       cf->constant_pool_count * sizeof(constant_pool_info_t));
-
-	/* Add new CONSTANT_Class*/
-	u2 new_idx                                   = cf->constant_pool_count;
-	new_pool[new_idx].tag                        = CONSTANT_Class;
-	new_pool[new_idx].info.class_info.name_index = name_idx;
-
-	/* Update the class file constant pool */
-	cf->constant_pool       = new_pool;
-	cf->constant_pool_count = new_count;
-
-	return new_idx;
+	constant_spec_t spec = {.tag                      = CONSTANT_Class,
+	                        .data.class_info.name_idx = class_name_index};
+	return injection_find_or_add_constant(arena, cf, &spec, out_index);
 }
 
-u2
+bytecode_result_e
+injection_find_or_add_string_constant(arena_t *arena,
+                                      class_file_t *cf,
+                                      const char *str,
+                                      u2 *out_index)
+{
+	u2 utf8_index;
+	bytecode_result_e rc =
+	    injection_find_or_add_utf8_constant(arena, cf, str, &utf8_index);
+
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
+
+	constant_spec_t spec = {.tag                  = CONSTANT_String,
+	                        .data.string.utf8_idx = utf8_index};
+	return injection_find_or_add_constant(arena, cf, &spec, out_index);
+}
+
+bytecode_result_e
 injection_find_or_add_methodref_constant(arena_t *arena,
                                          class_file_t *cf,
                                          const char *class_name,
                                          const char *method_name,
-                                         const char *method_sig)
+                                         const char *method_sig,
+                                         u2 *out_index)
 {
-	assert(arena != NULL);
-	assert(cf != NULL);
-	assert(class_name != NULL);
-	assert(method_name != NULL);
-	assert(method_sig != NULL);
+	/* Get or create dependencies */
+	u2 class_idx;
+	bytecode_result_e rc =
+	    injection_find_or_add_class_constant(arena, cf, class_name, &class_idx);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	/* Get the class constant */
-	u2 class_idx = injection_find_or_add_class_constant(arena, cf, class_name);
-	if (class_idx == 0)
-		return 0;
+	u2 name_idx;
+	rc = injection_find_or_add_utf8_constant(arena, cf, method_name, &name_idx);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	/* Get name and type constants */
-	u2 name_idx = injection_find_or_add_utf8_constant(arena, cf, method_name);
-	if (name_idx == 0)
-		return 0;
+	u2 desc_idx;
+	rc = injection_find_or_add_utf8_constant(arena, cf, method_sig, &desc_idx);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	u2 desc_idx = injection_find_or_add_utf8_constant(arena, cf, method_sig);
-	if (desc_idx == 0)
-		return 0;
+	/* Find or create NameAndType */
+	u2 name_type_idx;
+	constant_spec_t nat_spec = {.tag                         = CONSTANT_NameAndType,
+	                            .data.name_and_type.name_idx = name_idx,
+	                            .data.name_and_type.descriptor_idx = desc_idx};
+	rc = injection_find_or_add_constant(arena, cf, &nat_spec, &name_type_idx);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	/* Find or create the NameAndType constant */
-	u2 name_type_idx = 0;
-	for (u2 i = 1; i < cf->constant_pool_count; i++)
-	{
-		if (cf->constant_pool[i].tag == CONSTANT_NameAndType)
-		{
-			if (cf->constant_pool[i].info.name_and_type.name_index == name_idx
-			    && cf->constant_pool[i].info.name_and_type.descriptor_index
-			           == desc_idx)
-			{
-				name_type_idx = i;
-				break;
-			}
-		}
-	}
-
-	/* Create a new NameAndType constant as we couldn't find it */
-	if (name_type_idx == 0)
-	{
-		u2 new_count = cf->constant_pool_count + 1;
-		constant_pool_info_t *new_pool =
-		    arena_alloc(arena, new_count * sizeof(constant_pool_info_t));
-		if (!new_pool)
-			return 0;
-
-		/* Copy the existing entries over */
-		memcpy(new_pool,
-		       cf->constant_pool,
-		       cf->constant_pool_count * sizeof(constant_pool_info_t));
-
-		name_type_idx               = cf->constant_pool_count;
-		new_pool[name_type_idx].tag = CONSTANT_NameAndType;
-		new_pool[name_type_idx].info.name_and_type.name_index       = name_idx;
-		new_pool[name_type_idx].info.name_and_type.descriptor_index = desc_idx;
-
-		cf->constant_pool       = new_pool;
-		cf->constant_pool_count = new_count;
-	}
-
-	/* Check for methdoref */
-	for (u2 i = 1; i < cf->constant_pool_count; i++)
-	{
-		if (cf->constant_pool[i].tag == CONSTANT_Methodref)
-		{
-			if (cf->constant_pool[i].info.methodref.class_index == class_idx
-			    && cf->constant_pool[i].info.methodref.name_and_type_index
-			           == name_type_idx)
-				return i;
-		}
-	}
-
-	/* Need to create methodref */
-	u2 new_count = cf->constant_pool_count + 1;
-	constant_pool_info_t *new_pool =
-	    arena_alloc(arena, new_count * sizeof(constant_pool_info_t));
-	if (!new_pool)
-		return 0;
-
-	/* Copy the existing entries over */
-	memcpy(new_pool,
-	       cf->constant_pool,
-	       cf->constant_pool_count * sizeof(constant_pool_info_t));
-
-	/* Add new CONSTANT_Methodref */
-	u2 new_idx                                           = cf->constant_pool_count;
-	new_pool[new_idx].tag                                = CONSTANT_Methodref;
-	new_pool[new_idx].info.methodref.class_index         = class_idx;
-	new_pool[new_idx].info.methodref.name_and_type_index = name_type_idx;
-
-	/* Update the class file constant pool */
-	cf->constant_pool       = new_pool;
-	cf->constant_pool_count = new_count;
-
-	return new_idx;
+	/* Create Methodref */
+	constant_spec_t spec = {.tag                              = CONSTANT_Methodref,
+	                        .data.methodref.class_idx         = class_idx,
+	                        .data.methodref.name_and_type_idx = name_type_idx};
+	return injection_find_or_add_constant(arena, cf, &spec, out_index);
 }
 
 bytecode_builder_t *
@@ -395,32 +372,44 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 	u4 data_offset = original_pc + 1 + pad;
 
 	/* Read and remap default offset */
-	i4 default_offset  = (i4)read_u4(&original_code[data_offset]);
+	u4 default_offset  = read_u4(&original_code[data_offset]);
 	u4 original_target = original_pc + default_offset;
 	u4 new_target      = bb_map_pc(bb, original_target);
-	i4 new_default     = (i4)(new_target - new_pc);
-	write_i4(&bb->buf[bb->len], new_default);
+	u4 new_default     = (new_target - new_pc);
+	write_u4(&bb->buf[bb->len], new_default);
 	bb->len += 4; /* advance the 4 bytes we just wrote */
 
 	if (opcode == OP_tableswitch) /* tableswitch */
 	{
-		i4 low  = (i4)read_u4(&original_code[data_offset + 4]);
-		i4 high = (i4)read_u4(&original_code[data_offset + 8]);
+		u4 low  = read_u4(&original_code[data_offset + 4]);
+		u4 high = read_u4(&original_code[data_offset + 8]);
 
-		write_i4(&bb->buf[bb->len], low);
+		write_u4(&bb->buf[bb->len], low);
 		bb->len += 4;
-		write_i4(&bb->buf[bb->len], high);
+		write_u4(&bb->buf[bb->len], high);
 		bb->len += 4;
+
+		/* Validate: interpret as signed for range check */
+		i4 low_signed  = (i4)low;
+		i4 high_signed = (i4)high;
+		if (high_signed < low_signed)
+			return 1; /* Malformed bytecode */
+
+		/* Now safe to compute range as unsigned */
+		u4 num_cases = (high - low) + 1;
+
+		/* Sanity check: tableswitch can't have more than ~65K cases */
+		if (num_cases > 65536)
+			return 1; /* Suspiciously large or malformed */
 
 		/* Remap jump offsets */
-		for (i4 i = 0; i <= (high - low); i++)
+		for (u4 i = 0; i < num_cases; i++)
 		{
-			i4 offset =
-			    (i4)read_u4(&original_code[data_offset + 12 + (i * 4)]);
+			u4 offset = read_u4(&original_code[data_offset + 12 + (i * 4)]);
 			original_target = original_pc + offset;
 			new_target      = bb_map_pc(bb, original_target);
-			i4 new_offset   = (i4)(new_target - new_pc);
-			write_i4(&bb->buf[bb->len], new_offset);
+			u4 new_offset   = (new_target - new_pc);
+			write_u4(&bb->buf[bb->len], new_offset);
 			bb->len += 4;
 		}
 	}
@@ -430,78 +419,27 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 		        defaultbyte1 defaultbyte2 defaultbyte3 defaultbyte4
 		        npairs1 npairs2 npairs3 npairs4 match-offset pairs...
 		*/
-		i4 npairs = (i4)read_u4(&original_code[data_offset + 4]);
+		u4 npairs = read_u4(&original_code[data_offset + 4]);
 
-		write_i4(&bb->buf[bb->len], npairs);
+		write_u4(&bb->buf[bb->len], npairs);
 		bb->len += 4;
 
 		/* Remap match-offset pairs */
-		for (i4 i = 0; i < npairs; i++)
+		for (u4 i = 0; i < npairs; i++)
 		{
-			i4 match = (i4)read_u4(&original_code[data_offset + 8 + (i * 8)]);
-			i4 offset =
-			    (i4)read_u4(&original_code[data_offset + 12 + (i * 8)]);
+			u4 match  = read_u4(&original_code[data_offset + 8 + (i * 8)]);
+			u4 offset = read_u4(&original_code[data_offset + 12 + (i * 8)]);
 
-			write_i4(&bb->buf[bb->len], match);
+			write_u4(&bb->buf[bb->len], match);
 			bb->len += 4;
 
 			original_target = original_pc + offset;
 			new_target      = bb_map_pc(bb, original_target);
-			i4 new_offset   = (i4)(new_target - new_pc);
-			write_i4(&bb->buf[bb->len], new_offset);
+			u4 new_offset   = (new_target - new_pc);
+			write_u4(&bb->buf[bb->len], new_offset);
 			bb->len += 4;
 		}
 	}
-
-	return 0;
-}
-
-int
-bb_add_branch_2byte(bytecode_builder_t *bb, const u1 *original_code, u4 original_pc)
-{
-	if (bb_ensure_capacity(bb, 3) != 0)
-		return 1;
-
-	u1 opcode = original_code[original_pc];
-	i2 offset = (i2)read_u2(&original_code[original_pc + 1]);
-
-	/* Calculate original target */
-	u4 original_target = original_pc + offset;
-
-	/* Remap to new target */
-	u4 new_pc     = bb->len;
-	u4 new_target = bb_map_pc(bb, original_target);
-	i2 new_offset = (i2)(new_target - new_pc);
-
-	/* Write the remapped instruction */
-	bb->buf[bb->len++] = opcode;
-	bb->buf[bb->len++] = (u1)(new_offset >> 8);
-	bb->buf[bb->len++] = (u1)(new_offset & 0xff);
-
-	return 0;
-}
-
-int
-bb_add_branch_4byte(bytecode_builder_t *bb, const u1 *original_code, u4 original_pc)
-{
-	if (bb_ensure_capacity(bb, 5) != 0)
-		return 1;
-
-	u1 opcode = original_code[original_pc];
-	i4 offset = (i4)read_u4(&original_code[original_pc + 1]);
-
-	/* Calculate original target */
-	u4 original_target = original_pc + offset;
-
-	/* Remap to new target */
-	u4 new_pc     = bb->len;
-	u4 new_target = bb_map_pc(bb, original_target);
-	i4 new_offset = (i4)(new_target - new_pc);
-
-	/* Write remapped instruction */
-	bb->buf[bb->len++] = opcode;
-	write_i4(&bb->buf[bb->len], new_offset);
-	bb->len += 4;
 
 	return 0;
 }
@@ -516,7 +454,6 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
                                     const u2 exit_indices[])
 {
 	u4 original_pos = 0;
-	// u4 chunk_start  = bb->len;
 
 	while (original_pos < chunk_len)
 	{
@@ -563,17 +500,42 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		}
 		else if (IS_BRANCH[opcode] == 1) /* 2 byte offset */
 		{
-			if (bb_add_branch_2byte(bb, 
-					&original_code[start_offset], 
-					original_pos) != 0)
+			// if (bb_add_branch_2byte(bb, 
+			// 		&original_code[start_offset], 
+			// 		original_pos) != 0)
+			// 	return 1;
+
+			if (bb_ensure_capacity(bb, 3) != 0)
 				return 1;
+
+			u2 offset = read_u2(&original_code[start_offset + original_pos + 1]);
+			u4 original_target = start_offset + original_pos + offset;
+			u4 new_pc = bb->len;
+			u4 new_target = bb_map_pc(bb, original_target);
+			u2 new_offset = (u2)(new_target - new_pc);
+
+			bb->buf[bb->len++] = opcode;
+			bb->buf[bb->len++] = (u1)(new_offset >> 8);
+			bb->buf[bb->len++] = (u1)(new_offset & 0xff);
 		}
 		else if (IS_BRANCH[opcode] == 2) /* 4 byte offset */
 		{
-			if (bb_add_branch_4byte(bb, 
-					&original_code[start_offset], 
-					original_pos) != 0)
+			// if (bb_add_branch_4byte(bb, 
+			// 		&original_code[start_offset], 
+			// 		original_pos) != 0)
+			// 	return 1;
+			if (bb_ensure_capacity(bb, 5) != 0)
 				return 1;
+
+			u4 offset = read_u4(&original_code[start_offset + original_pos + 1]);
+			u4 original_target = start_offset + original_pos + offset;
+			u4 new_pc = bb->len;
+			u4 new_target = bb_map_pc(bb, original_target);
+			u4 new_offset = new_target - new_pc;
+
+			bb->buf[bb->len++] = opcode;
+			write_u4(&bb->buf[bb->len], new_offset);
+			bb->len += 4;
 		}
 		else
 		{
@@ -753,14 +715,11 @@ inject_single_method(arena_t *arena,
 	if (parse_code_attribute(code_attr, &code_info) != 0)
 		return BYTECODE_ERROR_INVALID_BYTECODE;
 
-	/* Skip methods with StackMapTable for now -
-	they require complex PC remapping which we will handle at a later date */
+	/* TODO Skip methods with StackMapTable -
+	requires StackMapTable frame recalculation
+	which is not yet implemented. See JVM spec §4.7.4 for details. */
 	if (code_has_stackmap_table(cf, &code_info))
-	{
-		// printf("Skipping method with StackMapTable to avoid verification
-		// errors");
 		return BYTECODE_SUCCESS;
-	}
 
 	/* Build new bytecode */
 	bytecode_builder_t *bb = bb_create(arena, code_info.code_length + 64);
@@ -800,21 +759,31 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 	if (!class_name)
 		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-	u2 class_idx = injection_find_or_add_string_constant(arena, cf, class_name);
-	if (class_idx == 0)
-		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+	u2 class_idx = 0;
+	bytecode_result_e rc =
+	    injection_find_or_add_string_constant(arena, cf, class_name, &class_idx);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	u2 entry_methodref = injection_find_or_add_methodref_constant(
-	    arena, cf, cfg->callback_class, cfg->entry_method, cfg->entry_sig);
+	u2 entry_methodref = 0;
+	rc                 = injection_find_or_add_methodref_constant(arena,
+                                                      cf,
+                                                      cfg->callback_class,
+                                                      cfg->entry_method,
+                                                      cfg->entry_sig,
+                                                      &entry_methodref);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
-	if (entry_methodref == 0)
-		return BYTECODE_ERROR_MEMORY_ALLOCATION;
-
-	u2 exit_methodref = injection_find_or_add_methodref_constant(
-	    arena, cf, cfg->callback_class, cfg->exit_method, cfg->exit_sig);
-
-	if (exit_methodref == 0)
-		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+	u2 exit_methodref = 0;
+	rc                = injection_find_or_add_methodref_constant(arena,
+                                                      cf,
+                                                      cfg->callback_class,
+                                                      cfg->exit_method,
+                                                      cfg->exit_sig,
+                                                      &exit_methodref);
+	if (rc != BYTECODE_SUCCESS)
+		return rc;
 
 	/* Inject */
 	for (u2 i = 0; i < cf->methods_count; i++)
@@ -824,9 +793,10 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 		/* ignore ctor */
 		if (method_name && strcmp(method_name, "<clinit>") != 0)
 		{
-			u2 method_name_idx =
-			    injection_find_or_add_string_constant(arena, cf, method_name);
-			if (method_name_idx == 0)
+			u2 method_name_idx = 0;
+			rc                 = injection_find_or_add_string_constant(
+                            arena, cf, method_name, &method_name_idx);
+			if (rc != BYTECODE_SUCCESS)
 				continue;
 
 			/* Get method descriptor */
@@ -835,23 +805,23 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 			if (!method_descriptor)
 				continue;
 
-			u2 descriptor_string_idx = injection_find_or_add_string_constant(
-			    arena, cf, method_descriptor);
-			if (descriptor_string_idx == 0)
+			u2 descriptor_string_idx = 0;
+			rc                       = injection_find_or_add_string_constant(
+                            arena, cf, method_descriptor, &descriptor_string_idx);
+			if (rc != BYTECODE_SUCCESS)
 				continue;
 
-			bytecode_result_e res =
-			    inject_single_method(arena,
-			                         cf,
-			                         &cf->methods[i],
-			                         entry_methodref,
-			                         exit_methodref,
-			                         class_idx,
-			                         method_name_idx,
-			                         descriptor_string_idx);
+			rc = inject_single_method(arena,
+			                          cf,
+			                          &cf->methods[i],
+			                          entry_methodref,
+			                          exit_methodref,
+			                          class_idx,
+			                          method_name_idx,
+			                          descriptor_string_idx);
 
-			if (res != BYTECODE_SUCCESS)
-				return res;
+			if (rc != BYTECODE_SUCCESS)
+				return rc;
 		}
 	}
 

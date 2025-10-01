@@ -94,7 +94,7 @@ write_u4_and_advance(u1 *data, int *offset, u4 value)
 }
 
 void
-write_i4(u1 *dest, i4 value)
+write_u4(u1 *dest, u4 value)
 {
 	dest[0] = (u1)(value >> 24);
 	dest[1] = (u1)(value >> 16);
