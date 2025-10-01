@@ -758,30 +758,30 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
 	u2 class_idx = 0;
-	bytecode_result_e rc =
+	bytecode_result_e res =
 	    injection_find_or_add_string_constant(arena, cf, class_name, &class_idx);
-	if (rc != BYTECODE_SUCCESS)
-		return rc;
+	if (res != BYTECODE_SUCCESS)
+		return res;
 
 	u2 entry_methodref = 0;
-	rc                 = injection_find_or_add_methodref_constant(arena,
-                                                      cf,
-                                                      cfg->callback_class,
-                                                      cfg->entry_method,
-                                                      cfg->entry_sig,
-                                                      &entry_methodref);
-	if (rc != BYTECODE_SUCCESS)
-		return rc;
+	res                = injection_find_or_add_methodref_constant(arena,
+                                                       cf,
+                                                       cfg->callback_class,
+                                                       cfg->entry_method,
+                                                       cfg->entry_sig,
+                                                       &entry_methodref);
+	if (res != BYTECODE_SUCCESS)
+		return res;
 
 	u2 exit_methodref = 0;
-	rc                = injection_find_or_add_methodref_constant(arena,
-                                                      cf,
-                                                      cfg->callback_class,
-                                                      cfg->exit_method,
-                                                      cfg->exit_sig,
-                                                      &exit_methodref);
-	if (rc != BYTECODE_SUCCESS)
-		return rc;
+	res               = injection_find_or_add_methodref_constant(arena,
+                                                       cf,
+                                                       cfg->callback_class,
+                                                       cfg->exit_method,
+                                                       cfg->exit_sig,
+                                                       &exit_methodref);
+	if (res != BYTECODE_SUCCESS)
+		return res;
 
 	/* Inject */
 	for (u2 i = 0; i < cf->methods_count; i++)
@@ -792,9 +792,9 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 		if (method_name && strcmp(method_name, "<clinit>") != 0)
 		{
 			u2 method_name_idx = 0;
-			rc                 = injection_find_or_add_string_constant(
-                            arena, cf, method_name, &method_name_idx);
-			if (rc != BYTECODE_SUCCESS)
+			if (injection_find_or_add_string_constant(
+				arena, cf, method_name, &method_name_idx)
+			    != BYTECODE_SUCCESS)
 				continue;
 
 			/* Get method descriptor */
@@ -804,22 +804,22 @@ injection_add_method_tracking(arena_t *arena, class_file_t *cf, injection_config
 				continue;
 
 			u2 descriptor_string_idx = 0;
-			rc                       = injection_find_or_add_string_constant(
-                            arena, cf, method_descriptor, &descriptor_string_idx);
-			if (rc != BYTECODE_SUCCESS)
+			if (injection_find_or_add_string_constant(
+				arena, cf, method_descriptor, &descriptor_string_idx)
+			    != BYTECODE_SUCCESS)
 				continue;
 
-			rc = inject_single_method(arena,
-			                          cf,
-			                          &cf->methods[i],
-			                          entry_methodref,
-			                          exit_methodref,
-			                          class_idx,
-			                          method_name_idx,
-			                          descriptor_string_idx);
+			res = inject_single_method(arena,
+			                           cf,
+			                           &cf->methods[i],
+			                           entry_methodref,
+			                           exit_methodref,
+			                           class_idx,
+			                           method_name_idx,
+			                           descriptor_string_idx);
 
-			if (rc != BYTECODE_SUCCESS)
-				return rc;
+			if (res != BYTECODE_SUCCESS)
+				return res;
 		}
 	}
 
