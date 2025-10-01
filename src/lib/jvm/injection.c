@@ -444,7 +444,6 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 	return 0;
 }
 
-/* clang-format off */
 int
 bb_add_original_with_exit_injection(bytecode_builder_t *bb,
                                     const u1 *original_code,
@@ -458,32 +457,37 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 	while (original_pos < chunk_len)
 	{
 		u1 opcode = original_code[start_offset + original_pos];
-		u1 inst_len = get_inst_len(&original_code[start_offset], original_pos, chunk_len);
+		u1 inst_len =
+		    get_inst_len(&original_code[start_offset], original_pos, chunk_len);
 
 		if (inst_len == 0 || original_pos + inst_len > chunk_len)
 		{
-			printf("ERROR: invalid instruction at offset %u (opcode=0x%02X, len=%u)\n",
-				original_pos, opcode, inst_len);
+			printf("ERROR: invalid instruction at offset %u (opcode=0x%02X, "
+			       "len=%u)\n",
+			       original_pos,
+			       opcode,
+			       inst_len);
 			return 1;
 		}
 
 		/* Record chunk mapping */
 		if (bb->chunk_cnt < 32)
 		{
-			pc_chunk_t *chunk     = &bb->chunks[bb->chunk_cnt];
+			pc_chunk_t *chunk = &bb->chunks[bb->chunk_cnt];
 			/* Current PC */
 			chunk->original_start = start_offset + original_pos;
 			/* Single PC */
-			chunk->original_end   = start_offset + original_pos + 1;
+			chunk->original_end = start_offset + original_pos + 1;
 			/* Where it goes in new byte code */
-			chunk->new_start      = bb->len;
+			chunk->new_start = bb->len;
 			/* Unused */
-			chunk->new_len        = 0;
+			chunk->new_len = 0;
 			bb->chunk_cnt++;
 		}
 
-		if (opcode == OP_return || opcode == OP_ireturn || opcode == OP_lreturn ||
-			opcode == OP_freturn || opcode == OP_dreturn || opcode == OP_areturn)
+		if (opcode == OP_return || opcode == OP_ireturn || opcode == OP_lreturn
+		    || opcode == OP_freturn || opcode == OP_dreturn
+		    || opcode == OP_areturn)
 		{
 			if (bb_add_template(bb, exit_template, exit_indices) != 0)
 				return 1;
@@ -492,27 +496,22 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		/* Handle variable length switches */
 		if (opcode == OP_tableswitch || opcode == OP_lookupswitch)
 		{
-			if (bb_add_switch_inst(bb, 
-					&original_code[start_offset], 
-					original_pos, 
-					inst_len) != 0)
+			if (bb_add_switch_inst(
+				bb, &original_code[start_offset], original_pos, inst_len)
+			    != 0)
 				return 1;
 		}
 		else if (IS_BRANCH[opcode] == 1) /* 2 byte offset */
 		{
-			// if (bb_add_branch_2byte(bb, 
-			// 		&original_code[start_offset], 
-			// 		original_pos) != 0)
-			// 	return 1;
-
 			if (bb_ensure_capacity(bb, 3) != 0)
 				return 1;
 
-			u2 offset = read_u2(&original_code[start_offset + original_pos + 1]);
+			u2 offset =
+			    read_u2(&original_code[start_offset + original_pos + 1]);
 			u4 original_target = start_offset + original_pos + offset;
-			u4 new_pc = bb->len;
-			u4 new_target = bb_map_pc(bb, original_target);
-			u2 new_offset = (u2)(new_target - new_pc);
+			u4 new_pc          = bb->len;
+			u4 new_target      = bb_map_pc(bb, original_target);
+			u2 new_offset      = (u2)(new_target - new_pc);
 
 			bb->buf[bb->len++] = opcode;
 			bb->buf[bb->len++] = (u1)(new_offset >> 8);
@@ -520,18 +519,15 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		}
 		else if (IS_BRANCH[opcode] == 2) /* 4 byte offset */
 		{
-			// if (bb_add_branch_4byte(bb, 
-			// 		&original_code[start_offset], 
-			// 		original_pos) != 0)
-			// 	return 1;
 			if (bb_ensure_capacity(bb, 5) != 0)
 				return 1;
 
-			u4 offset = read_u4(&original_code[start_offset + original_pos + 1]);
+			u4 offset =
+			    read_u4(&original_code[start_offset + original_pos + 1]);
 			u4 original_target = start_offset + original_pos + offset;
-			u4 new_pc = bb->len;
-			u4 new_target = bb_map_pc(bb, original_target);
-			u4 new_offset = new_target - new_pc;
+			u4 new_pc          = bb->len;
+			u4 new_target      = bb_map_pc(bb, original_target);
+			u4 new_offset      = new_target - new_pc;
 
 			bb->buf[bb->len++] = opcode;
 			write_u4(&bb->buf[bb->len], new_offset);
@@ -543,10 +539,10 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 			if (bb_ensure_capacity(bb, inst_len) != 0)
 				return 1;
 
-			memcpy(&bb->buf[bb->len], 
-               &original_code[start_offset + original_pos], 
-               inst_len);
-			
+			memcpy(&bb->buf[bb->len],
+			       &original_code[start_offset + original_pos],
+			       inst_len);
+
 			bb->len += inst_len;
 		}
 
@@ -555,7 +551,6 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 
 	return 0;
 }
-/* clang-format on */
 
 static int
 create_new_code_attribute(arena_t *arena,
