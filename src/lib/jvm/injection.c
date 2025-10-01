@@ -248,11 +248,11 @@ bb_create(arena_t *arena, u4 initial_capacity)
 	return bb;
 }
 
-static int
+static bytecode_result_e
 bb_ensure_capacity(bytecode_builder_t *bb, u4 needed)
 {
 	if (bb->len + needed <= bb->capacity)
-		return 0;
+		return BYTECODE_SUCCESS;
 
 	/* grow capacity */
 	u4 new_capacity = bb->capacity * 2;
@@ -261,23 +261,23 @@ bb_ensure_capacity(bytecode_builder_t *bb, u4 needed)
 
 	u1 *new_buf = arena_alloc(bb->arena, new_capacity);
 	if (!new_buf)
-		return 1;
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Copy over existing data */
 	memcpy(new_buf, bb->buf, bb->len);
 	bb->buf      = new_buf;
 	bb->capacity = new_capacity;
 
-	return 0;
+	return BYTECODE_SUCCESS;
 }
 
-int
+bytecode_result_e
 bb_add_template(bytecode_builder_t *bb,
                 const bytecode_template_t *tmpl,
                 const u2 indices[])
 {
-	if (bb_ensure_capacity(bb, tmpl->len) != 0)
-		return 1;
+	if (bb_ensure_capacity(bb, tmpl->len) != BYTECODE_SUCCESS)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Copy template bytes */
 	memcpy(&bb->buf[bb->len], tmpl->bytes, tmpl->len);
@@ -294,17 +294,17 @@ bb_add_template(bytecode_builder_t *bb,
 	}
 
 	bb->len += tmpl->len;
-	return 0;
+	return BYTECODE_SUCCESS;
 }
 
-int
+bytecode_result_e
 bb_add_original_chunk(bytecode_builder_t *bb,
                       const u1 *original_code,
                       u4 start_offset,
                       u4 chunk_len)
 {
-	if (bb_ensure_capacity(bb, chunk_len) != 0)
-		return 1;
+	if (bb_ensure_capacity(bb, chunk_len) != BYTECODE_SUCCESS)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	if (bb->chunk_cnt < 32)
 	{
@@ -320,7 +320,7 @@ bb_add_original_chunk(bytecode_builder_t *bb,
 	memcpy(&bb->buf[bb->len], &original_code[start_offset], chunk_len);
 	bb->len += chunk_len;
 
-	return 0;
+	return BYTECODE_SUCCESS;
 }
 
 u4
@@ -347,7 +347,7 @@ bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
 	return best_match;
 }
 
-int
+bytecode_result_e
 bb_add_switch_inst(bytecode_builder_t *bb,
                    const u1 *original_code,
                    u4 original_pc,
@@ -359,8 +359,8 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 	u4 new_pad = (4 - ((new_pc + 1) % 4)) % 4;
 
 	/* Allocate space */
-	if (bb_ensure_capacity(bb, inst_len + (new_pad - pad)) != 0)
-		return 1;
+	if (bb_ensure_capacity(bb, inst_len + (new_pad - pad)) != BYTECODE_SUCCESS)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Write the opcode */
 	bb->buf[bb->len++] = opcode;
@@ -393,14 +393,15 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 		i4 low_signed  = (i4)low;
 		i4 high_signed = (i4)high;
 		if (high_signed < low_signed)
-			return 1; /* Malformed bytecode */
+			return BYTECODE_ERROR_INVALID_BYTECODE; /* Malformed bytecode */
 
 		/* Now safe to compute range as unsigned */
 		u4 num_cases = (high - low) + 1;
 
 		/* Sanity check: tableswitch can't have more than ~65K cases */
 		if (num_cases > 65536)
-			return 1; /* Suspiciously large or malformed */
+			return BYTECODE_ERROR_INVALID_BYTECODE; /* Suspiciously large or
+			                                           malformed */
 
 		/* Remap jump offsets */
 		for (u4 i = 0; i < num_cases; i++)
@@ -441,10 +442,10 @@ bb_add_switch_inst(bytecode_builder_t *bb,
 		}
 	}
 
-	return 0;
+	return BYTECODE_SUCCESS;
 }
 
-int
+bytecode_result_e
 bb_add_original_with_exit_injection(bytecode_builder_t *bb,
                                     const u1 *original_code,
                                     u4 start_offset,
@@ -467,7 +468,7 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 			       original_pos,
 			       opcode,
 			       inst_len);
-			return 1;
+			return BYTECODE_ERROR_INVALID_BYTECODE;
 		}
 
 		/* Record chunk mapping */
@@ -489,8 +490,9 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		    || opcode == OP_freturn || opcode == OP_dreturn
 		    || opcode == OP_areturn)
 		{
-			if (bb_add_template(bb, exit_template, exit_indices) != 0)
-				return 1;
+			if (bb_add_template(bb, exit_template, exit_indices)
+			    != BYTECODE_SUCCESS)
+				return BYTECODE_ERROR_MEMORY_ALLOCATION;
 		}
 
 		/* Handle variable length switches */
@@ -498,13 +500,13 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		{
 			if (bb_add_switch_inst(
 				bb, &original_code[start_offset], original_pos, inst_len)
-			    != 0)
-				return 1;
+			    != BYTECODE_SUCCESS)
+				return BYTECODE_ERROR_INVALID_BYTECODE;
 		}
 		else if (IS_BRANCH[opcode] == 1) /* 2 byte offset */
 		{
-			if (bb_ensure_capacity(bb, 3) != 0)
-				return 1;
+			if (bb_ensure_capacity(bb, 3) != BYTECODE_SUCCESS)
+				return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 			u2 offset =
 			    read_u2(&original_code[start_offset + original_pos + 1]);
@@ -519,8 +521,8 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		}
 		else if (IS_BRANCH[opcode] == 2) /* 4 byte offset */
 		{
-			if (bb_ensure_capacity(bb, 5) != 0)
-				return 1;
+			if (bb_ensure_capacity(bb, 5) != BYTECODE_SUCCESS)
+				return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 			u4 offset =
 			    read_u4(&original_code[start_offset + original_pos + 1]);
@@ -536,8 +538,8 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		else
 		{
 			/* Copy original instruction */
-			if (bb_ensure_capacity(bb, inst_len) != 0)
-				return 1;
+			if (bb_ensure_capacity(bb, inst_len) != BYTECODE_SUCCESS)
+				return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 			memcpy(&bb->buf[bb->len],
 			       &original_code[start_offset + original_pos],
@@ -549,10 +551,10 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		original_pos += inst_len;
 	}
 
-	return 0;
+	return BYTECODE_SUCCESS;
 }
 
-static int
+static bytecode_result_e
 create_new_code_attribute(arena_t *arena,
                           class_file_t *cf,
                           method_info_t *method,
@@ -666,7 +668,7 @@ code_has_stackmap_table(const class_file_t *cf, const code_info_t *info)
 
 // TODO move to bytecode and expose in header
 /* Parse a code_attr into a code_info struct */
-static int
+static bytecode_result_e
 parse_code_attribute(const attr_info_t *code_attr, code_info_t *info)
 {
 	if (!code_attr || !info)
@@ -707,7 +709,7 @@ inject_single_method(arena_t *arena,
 
 	/* Parse the Code attr */
 	code_info_t code_info;
-	if (parse_code_attribute(code_attr, &code_info) != 0)
+	if (parse_code_attribute(code_attr, &code_info) != BYTECODE_SUCCESS)
 		return BYTECODE_ERROR_INVALID_BYTECODE;
 
 	/* TODO Skip methods with StackMapTable -
@@ -727,7 +729,7 @@ inject_single_method(arena_t *arena,
 	    class_name_index, method_name_index, descriptor_index, exit_methodref};
 
 	/* Use template to add new method entry */
-	if (bb_add_template(bb, &METHOD_TEMPLATE, entry_indices) != 0)
+	if (bb_add_template(bb, &METHOD_TEMPLATE, entry_indices) != BYTECODE_SUCCESS)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Add original code with exit injection */
@@ -737,11 +739,12 @@ inject_single_method(arena_t *arena,
 	                                        code_info.code_length,
 	                                        &METHOD_TEMPLATE,
 	                                        exit_indices)
-	    != 0)
+	    != BYTECODE_SUCCESS)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	/* Add new Code attribute */
-	if (create_new_code_attribute(arena, cf, method, bb, &code_info) != 0)
+	if (create_new_code_attribute(arena, cf, method, bb, &code_info)
+	    != BYTECODE_SUCCESS)
 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
 	return BYTECODE_SUCCESS;
