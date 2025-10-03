@@ -12,7 +12,7 @@
 #include "../arena.h"
 
 typedef struct injection_config injection_config_t;
-typedef struct pc_chunk pc_chunk_t;
+typedef struct pc_map pc_map_t;
 typedef struct bytecode_template bytecode_template_t;
 typedef struct bytecode_builder bytecode_builder_t;
 typedef struct constant_spec constant_spec_t;
@@ -29,12 +29,12 @@ struct injection_config
 	                  "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)V" */
 };
 
-struct pc_chunk
+struct pc_map
 {
 	u4 original_start;
-	u4 original_end;
+	// u4 original_end;
 	u4 new_start;
-	u4 new_len;
+	// u4 new_len;
 };
 struct bytecode_template
 {
@@ -51,9 +51,9 @@ struct bytecode_builder
 	u1 *buf;
 	u4 capacity;
 	u4 len;
-
-	pc_chunk_t chunks[32];
 	u4 chunk_cnt;
+	u4 pc_map_capacity;
+	pc_map_t *chunks;
 };
 
 static const bytecode_template_t METHOD_TEMPLATE = {

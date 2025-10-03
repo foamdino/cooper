@@ -239,10 +239,16 @@ bb_create(arena_t *arena, u4 initial_capacity)
 	bb->arena     = arena;
 	bb->capacity  = initial_capacity;
 	bb->len       = 0;
-	bb->chunk_cnt = 0;
 
 	bb->buf = arena_alloc(arena, initial_capacity);
 	if (!bb->buf)
+		return NULL;
+
+	/* Initialize dynamic PC map */
+	bb->pc_map_capacity = 32;  /* Start with reasonable size */
+	bb->chunk_cnt       = 0;
+	bb->chunks = arena_alloc(arena, bb->pc_map_capacity * sizeof(pc_map_t));
+	if (!bb->chunks)
 		return NULL;
 
 	return bb;
@@ -267,6 +273,29 @@ bb_ensure_capacity(bytecode_builder_t *bb, u4 needed)
 	memcpy(new_buf, bb->buf, bb->len);
 	bb->buf      = new_buf;
 	bb->capacity = new_capacity;
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+bb_ensure_pc_map_capacity(bytecode_builder_t *bb)
+{
+	if (bb->chunk_cnt < bb->pc_map_capacity)
+		return BYTECODE_SUCCESS;
+
+	/* Double capacity */
+	u4 new_capacity = bb->pc_map_capacity * 2;
+	pc_map_t *new_map = 
+	    arena_alloc(bb->arena, new_capacity * sizeof(pc_map_t));
+
+	if (!new_map)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	/* Copy existing mappings */
+	memcpy(new_map, bb->chunks, bb->chunk_cnt * sizeof(pc_map_t));
+	
+	bb->chunks = new_map;
+	bb->pc_map_capacity = new_capacity;
 
 	return BYTECODE_SUCCESS;
 }
@@ -297,31 +326,31 @@ bb_add_template(bytecode_builder_t *bb,
 	return BYTECODE_SUCCESS;
 }
 
-bytecode_result_e
-bb_add_original_chunk(bytecode_builder_t *bb,
-                      const u1 *original_code,
-                      u4 start_offset,
-                      u4 chunk_len)
-{
-	if (bb_ensure_capacity(bb, chunk_len) != BYTECODE_SUCCESS)
-		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+// bytecode_result_e
+// bb_add_original_chunk(bytecode_builder_t *bb,
+//                       const u1 *original_code,
+//                       u4 start_offset,
+//                       u4 chunk_len)
+// {
+// 	if (bb_ensure_capacity(bb, chunk_len) != BYTECODE_SUCCESS)
+// 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
 
-	if (bb->chunk_cnt < 32)
-	{
-		pc_chunk_t *chunk     = &bb->chunks[bb->chunk_cnt];
-		chunk->original_start = start_offset;
-		chunk->original_end   = start_offset + chunk_len;
-		chunk->new_start      = bb->len;
-		chunk->new_len        = chunk_len;
-		bb->chunk_cnt++;
-	}
+// 	if (bb->chunk_cnt < 32)
+// 	{
+// 		pc_map_t *chunk     = &bb->chunks[bb->chunk_cnt];
+// 		chunk->original_start = start_offset;
+// 		chunk->original_end   = start_offset + chunk_len;
+// 		chunk->new_start      = bb->len;
+// 		chunk->new_len        = chunk_len;
+// 		bb->chunk_cnt++;
+// 	}
 
-	/* Copy the bytecode */
-	memcpy(&bb->buf[bb->len], &original_code[start_offset], chunk_len);
-	bb->len += chunk_len;
+// 	/* Copy the bytecode */
+// 	memcpy(&bb->buf[bb->len], &original_code[start_offset], chunk_len);
+// 	bb->len += chunk_len;
 
-	return BYTECODE_SUCCESS;
-}
+// 	return BYTECODE_SUCCESS;
+// }
 
 u4
 bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
@@ -330,7 +359,7 @@ bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
 
 	for (u4 i = 0; i < bb->chunk_cnt; i++)
 	{
-		const pc_chunk_t *chunk = &bb->chunks[i];
+		const pc_map_t *chunk = &bb->chunks[i];
 
 		/* Exact match */
 		if (chunk->original_start == original_pc)
@@ -472,19 +501,19 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		}
 
 		/* Record chunk mapping */
-		if (bb->chunk_cnt < 32)
-		{
-			pc_chunk_t *chunk = &bb->chunks[bb->chunk_cnt];
-			/* Current PC */
-			chunk->original_start = start_offset + original_pos;
-			/* Single PC */
-			chunk->original_end = start_offset + original_pos + 1;
-			/* Where it goes in new byte code */
-			chunk->new_start = bb->len;
-			/* Unused */
-			chunk->new_len = 0;
-			bb->chunk_cnt++;
-		}
+		if (bb_ensure_pc_map_capacity(bb) != BYTECODE_SUCCESS)
+			return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+		pc_map_t *chunk = &bb->chunks[bb->chunk_cnt];
+		/* Current PC */
+		chunk->original_start = start_offset + original_pos;
+		// /* Single PC */
+		// chunk->original_end   = start_offset + original_pos + 1;
+		/* Where it goes in new byte code */
+		chunk->new_start      = bb->len;
+		/* Unused */
+		// chunk->new_len        = 0;
+		bb->chunk_cnt++;
 
 		if (opcode == OP_return || opcode == OP_ireturn || opcode == OP_lreturn
 		    || opcode == OP_freturn || opcode == OP_dreturn
