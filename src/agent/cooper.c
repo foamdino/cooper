@@ -1991,12 +1991,12 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	}
 	global_ctx->method_queue = method_queue;
 
-	arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
-	if (!class_cache_arena)
-	{
-		LOG_ERROR("Cache arena not found\n");
-		return JNI_ERR;
-	}
+	// arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
+	// if (!class_cache_arena)
+	// {
+	// 	LOG_ERROR("Cache arena not found\n");
+	// 	return JNI_ERR;
+	// }
 
 	/* Initialize metrics after all arenas are created */
 	arena_t *metrics_arena = global_ctx->arenas[METRICS_ARENA_ID];

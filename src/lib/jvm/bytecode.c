@@ -6,47 +6,7 @@
 
 #include "bytecode.h"
 
-/* Helper for getting UTF8 strings from constant pool */
-const char *
-bytecode_get_utf8_constant(const class_file_t *cf, u2 idx)
-{
-	assert(cf != NULL);
-
-	if (idx == 0 || idx >= cf->constant_pool_count)
-		return NULL;
-
-	if (cf->constant_pool[idx].tag != CONSTANT_Utf8)
-		return NULL;
-
-	return (const char *)cf->constant_pool[idx].info.utf8.bytes;
-}
-
-const char *
-bytecode_get_class_name(const class_file_t *cf)
-{
-	assert(cf != NULL);
-
-	if (cf->this_class >= cf->constant_pool_count)
-		return NULL;
-
-	if (cf->constant_pool[cf->this_class].tag != CONSTANT_Class)
-		return NULL;
-
-	u2 name_idx = cf->constant_pool[cf->this_class].info.class_info.name_index;
-	return bytecode_get_utf8_constant(cf, name_idx);
-}
-
-const char *
-bytecode_get_method_name(const class_file_t *cf, u2 method_index)
-{
-	assert(cf != NULL);
-
-	if (method_index >= cf->methods_count)
-		return NULL;
-
-	return bytecode_get_utf8_constant(cf, cf->methods[method_index].name_index);
-}
-
+/* Internal helper functions */
 static bytecode_result_e
 parse_constant_pool_entry(arena_t *arena,
                           const u1 *data,
@@ -76,7 +36,6 @@ parse_constant_pool_entry(arena_t *arena,
 static bytecode_result_e
 write_constant_pool_entry(u1 *buf, int *offset, const constant_pool_info_t *entry)
 {
-	/* Write the tag */
 	buf[(*offset)++] = entry->tag;
 
 	switch (entry->tag)
@@ -161,6 +120,47 @@ parse_field(arena_t *arena, const u1 *data, int *offset, field_info_t *field)
 	}
 
 	return BYTECODE_SUCCESS;
+}
+
+/* Helper for getting UTF8 strings from constant pool */
+const char *
+bytecode_get_utf8_constant(const class_file_t *cf, u2 idx)
+{
+	assert(cf != NULL);
+
+	if (idx == 0 || idx >= cf->constant_pool_count)
+		return NULL;
+
+	if (cf->constant_pool[idx].tag != CONSTANT_Utf8)
+		return NULL;
+
+	return (const char *)cf->constant_pool[idx].info.utf8.bytes;
+}
+
+const char *
+bytecode_get_class_name(const class_file_t *cf)
+{
+	assert(cf != NULL);
+
+	if (cf->this_class >= cf->constant_pool_count)
+		return NULL;
+
+	if (cf->constant_pool[cf->this_class].tag != CONSTANT_Class)
+		return NULL;
+
+	u2 name_idx = cf->constant_pool[cf->this_class].info.class_info.name_index;
+	return bytecode_get_utf8_constant(cf, name_idx);
+}
+
+const char *
+bytecode_get_method_name(const class_file_t *cf, u2 method_index)
+{
+	assert(cf != NULL);
+
+	if (method_index >= cf->methods_count)
+		return NULL;
+
+	return bytecode_get_utf8_constant(cf, cf->methods[method_index].name_index);
 }
 
 /* Class file representation
@@ -346,6 +346,7 @@ bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
 	/* Constant pool */
 	write_u2_and_advance(buf, &offset, cf->constant_pool_count);
 
+	/* Constant pool entries are 1-indexed */
 	for (u2 i = 1; i < cf->constant_pool_count; i++)
 	{
 		const constant_pool_info_t *entry = &cf->constant_pool[i];
@@ -371,9 +372,7 @@ bytecode_write_class(arena_t *arena, class_file_t *cf, u1 **data, u4 *len)
 	/* Write interfaces */
 	write_u2_and_advance(buf, &offset, cf->interfaces_count);
 	for (u2 i = 0; i < cf->interfaces_count; i++)
-	{
 		write_u2_and_advance(buf, &offset, cf->interfaces[i]);
-	}
 
 	/* Write fields */
 	write_u2_and_advance(buf, &offset, cf->fields_count);
