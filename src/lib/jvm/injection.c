@@ -326,32 +326,6 @@ bb_add_template(bytecode_builder_t *bb,
 	return BYTECODE_SUCCESS;
 }
 
-// bytecode_result_e
-// bb_add_original_chunk(bytecode_builder_t *bb,
-//                       const u1 *original_code,
-//                       u4 start_offset,
-//                       u4 chunk_len)
-// {
-// 	if (bb_ensure_capacity(bb, chunk_len) != BYTECODE_SUCCESS)
-// 		return BYTECODE_ERROR_MEMORY_ALLOCATION;
-
-// 	if (bb->chunk_cnt < 32)
-// 	{
-// 		pc_map_t *chunk     = &bb->chunks[bb->chunk_cnt];
-// 		chunk->original_start = start_offset;
-// 		chunk->original_end   = start_offset + chunk_len;
-// 		chunk->new_start      = bb->len;
-// 		chunk->new_len        = chunk_len;
-// 		bb->chunk_cnt++;
-// 	}
-
-// 	/* Copy the bytecode */
-// 	memcpy(&bb->buf[bb->len], &original_code[start_offset], chunk_len);
-// 	bb->len += chunk_len;
-
-// 	return BYTECODE_SUCCESS;
-// }
-
 u4
 bb_map_pc(const bytecode_builder_t *bb, u4 original_pc)
 {
@@ -507,12 +481,8 @@ bb_add_original_with_exit_injection(bytecode_builder_t *bb,
 		pc_map_t *chunk = &bb->chunks[bb->chunk_cnt];
 		/* Current PC */
 		chunk->original_start = start_offset + original_pos;
-		// /* Single PC */
-		// chunk->original_end   = start_offset + original_pos + 1;
 		/* Where it goes in new byte code */
 		chunk->new_start      = bb->len;
-		/* Unused */
-		// chunk->new_len        = 0;
 		bb->chunk_cnt++;
 
 		if (opcode == OP_return || opcode == OP_ireturn || opcode == OP_lreturn

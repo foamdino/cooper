@@ -58,122 +58,39 @@ parse_constant_pool_entry(arena_t *arena,
 
 	switch (entry->tag)
 	{
-		case CONSTANT_Utf8:
-			entry->info.utf8.length = read_u2_and_advance(data, offset);
-			entry->info.utf8.bytes =
-			    arena_alloc(arena, entry->info.utf8.length + 1);
-			if (!entry->info.utf8.bytes)
-				return BYTECODE_ERROR_MEMORY_ALLOCATION;
-
-			memcpy((void *)entry->info.utf8.bytes,
-			       &data[*offset],
-			       entry->info.utf8.length);
-			/* Terminate string */
-			((u1 *)entry->info.utf8.bytes)[entry->info.utf8.length] = 0;
-			/* advance pointer */
-			*offset += entry->info.utf8.length;
+#define PARSE_ENTRY(tag, read_logic, write_logic) \
+		case tag: \
+			read_logic \
 			break;
 
-		/* Entry pointing to an instance of CONSTANT_Utf8 */
-		case CONSTANT_String:
-			entry->info.string = read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Class:
-			entry->info.class_info.name_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Methodref:
-			entry->info.methodref.class_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.methodref.name_and_type_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_NameAndType:
-			entry->info.name_and_type.name_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.name_and_type.descriptor_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Integer:
-			entry->info.integer = read_u4_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Float:
-			entry->info.float_info = read_u4_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Fieldref:
-			entry->info.fieldref.class_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.fieldref.name_and_type_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_InterfaceMethodref:
-			entry->info.interfaceref.class_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.interfaceref.name_and_type_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		/* These take 2 constant pool slots */
-		case CONSTANT_Long:
-			entry->info.long_info.high_bytes =
-			    read_u4_and_advance(data, offset);
-			entry->info.long_info.low_bytes =
-			    read_u4_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Double:
-			entry->info.double_info.high_bytes =
-			    read_u4_and_advance(data, offset);
-			entry->info.double_info.low_bytes =
-			    read_u4_and_advance(data, offset);
-			break;
-
-		case CONSTANT_MethodHandle:
-			entry->info.methodhandle_info.reference_kind =
-			    read_u1_and_advance(data, offset);
-			entry->info.methodhandle_info.reference_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_MethodType:
-			entry->info.methodtype_info.descriptor_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Dynamic:
-			entry->info.dynamic_info.bootstrap_method_attr_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.dynamic_info.name_and_type_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_InvokeDynamic:
-			entry->info.invokedynamic_info.bootstrap_method_attr_index =
-			    read_u2_and_advance(data, offset);
-			entry->info.invokedynamic_info.name_and_type_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Module:
-			entry->info.module_info.name_index =
-			    read_u2_and_advance(data, offset);
-			break;
-
-		case CONSTANT_Package:
-			entry->info.package_info.name_index =
-			    read_u2_and_advance(data, offset);
-			break;
+		CONSTANT_POOL_ENTRIES(PARSE_ENTRY)
+#undef PARSE_ENTRY
 
 		default:
-			printf("Warning: Unknown constant pool tag: %d\n", entry->tag);
-			break; // return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
+	}
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_constant_pool_entry(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	/* Write the tag */
+	buf[(*offset)++] = entry->tag;
+
+	switch (entry->tag)
+	{
+#define WRITE_ENTRY(tag, read_logic, write_logic) \
+		case tag: \
+			write_logic \
+			break;
+
+		CONSTANT_POOL_ENTRIES(WRITE_ENTRY)
+#undef WRITE_ENTRY
+
+		default:
+			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 	}
 
 	return BYTECODE_SUCCESS;
@@ -225,7 +142,6 @@ parse_field(arena_t *arena, const u1 *data, int *offset, field_info_t *field)
 	field->name_index       = read_u2_and_advance(data, offset);
 	field->descriptor_index = read_u2_and_advance(data, offset);
 	field->attributes_count = read_u2_and_advance(data, offset);
-
 	field->attributes = NULL;
 
 	if (field->attributes_count > 0)
@@ -397,134 +313,6 @@ bytecode_parse_class(arena_t *arena, const u1 *data, class_file_t **result)
 	}
 
 	*result = cf;
-	return BYTECODE_SUCCESS;
-}
-
-static bytecode_result_e
-write_constant_pool_entry(u1 *buf, int *offset, const constant_pool_info_t *entry)
-
-{
-	/* Write the tag */
-	buf[(*offset)++] = entry->tag;
-
-	/* What do we have to write ...*/
-	switch (entry->tag)
-	{
-		case CONSTANT_Utf8:
-			write_u2_and_advance(buf, offset, entry->info.utf8.length);
-			memcpy(&buf[*offset],
-			       entry->info.utf8.bytes,
-			       entry->info.utf8.length);
-			*offset += entry->info.utf8.length;
-			break;
-
-		/* Entry pointing to an instance of CONSTANT_Utf8 */
-		case CONSTANT_String:
-			write_u2_and_advance(buf, offset, entry->info.string);
-			break;
-
-		case CONSTANT_Class:
-			write_u2_and_advance(
-			    buf, offset, entry->info.class_info.name_index);
-			break;
-
-		case CONSTANT_Methodref:
-			write_u2_and_advance(
-			    buf, offset, entry->info.methodref.class_index);
-			write_u2_and_advance(
-			    buf, offset, entry->info.methodref.name_and_type_index);
-			break;
-
-		case CONSTANT_NameAndType:
-			write_u2_and_advance(
-			    buf, offset, entry->info.name_and_type.name_index);
-			write_u2_and_advance(
-			    buf, offset, entry->info.name_and_type.descriptor_index);
-			break;
-
-		case CONSTANT_Integer:
-			write_u4_and_advance(buf, offset, entry->info.integer);
-			break;
-
-		case CONSTANT_Float:
-			write_u4_and_advance(buf, offset, entry->info.float_info);
-			break;
-
-		case CONSTANT_Fieldref:
-			write_u2_and_advance(
-			    buf, offset, entry->info.fieldref.class_index);
-			write_u2_and_advance(
-			    buf, offset, entry->info.fieldref.name_and_type_index);
-			break;
-
-		case CONSTANT_InterfaceMethodref:
-			write_u2_and_advance(
-			    buf, offset, entry->info.interfaceref.class_index);
-			write_u2_and_advance(
-			    buf, offset, entry->info.interfaceref.name_and_type_index);
-			break;
-
-		/* These take 2 constant pool slots */
-		case CONSTANT_Long:
-			write_u4_and_advance(
-			    buf, offset, entry->info.long_info.high_bytes);
-			write_u4_and_advance(
-			    buf, offset, entry->info.long_info.low_bytes);
-			break;
-
-		case CONSTANT_Double:
-			write_u4_and_advance(
-			    buf, offset, entry->info.double_info.high_bytes);
-			write_u4_and_advance(
-			    buf, offset, entry->info.double_info.low_bytes);
-			break;
-
-		case CONSTANT_MethodHandle:
-			write_u1_and_advance(
-			    buf, offset, entry->info.methodhandle_info.reference_kind);
-			write_u2_and_advance(
-			    buf, offset, entry->info.methodhandle_info.reference_index);
-			break;
-
-		case CONSTANT_MethodType:
-			write_u2_and_advance(
-			    buf, offset, entry->info.methodtype_info.descriptor_index);
-			break;
-
-		case CONSTANT_Dynamic:
-			write_u2_and_advance(
-			    buf,
-			    offset,
-			    entry->info.dynamic_info.bootstrap_method_attr_index);
-			write_u2_and_advance(
-			    buf, offset, entry->info.dynamic_info.name_and_type_index);
-			break;
-
-		case CONSTANT_InvokeDynamic:
-			write_u2_and_advance(
-			    buf,
-			    offset,
-			    entry->info.invokedynamic_info.bootstrap_method_attr_index);
-			write_u2_and_advance(
-			    buf,
-			    offset,
-			    entry->info.invokedynamic_info.name_and_type_index);
-			break;
-
-		case CONSTANT_Module:
-			write_u2_and_advance(
-			    buf, offset, entry->info.module_info.name_index);
-			break;
-
-		case CONSTANT_Package:
-			write_u2_and_advance(
-			    buf, offset, entry->info.package_info.name_index);
-			break;
-
-		default:
-			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
-	}
-
 	return BYTECODE_SUCCESS;
 }
 

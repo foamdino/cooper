@@ -32,10 +32,9 @@ struct injection_config
 struct pc_map
 {
 	u4 original_start;
-	// u4 original_end;
 	u4 new_start;
-	// u4 new_len;
 };
+
 struct bytecode_template
 {
 	const char *name;
