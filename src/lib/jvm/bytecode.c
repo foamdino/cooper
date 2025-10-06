@@ -6,6 +6,322 @@
 
 #include "bytecode.h"
 
+/* Dispatch tables for constant pool handlers */
+#define MAX_CP_TAG    20
+#define CP_HANDLER_SZ 21
+
+/* Handlers for constant pool entry types */
+static bytecode_result_e
+parse_utf8(arena_t *arena, const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.utf8.length = read_u2_and_advance(data, offset);
+	entry->info.utf8.bytes  = arena_alloc(arena, entry->info.utf8.length + 1);
+	if (!entry->info.utf8.bytes)
+		return BYTECODE_ERROR_MEMORY_ALLOCATION;
+
+	memcpy((void *)entry->info.utf8.bytes, &data[*offset], entry->info.utf8.length);
+	((u1 *)entry->info.utf8.bytes)[entry->info.utf8.length] = 0;
+	*offset += entry->info.utf8.length;
+
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_string(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.string = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_class(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.class_info.name_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_methodref(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.methodref.class_index         = read_u2_and_advance(data, offset);
+	entry->info.methodref.name_and_type_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_fieldref(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.fieldref.class_index         = read_u2_and_advance(data, offset);
+	entry->info.fieldref.name_and_type_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_interfaceref(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.interfaceref.class_index         = read_u2_and_advance(data, offset);
+	entry->info.interfaceref.name_and_type_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_nameandtype(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.name_and_type.name_index       = read_u2_and_advance(data, offset);
+	entry->info.name_and_type.descriptor_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_integer(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.integer = read_u4_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_float(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.float_info = read_u4_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_long(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.long_info.high_bytes = read_u4_and_advance(data, offset);
+	entry->info.long_info.low_bytes  = read_u4_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_double(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.double_info.high_bytes = read_u4_and_advance(data, offset);
+	entry->info.double_info.low_bytes  = read_u4_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_methodhandle(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.methodhandle_info.reference_kind  = read_u1_and_advance(data, offset);
+	entry->info.methodhandle_info.reference_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_methodtype(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.methodtype_info.descriptor_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_dynamic(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.dynamic_info.bootstrap_method_attr_index =
+	    read_u2_and_advance(data, offset);
+	entry->info.dynamic_info.name_and_type_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_invokedynamic(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.invokedynamic_info.bootstrap_method_attr_index =
+	    read_u2_and_advance(data, offset);
+	entry->info.invokedynamic_info.name_and_type_index =
+	    read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_module(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.module_info.name_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+parse_package(const u1 *data, int *offset, constant_pool_info_t *entry)
+{
+	entry->info.package_info.name_index = read_u2_and_advance(data, offset);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_utf8(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.utf8.length);
+	memcpy(&buf[*offset], entry->info.utf8.bytes, entry->info.utf8.length);
+	*offset += entry->info.utf8.length;
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_string(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.string);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_class(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.class_info.name_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_methodref(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.methodref.class_index);
+	write_u2_and_advance(buf, offset, entry->info.methodref.name_and_type_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_fieldref(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.fieldref.class_index);
+	write_u2_and_advance(buf, offset, entry->info.fieldref.name_and_type_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_interfaceref(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.interfaceref.class_index);
+	write_u2_and_advance(buf, offset, entry->info.interfaceref.name_and_type_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_nameandtype(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.name_and_type.name_index);
+	write_u2_and_advance(buf, offset, entry->info.name_and_type.descriptor_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_integer(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u4_and_advance(buf, offset, entry->info.integer);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_float(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u4_and_advance(buf, offset, entry->info.float_info);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_long(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u4_and_advance(buf, offset, entry->info.long_info.high_bytes);
+	write_u4_and_advance(buf, offset, entry->info.long_info.low_bytes);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_double(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u4_and_advance(buf, offset, entry->info.double_info.high_bytes);
+	write_u4_and_advance(buf, offset, entry->info.double_info.low_bytes);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_methodhandle(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u1_and_advance(buf, offset, entry->info.methodhandle_info.reference_kind);
+	write_u2_and_advance(buf, offset, entry->info.methodhandle_info.reference_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_methodtype(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.methodtype_info.descriptor_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_dynamic(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(
+	    buf, offset, entry->info.dynamic_info.bootstrap_method_attr_index);
+	write_u2_and_advance(buf, offset, entry->info.dynamic_info.name_and_type_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_invokedynamic(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(
+	    buf, offset, entry->info.invokedynamic_info.bootstrap_method_attr_index);
+	write_u2_and_advance(
+	    buf, offset, entry->info.invokedynamic_info.name_and_type_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_module(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.module_info.name_index);
+	return BYTECODE_SUCCESS;
+}
+
+static bytecode_result_e
+write_package(u1 *buf, int *offset, const constant_pool_info_t *entry)
+{
+	write_u2_and_advance(buf, offset, entry->info.package_info.name_index);
+	return BYTECODE_SUCCESS;
+}
+
+static const cp_parse_fn parse_handlers[CP_HANDLER_SZ] = {
+    [CONSTANT_Integer]            = parse_integer,
+    [CONSTANT_Float]              = parse_float,
+    [CONSTANT_Long]               = parse_long,
+    [CONSTANT_Double]             = parse_double,
+    [CONSTANT_Class]              = parse_class,
+    [CONSTANT_String]             = parse_string,
+    [CONSTANT_Fieldref]           = parse_fieldref,
+    [CONSTANT_Methodref]          = parse_methodref,
+    [CONSTANT_InterfaceMethodref] = parse_interfaceref,
+    [CONSTANT_NameAndType]        = parse_nameandtype,
+    [CONSTANT_MethodHandle]       = parse_methodhandle,
+    [CONSTANT_MethodType]         = parse_methodtype,
+    [CONSTANT_Dynamic]            = parse_dynamic,
+    [CONSTANT_InvokeDynamic]      = parse_invokedynamic,
+    [CONSTANT_Module]             = parse_module,
+    [CONSTANT_Package]            = parse_package,
+};
+
+static const cp_write_fn write_handlers[CP_HANDLER_SZ] = {
+    [CONSTANT_Utf8]               = write_utf8,
+    [CONSTANT_Integer]            = write_integer,
+    [CONSTANT_Float]              = write_float,
+    [CONSTANT_Long]               = write_long,
+    [CONSTANT_Double]             = write_double,
+    [CONSTANT_Class]              = write_class,
+    [CONSTANT_String]             = write_string,
+    [CONSTANT_Fieldref]           = write_fieldref,
+    [CONSTANT_Methodref]          = write_methodref,
+    [CONSTANT_InterfaceMethodref] = write_interfaceref,
+    [CONSTANT_NameAndType]        = write_nameandtype,
+    [CONSTANT_MethodHandle]       = write_methodhandle,
+    [CONSTANT_MethodType]         = write_methodtype,
+    [CONSTANT_Dynamic]            = write_dynamic,
+    [CONSTANT_InvokeDynamic]      = write_invokedynamic,
+    [CONSTANT_Module]             = write_module,
+    [CONSTANT_Package]            = write_package,
+};
+
 /* Internal helper functions */
 static bytecode_result_e
 parse_constant_pool_entry(arena_t *arena,
@@ -16,21 +332,23 @@ parse_constant_pool_entry(arena_t *arena,
 
 	entry->tag = data[(*offset)++];
 
-	switch (entry->tag)
-	{
-#define PARSE_ENTRY(tag, read_logic, write_logic) \
-		case tag: \
-			read_logic \
-			break;
+	/* Bounds check */
+	if (entry->tag > MAX_CP_TAG)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-		CONSTANT_POOL_ENTRIES(PARSE_ENTRY)
-#undef PARSE_ENTRY
+	/* As utf8 is the only type that requires
+	memory allocation, we handle it separately from the
+	dispatch table
+	*/
+	if (entry->tag == CONSTANT_Utf8)
+		return parse_utf8(arena, data, offset, entry);
 
-		default:
-			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
-	}
+	/* Dispatch to handler */
+	cp_parse_fn handler = parse_handlers[entry->tag];
+	if (!handler)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-	return BYTECODE_SUCCESS;
+	return handler(data, offset, entry);
 }
 
 static bytecode_result_e
@@ -38,21 +356,16 @@ write_constant_pool_entry(u1 *buf, int *offset, const constant_pool_info_t *entr
 {
 	buf[(*offset)++] = entry->tag;
 
-	switch (entry->tag)
-	{
-#define WRITE_ENTRY(tag, read_logic, write_logic) \
-		case tag: \
-			write_logic \
-			break;
+	/* Bounds check */
+	if (entry->tag > MAX_CP_TAG)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-		CONSTANT_POOL_ENTRIES(WRITE_ENTRY)
-#undef WRITE_ENTRY
+	/* Dispatch to handler */
+	cp_write_fn handler = write_handlers[entry->tag];
+	if (!handler)
+		return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
 
-		default:
-			return BYTECODE_ERROR_CORRUPT_CONSTANT_POOL;
-	}
-
-	return BYTECODE_SUCCESS;
+	return handler(buf, offset, entry);
 }
 
 static bytecode_result_e
@@ -101,7 +414,7 @@ parse_field(arena_t *arena, const u1 *data, int *offset, field_info_t *field)
 	field->name_index       = read_u2_and_advance(data, offset);
 	field->descriptor_index = read_u2_and_advance(data, offset);
 	field->attributes_count = read_u2_and_advance(data, offset);
-	field->attributes = NULL;
+	field->attributes       = NULL;
 
 	if (field->attributes_count > 0)
 	{
