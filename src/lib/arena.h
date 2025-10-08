@@ -44,6 +44,7 @@ struct block_header
 	size_t block_sz;       /**< Size of user data (excluding header) */
 	size_t total_block_sz; /**< Size of block user data + header */
 	uint32_t magic;        /**< Magic number used for validation */
+	arena_t *owner;        /**< Owning arena for this block */
 };
 struct arena
 {

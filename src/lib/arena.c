@@ -186,6 +186,7 @@ init_block:
 	header->block_sz       = sz;
 	header->total_block_sz = req_size;
 	header->magic          = ARENA_BLOCK_MAGIC;
+	header->owner          = arena;
 
 	/* Return pointer to user data (after the header) */
 	user_ptr = (char *)block + header_size;
@@ -260,17 +261,49 @@ arena_free(arena_t *arena, void *ptr)
 
 	/* Validate the header */
 	if (header->magic != ARENA_BLOCK_MAGIC)
+	{
+		printf("Block magic corrupted!!!! should be [%x] was %x\n",
+		       ARENA_BLOCK_MAGIC,
+		       header->magic);
 		return 0;
+	}
+
+	if (header->owner == NULL)
+	{
+		printf("Double free detected for ptr=%p (already owner=NULL)\n", ptr);
+		return 0;
+	}
+
+	if (header->owner != arena)
+	{
+		printf("Freeing from incorrect arena! header->owner=%p expected=%p\n",
+		       (void *)header->owner,
+		       (void *)arena);
+		return 0;
+	}
 
 	/* Check if we can track more free blocks */
 	if (arena->free_count >= arena->max_free_blocks)
+	{
+		printf("free count > max_free_blocks in arena %s\n", arena->name);
 		return 0;
+	}
+
+	printf("arena_free(%s): ptr=%p header=%p sz=%lu free_count=%lu max=%lu\n",
+	       arena->name,
+	       ptr,
+	       (void *)header,
+	       header->total_block_sz,
+	       arena->free_count,
+	       arena->max_free_blocks);
 
 	/* Add to free list */
 	arena->free_blocks[arena->free_count] =
 	    header; /* Store pointer to header, not user data */
 	arena->block_sizes[arena->free_count] = header->total_block_sz;
 	arena->free_count++;
+
+	header->owner = NULL;
 
 	return 1;
 }

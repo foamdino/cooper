@@ -1797,9 +1797,10 @@ class_cache_thread_func(void *arg)
 {
 	assert(arg != NULL);
 
-	agent_context_t *ctx = (agent_context_t *)arg;
-	q_t *queue           = ctx->class_queue;
-	arena_t *arena       = ctx->arenas[CLASS_CACHE_ARENA_ID];
+	agent_context_t *ctx   = (agent_context_t *)arg;
+	q_t *queue             = ctx->class_queue;
+	arena_t *arena         = ctx->arenas[CLASS_CACHE_ARENA_ID];
+	arena_t *q_entry_arena = ctx->arenas[Q_ENTRY_ARENA_ID];
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -1845,6 +1846,14 @@ class_cache_thread_func(void *arg)
 		class_load_callback
 		*/
 		(*jni)->DeleteGlobalRef(jni, class_entry->klass);
+		/* We need to lock around modifying data from q arena */
+		pthread_mutex_lock(&ctx->tm_ctx.class_cache_lock);
+		/* Free the duplicated class_sig string */
+		arena_free(q_entry_arena, class_entry->class_sig);
+		/* Free the q entry itself */
+		arena_free(q_entry_arena, class_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&ctx->tm_ctx.class_cache_lock);
 	}
 
 	/* Detach from JVM */
@@ -1994,7 +2003,239 @@ call_stack_sampling_thread_func(void *arg)
 	return NULL;
 }
 
-// TODO cleanup....
+/* Create a new sample on METHOD_ENTRY */
+static void
+record_method_entry_event(agent_context_t *ctx,
+                          method_q_entry_t *me,
+                          jmethodID mid,
+                          arena_t *arena)
+{
+	assert(ctx != NULL);
+	assert(me != NULL);
+	assert(arena != NULL);
+
+	/* Lookup method info from hashtable via jmethodID */
+	cooper_method_info_t *method_info = ht_get(ctx->interesting_methods, mid);
+
+	/* We either didn't find the method (should be rare) or it's not
+	one we're configured to sample. */
+	if (method_info == NULL || method_info->sample_index < 0)
+		return;
+
+	LOG_INFO("Found method: %s in interesting_methods hashtable",
+	         method_info->full_name);
+
+	/* We found a method to track. Atomically increment its total call count. */
+	uint64_t current_calls = atomic_fetch_add_explicit(
+	    &ctx->metrics->call_counts[method_info->sample_index],
+	    1,
+	    memory_order_relaxed);
+
+	int sample_rate =
+	    ctx->metrics
+		->sample_rates[method_info->sample_index]; /* Read-only after init */
+
+	/* Decide whether to sample this specific call based on the rate. */
+	if ((current_calls % sample_rate) != 0)
+		return; /* Don't sample this call. */
+
+	thread_context_t *tc = get_thread_local_context();
+	if (!tc)
+	{
+		LOG_ERROR("Unable to get thread context for %s, skipping",
+		          me->method_name);
+		return;
+	}
+
+	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
+	if (!sample)
+	{
+		LOG_ERROR("Unable to create method info sample for %s, "
+		          "skipping",
+		          me->method_name);
+		return;
+	}
+
+	sample->method_index = method_info->sample_index;
+	sample->method_id    = mid;
+
+	unsigned int flags = ctx->metrics->metric_flags[method_info->sample_index];
+
+	if (flags & METRIC_FLAG_TIME)
+		sample->start_time = me->timestamp;
+
+	if (flags & METRIC_FLAG_CPU)
+		sample->start_cpu = me->cpu;
+
+	// method_sample_t *sample =
+	// 	init_method_sample(arena,
+	// 						method_info->sample_index,
+	// 						mid,
+	// 						me->timestamp,
+	// 						me->cpu);
+
+	sample->parent = tc->sample;
+	tc->sample     = sample;
+	tc->stack_depth++;
+}
+
+/* Update an existing sample on METHOD_EXIT */
+static void
+record_method_exit_event(agent_context_t *ctx, method_q_entry_t *me, jmethodID mid)
+{
+	assert(ctx != NULL);
+	assert(me != NULL);
+
+	/* Get thread-local context */
+	thread_context_t *context = get_thread_local_context();
+
+	/* Without a thread context, nothing we can do */
+	if (!context)
+		return;
+
+	/* We need to look in our stack to find a corresponding method
+	entry Note that the JVM doesn't guarantee ordering of method
+	entry/exits for a variety of reasons:
+	- Threading
+	- Optimizations
+	- etc
+	*/
+	method_sample_t *current = context->sample;
+	method_sample_t *parent  = NULL;
+	method_sample_t *target  = NULL;
+
+	/* Top of stack matches - quick case */
+	if (current != NULL && current->method_id == mid)
+	{
+		target          = current;
+		context->sample = current->parent; /* Pop from top of stack */
+		context->stack_depth--;
+	}
+	else if (current != NULL)
+	{
+		/* We need to search the stack for a matching method -
+		 * this seems to be the common case */
+
+		/* Traverse stack to find target */
+		while (current)
+		{
+			if (current->method_id == mid)
+			{
+				target = current;
+				/* Remove node from linked-list/stack */
+				if (parent)
+					parent->parent =
+					    current
+						->parent; /* Skip over
+					                                                this
+					                     node */
+				else
+					context->sample =
+					    current
+						->parent; /* Update head
+					                                                of
+					                     list */
+
+				context->stack_depth--;
+				break;
+			}
+			/* not found, move onto next */
+			parent  = current;
+			current = current->parent;
+		}
+	}
+
+	/* Only process the exit if it matches the current method at the
+	top of our stack of samples */
+	if (!target)
+	{
+		// LOG_DEBUG("No matching method found for methodID
+		// [%p]\n", method);
+		return;
+	}
+
+	unsigned int flags = 0;
+
+	if (target->method_index >= 0
+	    && (size_t)target->method_index < ctx->metrics->count)
+		flags = ctx->metrics->metric_flags[target->method_index];
+
+	/* With no flags set, we have nothing to do */
+	if (flags == 0)
+		return;
+
+	method_metrics_soa_t *metrics = ctx->metrics;
+	int method_idx                = target->method_index;
+
+	/* Get metrics if they were enabled */
+	uint64_t exec_time    = 0;
+	uint64_t memory_delta = 0;
+	uint64_t cpu_delta    = 0;
+
+	/* Calculate execution time */
+	if ((flags & METRIC_FLAG_TIME) && target->start_time > 0)
+	{
+		uint64_t end_time = me->timestamp;
+		exec_time         = end_time - target->start_time;
+
+		atomic_fetch_add_explicit(&ctx->metrics->total_time_ns[method_idx],
+		                          exec_time,
+		                          memory_order_relaxed);
+
+		/* Update min/max */
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+
+		if (exec_time < metrics->min_time_ns[method_idx])
+			metrics->min_time_ns[method_idx] = exec_time;
+
+		if (exec_time > metrics->max_time_ns[method_idx])
+			metrics->max_time_ns[method_idx] = exec_time;
+
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+	}
+
+	if (flags & METRIC_FLAG_MEMORY)
+	{
+		// LOG_DEBUG("sampling memory for %d\n",
+		// target->method_index);
+		/* JVM heap allocations during method execution */
+		memory_delta = target->current_alloc_bytes;
+
+		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_idx],
+		                          memory_delta,
+		                          memory_order_relaxed);
+
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+
+		if (memory_delta > metrics->peak_memory[method_idx])
+			metrics->peak_memory[method_idx] = memory_delta;
+
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+	}
+
+	if (flags & METRIC_FLAG_CPU)
+	{
+		uint64_t end_cpu = me->cpu;
+
+		if (end_cpu > target->start_cpu)
+			cpu_delta = end_cpu - target->start_cpu;
+		else
+			LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu",
+			          (unsigned long long)end_cpu,
+			          (unsigned long long)target->start_cpu);
+
+		atomic_fetch_add_explicit(
+		    &metrics->cpu_cycles[method_idx], cpu_delta, memory_order_relaxed);
+	}
+
+	// /* Record the metrics */
+	// record_method_execution(ctx,
+	// 						target->method_index,
+	// 						exec_time,
+	// 						memory_delta,
+	// 						cpu_delta);
+}
+
 /**
  *
  */
@@ -2017,10 +2258,11 @@ method_event_thread_func(void *arg)
 		return NULL;
 	}
 
-	arena_t *arena = ctx->arenas[SAMPLE_ARENA_ID];
-	if (!arena)
+	arena_t *sample_arena = ctx->arenas[SAMPLE_ARENA_ID];
+	arena_t *q_arena      = ctx->arenas[Q_ENTRY_ARENA_ID];
+	if (!sample_arena || !q_arena)
 	{
-		LOG_ERROR("Failed to find sample arena!");
+		LOG_ERROR("Failed to find required arenas!");
 		return NULL;
 	}
 
@@ -2043,14 +2285,26 @@ method_event_thread_func(void *arg)
 			    "Queue entry type: %d, not a method entry type in method "
 			    "queue!!",
 			    entry->type);
-			break;
+			return NULL;
 		}
 
 		method_q_entry_t *me = (method_q_entry_t *)entry->data;
 
+		if (!me || !me->class_name || !me->method_name || !me->method_sig)
+		{
+			LOG_ERROR("Corrupted queue entry: me=%p, class_name=%p, "
+			          "method_name=%p, method_sig=%p",
+			          (void *)me,
+			          me ? (void *)me->class_name : NULL,
+			          me ? (void *)me->method_name : NULL,
+			          me ? (void *)me->method_sig : NULL);
+
+			return NULL;
+		}
+
 		jclass clazz = (*jni)->FindClass(jni, me->class_name);
 		if (!clazz)
-			continue;
+			goto cleanup;
 
 		jmethodID mid =
 		    (*jni)->GetMethodID(jni, clazz, me->method_name, me->method_sig);
@@ -2060,186 +2314,38 @@ method_event_thread_func(void *arg)
 			mid = (*jni)->GetStaticMethodID(
 			    jni, clazz, me->method_name, me->method_sig);
 			if (!mid)
-				continue;
+				goto cleanup;
 		}
 
-		/* Create a new sample on METHOD_ENTRY */
 		if (me->event_type == METHOD_ENTRY)
-		{
-			/* Lookup method info from hashtable via jmethodID */
-			cooper_method_info_t *method_info =
-			    ht_get(ctx->interesting_methods, mid);
-
-			/* We either didn't find the method (should be rare) or it's not
-			 * one we're configured to sample. */
-			if (method_info == NULL || method_info->sample_index < 0)
-				continue;
-
-			LOG_INFO("Found method: %s in interesting_methods hashtable",
-			         method_info->full_name);
-
-			/* We found a method to track. Atomically increment its total call
-			 * count. */
-			uint64_t current_calls = atomic_fetch_add_explicit(
-			    &ctx->metrics->call_counts[method_info->sample_index],
-			    1,
-			    memory_order_relaxed);
-
-			int sample_rate =
-			    ctx->metrics->sample_rates
-				[method_info->sample_index]; /* Read-only after init */
-
-			/* Decide whether to sample this specific call based on the rate.
-			 */
-			if ((current_calls % sample_rate) != 0)
-				continue; /* Don't sample this call. */
-
-			thread_context_t *tc = get_thread_local_context();
-			if (!tc)
-			{
-				LOG_ERROR("Unable to get thread context for %s, skipping",
-				          me->method_name);
-				continue;
-			}
-
-			method_sample_t *sample =
-			    init_method_sample(arena,
-			                       method_info->sample_index,
-			                       mid,
-			                       me->timestamp,
-			                       me->cpu);
-
-			if (!sample)
-			{
-				LOG_ERROR("Unable to create method info sample for %s, "
-				          "skipping",
-				          me->method_name);
-				continue;
-			}
-
-			sample->parent = tc->sample;
-			tc->sample     = sample;
-			tc->stack_depth++;
-		}
+			record_method_entry_event(ctx, me, mid, sample_arena);
 		else
+			record_method_exit_event(ctx, me, mid);
+
+	cleanup:
+		pthread_mutex_lock(&ctx->tm_ctx.method_event_lock);
+		if (me != NULL)
 		{
-			/* Update an existing sample on METHOD_EXIT */
+			if (arena_free(q_arena, me->class_name) == 0)
+				LOG_ERROR("q_arena free issue for  [class] %s\n",
+				          me->class_name);
 
-			/* Get thread-local context */
-			thread_context_t *context = get_thread_local_context();
+			if (arena_free(q_arena, me->method_name) == 0)
+				LOG_ERROR("q_arena free issue for [method] %s\n",
+				          me->method_name);
 
-			/* Without a thread context, nothing we can do */
-			if (!context)
-				continue;
+			if (arena_free(q_arena, me->method_sig) == 0)
+				LOG_ERROR("q_arena free issue for [sig] %s\n",
+				          me->method_sig);
 
-			/* We need to look in our stack to find a corresponding method
-			entry Note that the JVM doesn't guarantee ordering of method
-			entry/exits for a variety of reasons:
-			- Threading
-			- Optimizations
-			- etc
-			*/
-			method_sample_t *current = context->sample;
-			method_sample_t *parent  = NULL;
-			method_sample_t *target  = NULL;
-
-			/* Top of stack matches - quick case */
-			if (current != NULL && current->method_id == mid)
-			{
-				target = current;
-				context->sample =
-				    current->parent; /* Pop from top of stack */
-				context->stack_depth--;
-			}
-			else if (current != NULL)
-			{
-				/* We need to search the stack for a matching method -
-				 * this seems to be the common case */
-
-				/* Traverse stack to find target */
-				while (current)
-				{
-					if (current->method_id == mid)
-					{
-						target = current;
-						/* Remove node from linked-list/stack */
-						if (parent)
-							parent->parent =
-							    current
-								->parent; /* Skip over
-							                     this node */
-						else
-							context->sample =
-							    current
-								->parent; /* Update head
-							                     of list */
-
-						context->stack_depth--;
-						break;
-					}
-					/* not found, move onto next */
-					parent  = current;
-					current = current->parent;
-				}
-			}
-
-			/* Only process the exit if it matches the current method at the
-			 * top of our stack of samples */
-			if (!target)
-			{
-				// LOG_DEBUG("No matching method found for methodID
-				// [%p]\n", method);
-				continue;
-			}
-
-			unsigned int flags = 0;
-
-			if (target->method_index >= 0
-			    && (size_t)target->method_index < ctx->metrics->count)
-				flags = ctx->metrics->metric_flags[target->method_index];
-
-			/* Get metrics if they were enabled */
-			uint64_t exec_time    = 0;
-			uint64_t memory_delta = 0;
-			uint64_t cpu_delta    = 0;
-
-			/* Calculate execution time */
-			if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
-			{
-				uint64_t end_time = me->timestamp;
-				exec_time         = end_time - target->start_time;
-			}
-
-			if ((flags & METRIC_FLAG_MEMORY) != 0)
-			{
-				// LOG_DEBUG("sampling memory for %d\n",
-				// target->method_index);
-				/* JVM heap allocations during method execution */
-				memory_delta = target->current_alloc_bytes;
-			}
-
-			if ((flags & METRIC_FLAG_CPU) != 0)
-			{
-				uint64_t end_cpu = me->cpu;
-
-				if (end_cpu > target->start_cpu)
-					cpu_delta = end_cpu - target->start_cpu;
-				else
-					LOG_DEBUG(
-					    "Invalid CPU cycles: end=%llu, start=%llu",
-					    (unsigned long long)end_cpu,
-					    (unsigned long long)target->start_cpu);
-			}
-
-			/* Record the metrics */
-			record_method_execution(ctx,
-			                        target->method_index,
-			                        exec_time,
-			                        memory_delta,
-			                        cpu_delta);
+			if (arena_free(q_arena, me) == 0)
+				LOG_ERROR("q_arena free issue for method entry \n");
 		}
-
-		(*jni)->DeleteLocalRef(jni, clazz);
+		if (arena_free(q_arena, entry) == 0)
+			LOG_ERROR("q_arena free issue for entry \n");
+		pthread_mutex_unlock(&ctx->tm_ctx.method_event_lock);
+		if (clazz != NULL)
+			(*jni)->DeleteLocalRef(jni, clazz);
 	}
 
 	/* Detach from JVM */

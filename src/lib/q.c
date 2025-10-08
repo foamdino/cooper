@@ -100,8 +100,9 @@ q_deq(q_t *queue)
 	}
 
 	/* Get entry */
-	q_entry_t *entry = queue->entries[queue->tl];
-	queue->tl        = (queue->tl + 1) % Q_SZ;
+	q_entry_t *entry          = queue->entries[queue->tl];
+	queue->entries[queue->tl] = NULL;
+	queue->tl                 = (queue->tl + 1) % Q_SZ;
 	queue->count--;
 
 	pthread_mutex_unlock(&queue->lock);

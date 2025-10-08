@@ -203,107 +203,107 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
 	return COOPER_OK;
 }
 
-/**
- * Initialise a method_sample_t structure
- *
- * Return NULL if it fails to allocate space in the provided arena
- */
-method_sample_t *
-init_method_sample(arena_t *arena,
-                   int method_index,
-                   jmethodID method_id,
-                   uint64_t timestamp,
-                   uint64_t cpu)
-{
+// /**
+//  * Initialise a method_sample_t structure
+//  *
+//  * Return NULL if it fails to allocate space in the provided arena
+//  */
+// method_sample_t *
+// init_method_sample(arena_t *arena,
+//                    int method_index,
+//                    jmethodID method_id,
+//                    uint64_t timestamp,
+//                    uint64_t cpu)
+// {
 
-	assert(arena != NULL);
-	assert(method_id != NULL);
-	assert(method_index >= 0);
+// 	assert(arena != NULL);
+// 	assert(method_id != NULL);
+// 	assert(method_index >= 0);
 
-	if (!arena || method_index < 0 || !method_id)
-		return NULL;
+// 	if (!arena || method_index < 0 || !method_id)
+// 		return NULL;
 
-	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
-	if (!sample)
-		return NULL;
+// 	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
+// 	if (!sample)
+// 		return NULL;
 
-	/* Initialise sample */
-	sample->method_index = method_index;
-	sample->method_id    = method_id;
-	/* current_alloc_bytes and parent already zero-initialized by arena_alloc */
+// 	/* Initialise sample */
+// 	sample->method_index = method_index;
+// 	sample->method_id    = method_id;
+// 	/* current_alloc_bytes and parent already zero-initialized by arena_alloc */
 
-	unsigned int flags = global_ctx->metrics->metric_flags[method_index];
+// 	unsigned int flags = global_ctx->metrics->metric_flags[method_index];
 
-	if (flags & METRIC_FLAG_TIME)
-		sample->start_time = timestamp;
+// 	if (flags & METRIC_FLAG_TIME)
+// 		sample->start_time = timestamp;
 
-	if (flags & METRIC_FLAG_CPU)
-		sample->start_cpu = cpu;
+// 	if (flags & METRIC_FLAG_CPU)
+// 		sample->start_cpu = cpu;
 
-	return sample;
-}
+// 	return sample;
+// }
 
-/* Record method execution metrics */
-void
-record_method_execution(agent_context_t *ctx,
-                        int method_index,
-                        uint64_t exec_time_ns,
-                        uint64_t memory_bytes,
-                        uint64_t cycles)
-{
-	method_metrics_soa_t *metrics = ctx->metrics;
+// /* Record method execution metrics */
+// void
+// record_method_execution(agent_context_t *ctx,
+//                         int method_index,
+//                         uint64_t exec_time_ns,
+//                         uint64_t memory_bytes,
+//                         uint64_t cycles)
+// {
+// 	method_metrics_soa_t *metrics = ctx->metrics;
 
-	/* Check for valid index */
-	if (method_index < 0 || (size_t)method_index >= metrics->count)
-	{
-		LOG_WARN("WARNING: method_index: %d not found in soa struct\n",
-		         method_index);
-		return;
-	}
+// 	/* Check for valid index */
+// 	if (method_index < 0 || (size_t)method_index >= metrics->count)
+// 	{
+// 		LOG_WARN("WARNING: method_index: %d not found in soa struct\n",
+// 		         method_index);
+// 		return;
+// 	}
 
-	// /* Update sample count */
-	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
-	// memory_order_relaxed);
+// 	// /* Update sample count */
+// 	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
+// 	// memory_order_relaxed);
 
-	/* Update timing metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
-	{
-		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
-		                          exec_time_ns,
-		                          memory_order_relaxed);
+// 	/* Update timing metrics if enabled */
+// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
+// 	{
+// 		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
+// 		                          exec_time_ns,
+// 		                          memory_order_relaxed);
 
-		/* Update min/max */
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+// 		/* Update min/max */
+// 		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
-		if (exec_time_ns < metrics->min_time_ns[method_index])
-			metrics->min_time_ns[method_index] = exec_time_ns;
+// 		if (exec_time_ns < metrics->min_time_ns[method_index])
+// 			metrics->min_time_ns[method_index] = exec_time_ns;
 
-		if (exec_time_ns > metrics->max_time_ns[method_index])
-			metrics->max_time_ns[method_index] = exec_time_ns;
+// 		if (exec_time_ns > metrics->max_time_ns[method_index])
+// 			metrics->max_time_ns[method_index] = exec_time_ns;
 
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
+// 		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+// 	}
 
-	/* Update memory metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
-	{
-		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
-		                          memory_bytes,
-		                          memory_order_relaxed);
+// 	/* Update memory metrics if enabled */
+// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
+// 	{
+// 		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
+// 		                          memory_bytes,
+// 		                          memory_order_relaxed);
 
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+// 		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
-		if (memory_bytes > metrics->peak_memory[method_index])
-			metrics->peak_memory[method_index] = memory_bytes;
+// 		if (memory_bytes > metrics->peak_memory[method_index])
+// 			metrics->peak_memory[method_index] = memory_bytes;
 
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
+// 		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+// 	}
 
-	/* Update CPU metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-		atomic_fetch_add_explicit(
-		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
-}
+// 	/* Update CPU metrics if enabled */
+// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
+// 		atomic_fetch_add_explicit(
+// 		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
+// }
 
 static object_allocation_metrics_t *
 init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
@@ -1038,21 +1038,53 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	/* Class passed filter, enqueue for background processing */
 	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+
+	/* We need to protect arena allocations since
+	many threads can trigger this callback */
+	pthread_mutex_lock(&global_ctx->tm_ctx.class_cache_lock);
+	q_entry_t *entry = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 	class_q_entry_t *class_entry =
 	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
 
 	if (!entry || !class_entry)
 	{
 		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		goto cleanup;
 	}
 
-	class_entry->class_sig = class_sig;
+	class_entry->class_sig = arena_strdup(q_entry_arena, class_sig);
 	class_entry->klass     = global_class_ref;
+
+	/* Check if string allocation failed */
+	if (!class_entry->class_sig)
+	{
+		LOG_ERROR("Failed to duplicate class signature for: %s", class_sig);
+		arena_free(q_entry_arena, class_entry->class_sig);
+		arena_free(q_entry_arena, class_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		goto cleanup;
+	}
 
 	entry->type = Q_ENTRY_CLASS;
 	entry->data = class_entry;
+
+	if (entry->type != Q_ENTRY_CLASS)
+	{
+		LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) immediately "
+		          "after setting!",
+		          entry->type,
+		          entry->type);
+		arena_free(q_entry_arena, class_entry->class_sig);
+		arena_free(q_entry_arena, class_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		goto cleanup;
+	}
 
 	if (q_enq(global_ctx->class_queue, entry) != 0)
 	{
@@ -1060,9 +1092,14 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		/* Clean up the global reference if we couldn't enqueue */
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		/* Release entry mem back to arena on enqueue failure */
-		arena_free(q_entry_arena, entry);
+		arena_free(q_entry_arena, class_entry->class_sig);
 		arena_free(q_entry_arena, class_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 	}
+
+	pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
 
 cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1206,14 +1243,18 @@ get_current_thread_id()
 	return 0;
 }
 
-/* Record method events via queue system */
+/* Record method events via queue system
+As multiple JVMTI callback threads will try to record events concurrently
+We need to use a mutex around allocations in this function
+*/
 void
 record_method_event(method_event_type_e event_type,
                     const char *class_name,
                     const char *method_name,
                     const char *method_sig)
 {
-	/* Reuse your existing queue infrastructure */
+	pthread_mutex_lock(&global_ctx->tm_ctx.method_event_lock);
+
 	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
 	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 	method_q_entry_t *method_entry =
@@ -1222,6 +1263,7 @@ record_method_event(method_event_type_e event_type,
 	if (!entry || !method_entry)
 	{
 		LOG_ERROR("Failed to allocate queue entry for method event");
+		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
 		return;
 	}
 
@@ -1233,6 +1275,24 @@ record_method_event(method_event_type_e event_type,
 	method_entry->timestamp   = get_current_time_ns();
 	method_entry->thread_id   = get_current_thread_id();
 
+	/* Check if any string allocation failed */
+	if (!method_entry->class_name || !method_entry->method_name
+	    || !method_entry->method_sig)
+	{
+		LOG_ERROR("Failed to allocate strings for method event");
+		/* Clean up any partial allocations */
+		if (method_entry->class_name)
+			arena_free(q_entry_arena, method_entry->class_name);
+		if (method_entry->method_name)
+			arena_free(q_entry_arena, method_entry->method_name);
+		if (method_entry->method_sig)
+			arena_free(q_entry_arena, method_entry->method_sig);
+		arena_free(q_entry_arena, method_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
+		return;
+	}
+
 	if (event_type == METHOD_ENTRY)
 		method_entry->cpu = cycles_start();
 	else
@@ -1241,13 +1301,27 @@ record_method_event(method_event_type_e event_type,
 	entry->type = Q_ENTRY_METHOD;
 	entry->data = method_entry;
 
+	if (entry->type != Q_ENTRY_METHOD)
+	{
+		LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) immediately "
+		          "after setting!",
+		          entry->type,
+		          entry->type);
+	}
+
 	/* Enqueue for background processing */
 	if (q_enq(global_ctx->method_queue, entry) != 0)
 	{
 		LOG_ERROR("Failed to enqueue method event");
-		arena_free(q_entry_arena, entry);
+		arena_free(q_entry_arena, method_entry->class_name);
+		arena_free(q_entry_arena, method_entry->method_name);
+		arena_free(q_entry_arena, method_entry->method_sig);
 		arena_free(q_entry_arena, method_entry);
+		arena_free(q_entry_arena, entry);
+		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
 	}
+
+	pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
 }
 
 JNIEXPORT void JNICALL
@@ -1659,22 +1733,42 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 
 		/* Passed filter, enqueue for background processing */
 		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-		q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
+		pthread_mutex_lock(&global_ctx->tm_ctx.class_cache_lock);
+		q_entry_t *entry = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 		class_q_entry_t *class_entry =
 		    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+
+		class_entry->class_sig =
+		    arena_strdup(q_entry_arena, class_sig); // class_sig;
+		/* Use the GLOBAL reference, not the local one */
+		class_entry->klass = global_class_ref;
 
 		if (!entry || !class_entry)
 		{
 			LOG_ERROR("Unable to allocate room from arena for q entries!");
+			arena_free(q_entry_arena, class_entry);
+			arena_free(q_entry_arena, entry);
+			pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			goto deallocate;
 		}
 
-		class_entry->class_sig = class_sig;
-		/* Use the GLOBAL reference, not the local one */
-		class_entry->klass = global_class_ref;
-
 		entry->type = Q_ENTRY_CLASS;
 		entry->data = class_entry;
+
+		if (entry->type != Q_ENTRY_CLASS)
+		{
+			LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) "
+			          "immediately after setting!",
+			          entry->type,
+			          entry->type);
+			arena_free(q_entry_arena, class_entry->class_sig);
+			arena_free(q_entry_arena, class_entry);
+			arena_free(q_entry_arena, entry);
+			pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+			goto deallocate;
+		}
 
 		if (q_enq(global_ctx->class_queue, entry) != 0)
 		{
@@ -1682,9 +1776,12 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			/* Clean up the global reference if we couldn't enqueue */
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			/* Release entry mem back to arena on enqueue failure */
+			arena_free(q_entry_arena, class_entry->class_sig);
 			arena_free(q_entry_arena, entry);
 			arena_free(q_entry_arena, class_entry);
 		}
+
+		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
 
 	deallocate:
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1901,8 +1998,21 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	global_ctx->config.rate                = 1;
 	global_ctx->config.export_interval     = 60;
 	global_ctx->config.mem_sample_interval = 1;
-	pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL);
-	pthread_mutex_init(&global_ctx->tm_ctx.method_event_lock, NULL);
+	if (pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL) != 0)
+	{
+		printf("ERROR: pthread_mutex_init failed\n");
+		return JNI_ERR;
+	}
+	if (pthread_mutex_init(&global_ctx->tm_ctx.method_event_lock, NULL) != 0)
+	{
+		printf("ERROR: pthread_mutex_init failed\n");
+		return JNI_ERR;
+	}
+	if (pthread_mutex_init(&global_ctx->tm_ctx.class_cache_lock, NULL) != 0)
+	{
+		printf("ERROR: pthread_mutex_init failed\n");
+		return JNI_ERR;
+	}
 
 	/* Redirect output */
 	if (options && strncmp(options, "logfile=", 8) == 0)
@@ -2176,6 +2286,7 @@ Agent_OnUnload(JavaVM *vm)
 		/* Destroy mutex */
 		pthread_mutex_destroy(&global_ctx->tm_ctx.samples_lock);
 		pthread_mutex_destroy(&global_ctx->tm_ctx.method_event_lock);
+		pthread_mutex_destroy(&global_ctx->tm_ctx.class_cache_lock);
 
 		free(global_ctx);
 		global_ctx = NULL;

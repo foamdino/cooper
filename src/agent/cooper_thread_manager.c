@@ -260,10 +260,10 @@ stop_all_threads(agent_context_t *ctx)
 			    &ctx->method_queue->cond); /* Wake up waiting thread */
 			pthread_mutex_unlock(&ctx->method_queue->lock);
 		}
-		LOG_INFO("Waiting for class caching thread to terminate");
+		LOG_INFO("Waiting for method event thread to terminate");
 		int res = safe_thread_join(ctx->tm_ctx.method_event_thread, 3);
 		if (res != 0)
-			LOG_WARN("Class caching thread did not terminate cleanly: %d",
+			LOG_WARN("Method event thread did not terminate cleanly: %d",
 			         res);
 	}
 }

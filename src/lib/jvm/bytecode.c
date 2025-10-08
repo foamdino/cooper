@@ -284,6 +284,8 @@ write_package(u1 *buf, int *offset, const constant_pool_info_t *entry)
 }
 
 static const cp_parse_fn parse_handlers[CP_HANDLER_SZ] = {
+    /* We don't inlcude parse_utf8 as it requires
+    memory allocation */
     [CONSTANT_Integer]            = parse_integer,
     [CONSTANT_Float]              = parse_float,
     [CONSTANT_Long]               = parse_long,
@@ -329,7 +331,6 @@ parse_constant_pool_entry(arena_t *arena,
                           int *offset,
                           constant_pool_info_t *entry)
 {
-
 	entry->tag = data[(*offset)++];
 
 	/* Bounds check */
