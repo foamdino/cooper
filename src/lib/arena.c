@@ -157,6 +157,10 @@ arena_alloc(arena_t *arena, size_t sz)
 			arena->block_sizes[i] = arena->block_sizes[arena->free_count - 1];
 			arena->free_count--;
 
+			fprintf(stderr, 
+				"[ARENA_ALLOC] %s REUSE block=%p user=%p size=%zu free_count(before)=%zu\n",
+        		arena->name, block, (char*)block + header_size, sz, arena->free_count);
+
 			/* Reuse this block */
 			goto init_block;
 		}
@@ -179,6 +183,10 @@ arena_alloc(arena_t *arena, size_t sz)
 
 	block = (char *)arena->memory + arena->used;
 	arena->used += req_size;
+
+	fprintf(stderr, 
+		"[ARENA_ALLOC] %s NEW block=%p user=%p size=%zu used=%zu free_count=%zu\n",
+        arena->name, block, (char*)block + header_size, sz, arena->used, arena->free_count);
 
 init_block:
 	/* Initialize block header */
@@ -282,6 +290,28 @@ arena_free(arena_t *arena, void *ptr)
 		return 0;
 	}
 
+	// TODO check a uint8_t freed in the header would be faster than linear scan
+	// Detect duplicates in free list (extra safety)
+	for (size_t i = 0; i < arena->free_count; i++) {
+		if (arena->free_blocks[i] == header) {
+			printf("Duplicate free detected for ptr=%p (already in free list)\n", ptr);
+			return 0;
+		}
+	}
+
+	if (arena->free_count >= (arena->max_free_blocks - 32))
+	{
+		printf("[ARENA_FREE SNAPSHOT] arena=%s free_count=%zu max=%zu ptr=%p header=%p size=%lu\n",
+       		arena->name, arena->free_count, arena->max_free_blocks, ptr, (void*)header, header->total_block_sz);
+
+		/* Optionally dump last N entries */
+		size_t start = (arena->free_count > 16) ? arena->free_count - 16 : 0;
+		for (size_t i=start; i<arena->free_count; ++i) 
+		{
+			printf("  free[%zu]=%p size=%zu\n", i, (void*)arena->free_blocks[i], arena->block_sizes[i]);
+		}
+	}
+
 	/* Check if we can track more free blocks */
 	if (arena->free_count >= arena->max_free_blocks)
 	{
@@ -289,21 +319,27 @@ arena_free(arena_t *arena, void *ptr)
 		return 0;
 	}
 
-	printf("arena_free(%s): ptr=%p header=%p sz=%lu free_count=%lu max=%lu\n",
+	/* Clear the owner */
+	header->owner = NULL;
+
+	// TODO remove debugging when finished
+	if (strcmp(arena->name, "class_q_entry_arena") == 0 ||
+		strcmp(arena->name, "method_q_entry_arena") == 0) 
+	{
+		printf("arena_free(%s): ptr=%p header=%p sz=%lu free_count=%lu max=%lu\n",
 	       arena->name,
 	       ptr,
 	       (void *)header,
 	       header->total_block_sz,
 	       arena->free_count,
 	       arena->max_free_blocks);
+	}
 
 	/* Add to free list */
 	arena->free_blocks[arena->free_count] =
 	    header; /* Store pointer to header, not user data */
 	arena->block_sizes[arena->free_count] = header->total_block_sz;
 	arena->free_count++;
-
-	header->owner = NULL;
 
 	return 1;
 }

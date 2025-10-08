@@ -9,6 +9,9 @@
 
 #include <assert.h>
 #include <pthread.h>
+#include <stdint.h>
+//TODO remove after debugging
+#include <stdio.h>
 
 #define Q_SZ 4096
 
@@ -27,6 +30,8 @@ enum q_entry_type
 struct q_entry
 {
 	q_entry_type_e type; /**< Type of data represented */
+	uint8_t processed;      /* 0 or 1 */
+    uint64_t debug_id;      /* assigned at allocation */
 	void *data;          /**< Data */
 };
 

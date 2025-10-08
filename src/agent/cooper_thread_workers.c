@@ -1800,7 +1800,7 @@ class_cache_thread_func(void *arg)
 	agent_context_t *ctx   = (agent_context_t *)arg;
 	q_t *queue             = ctx->class_queue;
 	arena_t *arena         = ctx->arenas[CLASS_CACHE_ARENA_ID];
-	arena_t *q_entry_arena = ctx->arenas[Q_ENTRY_ARENA_ID];
+	arena_t *q_entry_arena = ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -2039,6 +2039,9 @@ record_method_entry_event(agent_context_t *ctx,
 	if ((current_calls % sample_rate) != 0)
 		return; /* Don't sample this call. */
 
+	LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build", me->class_name, me->method_name);
+	return;
+
 	thread_context_t *tc = get_thread_local_context();
 	if (!tc)
 	{
@@ -2259,7 +2262,7 @@ method_event_thread_func(void *arg)
 	}
 
 	arena_t *sample_arena = ctx->arenas[SAMPLE_ARENA_ID];
-	arena_t *q_arena      = ctx->arenas[Q_ENTRY_ARENA_ID];
+	arena_t *q_arena      = ctx->arenas[METHOD_Q_ENTRY_ARENA_ID];
 	if (!sample_arena || !q_arena)
 	{
 		LOG_ERROR("Failed to find required arenas!");
@@ -2317,6 +2320,9 @@ method_event_thread_func(void *arg)
 				goto cleanup;
 		}
 
+		/* Mark this q enttry as processed */
+		entry->processed = 1;
+
 		if (me->event_type == METHOD_ENTRY)
 			record_method_entry_event(ctx, me, mid, sample_arena);
 		else
@@ -2343,6 +2349,9 @@ method_event_thread_func(void *arg)
 		}
 		if (arena_free(q_arena, entry) == 0)
 			LOG_ERROR("q_arena free issue for entry \n");
+
+		entry->data = NULL;
+		entry->type = Q_ENTRY__LAST;
 		pthread_mutex_unlock(&ctx->tm_ctx.method_event_lock);
 		if (clazz != NULL)
 			(*jni)->DeleteLocalRef(jni, clazz);

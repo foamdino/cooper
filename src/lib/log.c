@@ -189,84 +189,117 @@ cleanup_log_system()
 void
 log_message(log_level_e level, const char *file, int line, const char *fmt, ...)
 {
-	/* Skip if system not initialized or level is below current_log_level */
-	if (!log_system.initialized || level < current_log_level)
-		return;
+    if (!log_system.initialized || level < current_log_level)
+        return;
 
-	/* Get current timestamp */
-	time_t now;
-	struct tm tm_now;
-	char timestamp[24]; /* Format: YYYY-MM-DD HH:MM:SS.mmm */
+    time_t now;
+    struct tm tm_now;
+    char timestamp[24];
+    time(&now);
+    localtime_r(&now, &tm_now);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm_now);
 
-	time(&now);
-	localtime_r(&now, &tm_now);
-	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm_now);
+    char buffer[MAX_LOG_MSG_SZ];
+    int header_len = snprintf(buffer,
+                              sizeof(buffer),
+                              "[%s] %s [%s:%d] ",
+                              level_names[level],
+                              timestamp,
+                              file ? file : "unknown",
+                              line);
+    if (header_len < 0)
+        return;
 
-	/* Format the message with level, timestamp, location, and user message */
-	char buffer[MAX_LOG_MSG_SZ];
-	int header_len = snprintf(buffer,
-	                          sizeof(buffer),
-	                          "[%s] %s [%s:%d] ",
-	                          level_names[level],
-	                          timestamp,
-	                          file ? file : "unknown",
-	                          line);
-
-	/* Header too long, can't proceed */
-	if (header_len < 0 || header_len >= (int)sizeof(buffer))
-		return;
-
-	/* Add the user message with variable arguments */
-	va_list args;
-	va_start(args, fmt);
-	int msg_len =
-	    vsnprintf(buffer + header_len, sizeof(buffer) - header_len - 1, fmt, args);
-	va_end(args);
-
-	/* Formatting error */
-	if (msg_len < 0)
-		return;
-
-	/* Ensure newline at the end */
-	size_t total_len = header_len + msg_len;
-	if (total_len > 0 && total_len < sizeof(buffer) - 2
-	    && buffer[total_len - 1] != '\n')
+    /* if header_len >= sizeof(buffer) then nothing can be written */
+    if ((size_t)header_len >= sizeof(buffer)) 
 	{
-		buffer[total_len]     = '\n';
-		buffer[total_len + 1] = '\0';
-	}
+        /* header truncated; ensure last byte is NUL and drop */
+        buffer[sizeof(buffer) - 1] = '\0';
+        /* optionally fallback to fprintf() here */
+        return;
+    }
 
-	pthread_mutex_lock(&log_system.arena_lock);
-	q_entry_t *entry = arena_alloc(log_system.arena, sizeof(q_entry_t));
-	if (!entry)
+    /* remaining space for the message (include space for final newline and NUL) */
+    size_t available = sizeof(buffer) - (size_t)header_len;
+
+    va_list args;
+    va_start(args, fmt);
+    /* we pass available - 1 to vsnprintf so there's always room for trailing '\n' or '\0' */
+    int rv = vsnprintf(buffer + header_len, (available > 0) ? (available - 1) : 0, fmt, args);
+    va_end(args);
+
+	/* formatting error */
+    if (rv < 0)
+        buffer[header_len] = '\0';
+
+    /* actual number of characters written into the buffer (excluding NUL) */
+    size_t actual_msg_len;
+    if (rv < 0)
+        actual_msg_len = strlen(buffer + header_len);
+    else 
 	{
-		/* OOM: drop message, fallback to fprintf */
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: log arena OOM, dropping message: %s", buffer);
-		return;
-	}
+        /* vsnprintf returns the would-be length; actual written is min(rv, available-1) */
+        size_t wrote = (size_t)rv;
+        if (wrote >= (available > 0 ? available - 1 : 0))
+            actual_msg_len = (available > 0 ? available - 1 : 0);
+        else
+            actual_msg_len = wrote;
+    }
 
-	char *log_msg = arena_strdup(log_system.arena, buffer);
-	if (!log_msg)
+    /* Ensure there's a newline at the end, if room. If not room, we already have a truncated message and
+       the last char is at buffer[sizeof(buffer)-2] (since we reserved one for NUL). */
+    size_t total_len = (size_t)header_len + actual_msg_len;
+    if (total_len + 1 < sizeof(buffer)) 
 	{
-		/* Failed to allocate message body — free the entry and drop */
-		arena_free(log_system.arena, entry);
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: log arena OOM (msg), dropping: %s", buffer);
-		return;
-	}
-	pthread_mutex_unlock(&log_system.arena_lock);
+        /* room for newline and NUL */
+        if (buffer[total_len - 1] != '\n') 
+		{
+            buffer[total_len] = '\n';
+            buffer[total_len + 1] = '\0';
+            total_len += 1;
+        } 
+		else
+            buffer[total_len] = '\0';
 
-	entry->type = Q_ENTRY_LOG;
-	entry->data = log_msg;
-
-	if (q_enq(log_system.queue, entry) != 0)
+    } 
+	else 
 	{
-		/* queue full -> drop and free under lock */
-		pthread_mutex_lock(&log_system.arena_lock);
-		arena_free(log_system.arena, log_msg);
-		arena_free(log_system.arena, entry);
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: logging queue full, dropping: %s", log_msg);
-	}
+        /* truncated — ensure NUL at final position */
+        buffer[sizeof(buffer) - 1] = '\0';
+        total_len = strlen(buffer); /* safe fallback */
+    }
+
+    /* Now buffer is a well-formed, NUL-terminated string of length total_len */
+
+    pthread_mutex_lock(&log_system.arena_lock);
+    q_entry_t *entry = arena_alloc(log_system.arena, sizeof(q_entry_t));
+    if (!entry) 
+	{
+        pthread_mutex_unlock(&log_system.arena_lock);
+        fprintf(stderr, "WARNING: log arena OOM, dropping message: %s", buffer);
+        return;
+    }
+
+    char *log_msg = arena_strdup(log_system.arena, buffer);
+    if (!log_msg) 
+	{
+        arena_free(log_system.arena, entry);
+        pthread_mutex_unlock(&log_system.arena_lock);
+        fprintf(stderr, "WARNING: log arena OOM (msg), dropping: %s", buffer);
+        return;
+    }
+    pthread_mutex_unlock(&log_system.arena_lock);
+
+    entry->type = Q_ENTRY_LOG;
+    entry->data = log_msg;
+
+    if (q_enq(log_system.queue, entry) != 0) 
+	{
+        pthread_mutex_lock(&log_system.arena_lock);
+        arena_free(log_system.arena, log_msg);
+        arena_free(log_system.arena, entry);
+        pthread_mutex_unlock(&log_system.arena_lock);
+        fprintf(stderr, "WARNING: logging queue full, dropping: %s", log_msg);
+    }
 }
+

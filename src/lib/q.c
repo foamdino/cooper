@@ -60,6 +60,9 @@ q_enq(q_t *queue, q_entry_t *entry)
 	queue->hd                 = (queue->hd + 1) % Q_SZ;
 	queue->count++;
 
+	printf("[Q_ENQ] id=%lu entry=%p hd=%u tl=%u count=%u\n",
+       entry->debug_id, (void*)entry, queue->hd, queue->tl, queue->count);
+
 	/* Signal waiting thread */
 	pthread_cond_signal(&queue->cond);
 	pthread_mutex_unlock(&queue->lock);
@@ -104,6 +107,9 @@ q_deq(q_t *queue)
 	queue->entries[queue->tl] = NULL;
 	queue->tl                 = (queue->tl + 1) % Q_SZ;
 	queue->count--;
+
+	printf("[Q_DEQ] id=%lu entry=%p hd=%u tl=%u count=%u\n",
+       entry->debug_id, (void*)entry, queue->hd, queue->tl, queue->count);
 
 	pthread_mutex_unlock(&queue->lock);
 	return entry;

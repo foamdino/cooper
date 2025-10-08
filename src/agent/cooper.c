@@ -13,6 +13,8 @@ static agent_context_t *global_ctx = NULL; /* Single global context */
 static pthread_key_t context_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
+static atomic_uint_fast64_t next_entry_id = ATOMIC_VAR_INIT(1);
+
 /* Arena configurations */
 /* clang-format off */
 static const arena_config_t arena_configs[] = 
@@ -24,7 +26,8 @@ static const arena_config_t arena_configs[] =
     {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
     {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
     {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
-    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS},
+    {METHOD_Q_ENTRY_ARENA_ID, METHOD_Q_ENTRY_ARENA_NAME, METHOD_Q_ENTRY_ARENA_SZ, METHOD_Q_ENTRY_ARENA_BLOCKS},
+	{CLASS_Q_ENTRY_ARENA_ID, CLASS_Q_ENTRY_ARENA_NAME, CLASS_Q_ENTRY_ARENA_SZ, CLASS_Q_ENTRY_ARENA_BLOCKS},
 	{CALL_STACK_ARENA_ID, CALL_STACK_ARENA_NAME, CALL_STACK_ARENA_SZ, CALL_STACK_ARENA_BLOCKS},
 	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
 	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS},
@@ -1037,7 +1040,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	}
 
 	/* Class passed filter, enqueue for background processing */
-	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	arena_t *q_entry_arena = global_ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
 
 	/* We need to protect arena allocations since
 	many threads can trigger this callback */
@@ -1255,7 +1258,7 @@ record_method_event(method_event_type_e event_type,
 {
 	pthread_mutex_lock(&global_ctx->tm_ctx.method_event_lock);
 
-	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+	arena_t *q_entry_arena = global_ctx->arenas[METHOD_Q_ENTRY_ARENA_ID];
 	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 	method_q_entry_t *method_entry =
 	    arena_alloc(q_entry_arena, sizeof(method_q_entry_t));
@@ -1300,6 +1303,9 @@ record_method_event(method_event_type_e event_type,
 
 	entry->type = Q_ENTRY_METHOD;
 	entry->data = method_entry;
+	/* DEBUGGING */
+	entry->debug_id = atomic_fetch_add(&next_entry_id, 1);
+	entry->processed = 0;
 
 	if (entry->type != Q_ENTRY_METHOD)
 	{
@@ -1318,7 +1324,6 @@ record_method_event(method_event_type_e event_type,
 		arena_free(q_entry_arena, method_entry->method_sig);
 		arena_free(q_entry_arena, method_entry);
 		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
 	}
 
 	pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
@@ -1732,7 +1737,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		}
 
 		/* Passed filter, enqueue for background processing */
-		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
+		arena_t *q_entry_arena = global_ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
 		pthread_mutex_lock(&global_ctx->tm_ctx.class_cache_lock);
 		q_entry_t *entry = arena_alloc(q_entry_arena, sizeof(q_entry_t));
 		class_q_entry_t *class_entry =
@@ -1847,16 +1852,16 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
 	LOG_INFO("Successfully initialized Thread class and getId method");
 
-	/* Start all background threads */
-	if (start_all_threads(global_ctx) != COOPER_OK)
-	{
-		LOG_ERROR("Failed to start background threads");
-		goto error;
-	}
-
 	if (precache_loaded_classes(jvmti_env, jni_env) != COOPER_OK)
 	{
 		LOG_ERROR("Unable to precache loaded classes");
+		goto error;
+	}
+
+	/* Finally start all background threads */
+	if (start_all_threads(global_ctx) != COOPER_OK)
+	{
+		LOG_ERROR("Failed to start background threads");
 		goto error;
 	}
 
