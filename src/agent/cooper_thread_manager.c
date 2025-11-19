@@ -91,14 +91,12 @@ start_all_threads(agent_context_t *ctx)
 
 	/* Start class caching background thread */
 	set_worker_status(&ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING);
-	ctx->class_queue->running = 1;
 	if (pthread_create(
 		&ctx->tm_ctx.class_cache_thread, NULL, class_cache_thread_func, ctx)
 	    != 0)
 	{
 		LOG_ERROR("Failed to start class caching thread: %s", strerror(errno));
 		clear_worker_status(&ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING);
-		ctx->class_queue->running = 0;
 		return COOPER_ERR;
 	}
 	else
@@ -139,7 +137,6 @@ start_all_threads(agent_context_t *ctx)
 
 	/* Start method event thread */
 	set_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
-	ctx->method_queue->running = 1;
 	if (pthread_create(
 		&ctx->tm_ctx.method_event_thread, NULL, method_event_thread_func, ctx)
 	    != 0)
@@ -233,15 +230,6 @@ stop_all_threads(agent_context_t *ctx)
 
 	if (ctx->tm_ctx.class_cache_thread)
 	{
-		if (ctx->class_queue)
-		{
-			/* Signal the queue to shutdown */
-			pthread_mutex_lock(&ctx->class_queue->lock);
-			ctx->class_queue->running = 0;
-			pthread_cond_broadcast(
-			    &ctx->class_queue->cond); /* Wake up waiting thread */
-			pthread_mutex_unlock(&ctx->class_queue->lock);
-		}
 		LOG_INFO("Waiting for class caching thread to terminate");
 		int res = safe_thread_join(ctx->tm_ctx.class_cache_thread, 3);
 		if (res != 0)
@@ -251,15 +239,6 @@ stop_all_threads(agent_context_t *ctx)
 
 	if (ctx->tm_ctx.method_event_thread)
 	{
-		if (ctx->method_queue)
-		{
-			/* Signal the queue to shutdown */
-			pthread_mutex_lock(&ctx->method_queue->lock);
-			ctx->method_queue->running = 0;
-			pthread_cond_broadcast(
-			    &ctx->method_queue->cond); /* Wake up waiting thread */
-			pthread_mutex_unlock(&ctx->method_queue->lock);
-		}
 		LOG_INFO("Waiting for method event thread to terminate");
 		int res = safe_thread_join(ctx->tm_ctx.method_event_thread, 3);
 		if (res != 0)

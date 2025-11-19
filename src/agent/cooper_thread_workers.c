@@ -1343,12 +1343,9 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			*heap_entry            = *stats;
 			heap_entry->class_name = arena_strdup(scratch_arena, entry->key);
 
+			/* Without a class name nothing to do */
 			if (!heap_entry->class_name)
-			{
-				/* Without a class name nothing to do */
-				arena_free(scratch_arena, heap_entry);
 				continue;
-			}
 
 			/* Insert into min heap */
 			if (!min_heap_insert_or_replace(heap, heap_entry))
@@ -1795,10 +1792,8 @@ class_cache_thread_func(void *arg)
 {
 	assert(arg != NULL);
 
-	agent_context_t *ctx   = (agent_context_t *)arg;
-	q_t *queue             = ctx->class_queue;
-	arena_t *arena         = ctx->arenas[CLASS_CACHE_ARENA_ID];
-	arena_t *q_entry_arena = ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
+	agent_context_t *ctx = (agent_context_t *)arg;
+	arena_t *arena       = ctx->arenas[CLASS_CACHE_ARENA_ID];
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -1814,44 +1809,35 @@ class_cache_thread_func(void *arg)
 	}
 
 	int classes_processed = 0;
-	LOG_INFO("Class cache thread started, queue has %d entries", queue->count);
+	LOG_INFO("Class cache thread started");
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING))
 	{
-		LOG_DEBUG("Waiting for class from queue...");
-		q_entry_t *entry = q_deq(queue);
-
-		/* Q shutdown or error */
-		if (entry == NULL)
-			break;
-
-		if (entry->type != Q_ENTRY_CLASS)
+		uint32_t handle;
+		if (mpsc_ring_consume(&ctx->class_ring, &handle) != 0)
 		{
-			LOG_ERROR("Queue entry type: %d, not a class entry type in class "
-			          "queue!!",
-			          entry->type);
-			break;
+			/* Ring empty */
+			usleep(10000); /* Sleep for 10ms */
+			continue;
 		}
 
-		class_q_entry_t *class_entry = (class_q_entry_t *)entry->data;
+		void *buffer = mpsc_ring_get(&ctx->class_ring, handle);
+		if (!buffer)
+		{
+			mpsc_ring_release(&ctx->class_ring, handle);
+			continue;
+		}
+
+		serialized_class_event_t *event = (serialized_class_event_t *)buffer;
 
 		classes_processed++;
-		LOG_DEBUG("Processing class #%d from queue", classes_processed);
-		cache_class_info(ctx, arena, ctx->jvmti_env, class_entry->klass);
+		LOG_DEBUG("Processing class #%d from ring", classes_processed);
+		cache_class_info(ctx, arena, ctx->jvmti_env, event->klass);
 
-		/* Delete the global reference after processing
-		class_entry->klass is a global ref assigned in precache_loaded_classes or
-		class_load_callback
-		*/
-		(*jni)->DeleteGlobalRef(jni, class_entry->klass);
-		/* We need to lock around modifying data from q arena */
-		pthread_mutex_lock(&ctx->tm_ctx.class_cache_lock);
-		/* Free the duplicated class_sig string */
-		arena_free(q_entry_arena, class_entry->class_sig);
-		/* Free the q entry itself */
-		arena_free(q_entry_arena, class_entry);
-		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&ctx->tm_ctx.class_cache_lock);
+		/* Delete the global reference after processing */
+		(*jni)->DeleteGlobalRef(jni, event->klass);
+
+		mpsc_ring_release(&ctx->class_ring, handle);
 	}
 
 	/* Detach from JVM */
@@ -1859,7 +1845,7 @@ class_cache_thread_func(void *arg)
 	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
 		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
-	LOG_INFO("Class cache thread exiting, processed %d classes", classes_processed);
+	LOG_INFO("Class cache thread exiting");
 	return NULL;
 }
 
@@ -2246,7 +2232,6 @@ void *
 method_event_thread_func(void *arg)
 {
 	agent_context_t *ctx = (agent_context_t *)arg;
-	q_t *queue           = ctx->method_queue;
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
@@ -2262,99 +2247,82 @@ method_event_thread_func(void *arg)
 	}
 
 	arena_t *sample_arena = ctx->arenas[SAMPLE_ARENA_ID];
-	arena_t *q_arena      = ctx->arenas[METHOD_Q_ENTRY_ARENA_ID];
-	if (!sample_arena || !q_arena)
+	if (!sample_arena)
 	{
 		LOG_ERROR("Failed to find required arenas!");
 		return NULL;
 	}
 
-	LOG_INFO("Method event thread started, queue has %d entries", queue->count);
+	LOG_INFO("Method event thread started");
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING))
 	{
-		q_entry_t *entry = q_deq(queue);
-
-		/* Q shutdown or error */
-		if (entry == NULL)
+		uint32_t handle;
+		if (mpsc_ring_consume(&ctx->method_ring, &handle) != 0)
 		{
-			LOG_INFO("No method event entries - exiting");
-			break;
+			/* Ring empty */
+			usleep(1000); /* Sleep for 1ms */
+			continue;
 		}
 
-		if (entry->type != Q_ENTRY_METHOD)
+		void *buffer = mpsc_ring_get(&ctx->method_ring, handle);
+		if (!buffer)
 		{
-			LOG_ERROR(
-			    "Queue entry type: %d, not a method entry type in method "
-			    "queue!!",
-			    entry->type);
-			return NULL;
+			mpsc_ring_release(&ctx->method_ring, handle);
+			continue;
 		}
 
-		method_q_entry_t *me = (method_q_entry_t *)entry->data;
+		serialized_method_event_t *event = (serialized_method_event_t *)buffer;
+		char *data_ptr                   = event->data;
 
-		if (!me || !me->class_name || !me->method_name || !me->method_sig)
-		{
-			LOG_ERROR("Corrupted queue entry: me=%p, class_name=%p, "
-			          "method_name=%p, method_sig=%p",
-			          (void *)me,
-			          me ? (void *)me->class_name : NULL,
-			          me ? (void *)me->method_name : NULL,
-			          me ? (void *)me->method_sig : NULL);
+		char *class_name  = data_ptr;
+		char *method_name = data_ptr + event->class_name_len + 1;
+		char *method_sig =
+		    data_ptr + event->class_name_len + 1 + event->method_name_len + 1;
 
-			return NULL;
-		}
+		/* Reconstruct method_q_entry_t for compatibility with existing functions
+		 * (for now) */
+		method_q_entry_t me = {0};
+		me.event_type       = event->type;
+		me.class_name       = class_name;
+		me.method_name      = method_name;
+		me.method_sig       = method_sig;
+		me.timestamp        = event->timestamp;
+		me.cpu              = event->cpu;
+		me.thread_id        = event->thread_id;
 
-		jclass clazz = (*jni)->FindClass(jni, me->class_name);
+		jclass clazz = (*jni)->FindClass(jni, me.class_name);
 		if (!clazz)
+		{
+			(*jni)->ExceptionClear(jni);
 			goto cleanup;
+		}
 
 		jmethodID mid =
-		    (*jni)->GetMethodID(jni, clazz, me->method_name, me->method_sig);
+		    (*jni)->GetMethodID(jni, clazz, me.method_name, me.method_sig);
 		if (!mid)
 		{
+			(*jni)->ExceptionClear(jni);
 			/* Not found for instance method, retry for static */
 			mid = (*jni)->GetStaticMethodID(
-			    jni, clazz, me->method_name, me->method_sig);
+			    jni, clazz, me.method_name, me.method_sig);
 			if (!mid)
+			{
+				(*jni)->ExceptionClear(jni);
 				goto cleanup;
+			}
 		}
 
-		/* Mark this q enttry as processed */
-		entry->processed = 1;
-
-		if (me->event_type == METHOD_ENTRY)
-			record_method_entry_event(ctx, me, mid, sample_arena);
+		if (me.event_type == METHOD_ENTRY)
+			record_method_entry_event(ctx, &me, mid, sample_arena);
 		else
-			record_method_exit_event(ctx, me, mid);
+			record_method_exit_event(ctx, &me, mid);
 
 	cleanup:
-		pthread_mutex_lock(&ctx->tm_ctx.method_event_lock);
-		if (me != NULL)
-		{
-			if (arena_free(q_arena, me->class_name) == 0)
-				LOG_ERROR("q_arena free issue for  [class] %s\n",
-				          me->class_name);
-
-			if (arena_free(q_arena, me->method_name) == 0)
-				LOG_ERROR("q_arena free issue for [method] %s\n",
-				          me->method_name);
-
-			if (arena_free(q_arena, me->method_sig) == 0)
-				LOG_ERROR("q_arena free issue for [sig] %s\n",
-				          me->method_sig);
-
-			if (arena_free(q_arena, me) == 0)
-				LOG_ERROR("q_arena free issue for method entry \n");
-		}
-		if (arena_free(q_arena, entry) == 0)
-			LOG_ERROR("q_arena free issue for entry \n");
-
-		entry->data = NULL;
-		entry->type = Q_ENTRY__LAST;
-		pthread_mutex_unlock(&ctx->tm_ctx.method_event_lock);
 		if (clazz != NULL)
 			(*jni)->DeleteLocalRef(jni, clazz);
+
+		mpsc_ring_release(&ctx->method_ring, handle);
 	}
 
 	/* Detach from JVM */

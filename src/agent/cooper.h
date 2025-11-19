@@ -52,53 +52,58 @@
 #define MAX_MEMORY_SAMPLES  100  /**< The max number of memory samples to keep */
 #define MAX_OBJECT_TYPES    2048 /**< The max types of objects to track */
 #define CALL_STACK_CHANNEL_CAPACITY                                                      \
-	4096 /**< The max num of elements in the ring channel */
+	4096                      /**< The max num of elements in the ring channel */
+#define LOG_RING_CAPACITY    1024 /**< Max number of log messages in ring */
+#define METHOD_RING_CAPACITY 4096 /**< Max number of method events in ring */
+#define MAX_METHOD_EVENT_SZ  512  /**< Max size of a method event message */
+#define CLASS_RING_CAPACITY  1024 /**< Max number of class events in ring */
+#define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define EXCEPTION_ARENA_SZ    1024 * 1024
-#define LOG_ARENA_SZ          1024 * 1024
-#define SAMPLE_ARENA_SZ       2048 * 1024
-#define CONFIG_ARENA_SZ       512 * 1024
-#define METRICS_ARENA_SZ      8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ      16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
-#define METHOD_Q_ENTRY_ARENA_SZ      4 * 1024 * 1024
-#define CLASS_Q_ENTRY_ARENA_SZ      4 * 1024 * 1024
-#define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
-#define FLAMEGRAPH_ARENA_SZ   1024 * 1024
-#define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
-#define BYTECODE_ARENA_SZ     8 * 1024 * 1024
+#define EXCEPTION_ARENA_SZ      1024 * 1024
+#define LOG_ARENA_SZ            1024 * 1024
+#define SAMPLE_ARENA_SZ         2048 * 1024
+#define CONFIG_ARENA_SZ         512 * 1024
+#define METRICS_ARENA_SZ        8 * 1024 * 1024
+#define SCRATCH_ARENA_SZ        16 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ    12 * 1024 * 1024
+#define METHOD_Q_ENTRY_ARENA_SZ 4 * 1024 * 1024
+#define CLASS_Q_ENTRY_ARENA_SZ  4 * 1024 * 1024
+#define CALL_STACK_ARENA_SZ     64 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ     1024 * 1024
+#define METHOD_CACHE_ARENA_SZ   2 * 1024 * 1024
+#define BYTECODE_ARENA_SZ       8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
-#define EXCEPTION_ARENA_BLOCKS    1024
-#define LOG_ARENA_BLOCKS          1024
-#define EVENT_ARENA_BLOCKS        1024
-#define SAMPLE_ARENA_BLOCKS       1024
-#define CONFIG_ARENA_BLOCKS       1024
-#define METRICS_ARENA_BLOCKS      1024
-#define CLASS_CACHE_ARENA_BLOCKS  1024
-#define SCRATCH_ARENA_BLOCKS      1024
-#define METHOD_Q_ENTRY_ARENA_BLOCKS      1024
-#define CLASS_Q_ENTRY_ARENA_BLOCKS      1024
-#define CALL_STACK_ARENA_BLOCKS   1024
-#define FLAMEGRAPH_ARENA_BLOCKS   1024
-#define METHOD_CACHE_ARENA_BLOCKS 1024
-#define BYTECODE_ARENA_BLOCKS     1024
+#define EXCEPTION_ARENA_BLOCKS      1024
+#define LOG_ARENA_BLOCKS            1024
+#define EVENT_ARENA_BLOCKS          1024
+#define SAMPLE_ARENA_BLOCKS         1024
+#define CONFIG_ARENA_BLOCKS         1024
+#define METRICS_ARENA_BLOCKS        1024
+#define CLASS_CACHE_ARENA_BLOCKS    1024
+#define SCRATCH_ARENA_BLOCKS        1024
+#define METHOD_Q_ENTRY_ARENA_BLOCKS 1024
+#define CLASS_Q_ENTRY_ARENA_BLOCKS  1024
+#define CALL_STACK_ARENA_BLOCKS     1024
+#define FLAMEGRAPH_ARENA_BLOCKS     1024
+#define METHOD_CACHE_ARENA_BLOCKS   1024
+#define BYTECODE_ARENA_BLOCKS       1024
 
 /* Arena Names */
-#define EXCEPTION_ARENA_NAME    "exception_arena"
-#define LOG_ARENA_NAME          "log_arena"
-#define SAMPLE_ARENA_NAME       "sample_arena"
-#define CONFIG_ARENA_NAME       "config_arena"
-#define METRICS_ARENA_NAME      "metrics_arena"
-#define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
-#define SCRATCH_ARENA_NAME      "scratch_arena"
-#define METHOD_Q_ENTRY_ARENA_NAME      "method_q_entry_arena"
-#define CLASS_Q_ENTRY_ARENA_NAME      "class_q_entry_arena"
-#define CALL_STACK_ARENA_NAME   "call_stack_arena"
-#define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
-#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
-#define BYTECODE_ARENA_NAME     "bytecode_arena"
+#define EXCEPTION_ARENA_NAME      "exception_arena"
+#define LOG_ARENA_NAME            "log_arena"
+#define SAMPLE_ARENA_NAME         "sample_arena"
+#define CONFIG_ARENA_NAME         "config_arena"
+#define METRICS_ARENA_NAME        "metrics_arena"
+#define CLASS_CACHE_ARENA_NAME    "class_cache_arena"
+#define SCRATCH_ARENA_NAME        "scratch_arena"
+#define METHOD_Q_ENTRY_ARENA_NAME "method_q_entry_arena"
+#define CLASS_Q_ENTRY_ARENA_NAME  "class_q_entry_arena"
+#define CALL_STACK_ARENA_NAME     "call_stack_arena"
+#define FLAMEGRAPH_ARENA_NAME     "flamegraph_arena"
+#define METHOD_CACHE_ARENA_NAME   "method_cache_arena"
+#define BYTECODE_ARENA_NAME       "bytecode_arena"
 
 /* Ok/Err */
 #define COOPER_OK        0
@@ -391,11 +396,12 @@ struct agent_context
 	FILE *log_file;                    /**< Log output file */
 	pthread_t log_thread;              /**< Logging thread */
 	thread_manager_ctx_t tm_ctx;       /**< Holds state/threads for thread_manager */
+	mpsc_ring_t log_ring;              /**< MPSC ring for logging */
+	mpsc_ring_t method_ring;           /**< MPSC ring for method events */
+	mpsc_ring_t class_ring;            /**< MPSC ring for class events */
 	ring_channel_t call_stack_channel; /**< ring channel for call stacks */
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */
-	q_t *class_queue;                  /**< q for class caching background thread */
-	q_t *method_queue;                 /**< q for method events background thread */
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
 	hashtable_t
 	    *interesting_classes; /**< Hashtable of scanned classes we care about */
@@ -453,7 +459,7 @@ hash_string(const void *key, size_t capacity)
 {
 	assert(key != NULL);
 	assert(capacity > 0);
-	const char *str = key;
+	const char *str = (const char *)key;
 
 	size_t hash = 5381;
 	int c;

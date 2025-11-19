@@ -5,6 +5,7 @@
  */
 
 #include "../lib/log.h"
+#include "../lib/ring/mpsc_ring.h"
 #include "../lib/arena.h"
 #include "../lib/arena_str.h"
 #include "../lib/cpu.h"
@@ -13,7 +14,7 @@
 #include "../agent/config.h"
 #include "../agent/cooper_shm.h"
 
-q_t *log_queue = NULL;
+mpsc_ring_t log_ring;
 
 /* Helper to create a temporary config file */
 static const char *
@@ -52,38 +53,12 @@ init_test_context()
 }
 
 /* Initialize a log queue for testing */
+/* Initialize a log ring for testing */
 int
-init_log_q(agent_context_t *ctx)
+init_test_log_ring(agent_context_t *ctx)
 {
-	assert(ctx != NULL);
-
-	q_t *queue = calloc(1, sizeof(q_t));
-	if (!queue)
-		return 1;
-
-	queue->running = 1;
-	int err;
-
-	err = pthread_mutex_init(&queue->lock, NULL);
-	if (err != 0)
-	{
-		free(queue);
-		printf("ERROR: Failed to init log queue mutex: %d\n", err);
-		return 1;
-	}
-
-	err = pthread_cond_init(&queue->cond, NULL);
-	if (err != 0)
-	{
-		pthread_mutex_destroy(&queue->lock);
-		free(queue);
-		printf("ERROR: Failed to init log queue condition: %d\n", err);
-		return 1;
-	}
-
-	/* Store the queue in a global variable for the log system */
-	log_queue = queue;
-	return 0;
+	UNUSED(ctx);
+	return mpsc_ring_init(&log_ring, LOG_RING_CAPACITY, MAX_LOG_MSG_SZ);
 }
 
 /* Cleanup test context */
@@ -301,8 +276,8 @@ test_load_config()
 {
 	agent_context_t *ctx = init_test_context();
 
-	/* Initialize log queue for the test */
-	assert(init_log_q(ctx) == 0);
+	/* Initialize log ring for the test */
+	assert(init_test_log_ring(ctx) == 0);
 
 	/* Create necessary arenas */
 	arena_t *config_arena =
@@ -315,7 +290,7 @@ test_load_config()
 	ctx->arenas[METRICS_ARENA_ID] = metrics_arena;
 
 	/* Initialize log system */
-	init_log_system(log_queue, log_arena, stdout);
+	init_log_system(&log_ring, log_arena, stdout);
 
 	/* Initialize metrics */
 	size_t initial_capacity = 256;
@@ -400,13 +375,8 @@ test_load_config()
 	/* Clean up log system */
 	cleanup_log_system();
 
-	/* Free the log queue resources */
-	if (log_queue)
-	{
-		pthread_mutex_destroy(&log_queue->lock);
-		pthread_cond_destroy(&log_queue->cond);
-		free(log_queue);
-	}
+	/* Free the log ring resources */
+	mpsc_ring_free(&log_ring);
 
 	destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
 	cleanup_test_context(ctx);
@@ -414,9 +384,9 @@ test_load_config()
 	printf("[TEST] load_config: All tests passed\n");
 }
 
-/* Test the logging system queue functionality */
+/* Test the logging system ring functionality */
 static void
-test_log_queue()
+test_log_ring()
 {
 	/* Initialize a file for logging */
 	FILE *log_file = tmpfile();
@@ -431,9 +401,10 @@ test_log_queue()
 	ctx->arenas[LOG_ARENA_ID] = log_arena;
 	assert(log_arena != NULL);
 
-	/* Initialize a log queue using the actual log system */
-	q_t log_queue = {0};
-	int res       = init_log_system(&log_queue, log_arena, log_file);
+	/* Initialize a log ring using the actual log system */
+	mpsc_ring_t local_ring;
+	mpsc_ring_init(&local_ring, LOG_RING_CAPACITY, MAX_LOG_MSG_SZ);
+	int res = init_log_system(&local_ring, log_arena, log_file);
 	assert(res == 0);
 
 	/* Use LOG macros to add messages to the queue */
@@ -445,10 +416,13 @@ test_log_queue()
 	usleep(10000);
 
 	/* Export queue state to a variable for inspection */
-	int message_count = log_queue.count;
+	uint64_t head     = atomic_load(&local_ring.head);
+	uint64_t tail     = atomic_load(&local_ring.tail);
+	int message_count = (int)(head - tail);
 
 	/* Clean up the log system (properly) */
 	cleanup_log_system();
+	mpsc_ring_free(&local_ring);
 
 	/* Verify that the test worked */
 	assert(message_count <= 2); /* Messages might have been processed already */
@@ -1553,7 +1527,7 @@ main()
 	test_load_config();
 	// test_record_method_execution();
 	test_arena();
-	test_log_queue();
+	test_log_ring();
 	test_cpu_cycles();
 	test_shared_memory_init();
 	test_shared_memory_status_transitions();

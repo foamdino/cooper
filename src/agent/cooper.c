@@ -13,8 +13,6 @@ static agent_context_t *global_ctx = NULL; /* Single global context */
 static pthread_key_t context_key;
 static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
-static atomic_uint_fast64_t next_entry_id = ATOMIC_VAR_INIT(1);
-
 /* Arena configurations */
 /* clang-format off */
 static const arena_config_t arena_configs[] = 
@@ -1031,78 +1029,51 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	// LOG_INFO("Class load callback, processing %s", class_sig);
 
-	/* Create global reference for the class */
+	/* Create a global reference for the class so it's valid in the worker thread */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
-	if (global_class_ref == NULL)
+	if (!global_class_ref)
 	{
 		LOG_ERROR("Failed to create global reference for class: %s", class_sig);
 		goto cleanup;
 	}
 
-	/* Class passed filter, enqueue for background processing */
-	arena_t *q_entry_arena = global_ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
+	size_t sig_len = strlen(class_sig);
+	size_t total_size =
+	    sizeof(serialized_class_event_t) + sig_len + 1; /* +1 for null terminator */
 
-	/* We need to protect arena allocations since
-	many threads can trigger this callback */
-	pthread_mutex_lock(&global_ctx->tm_ctx.class_cache_lock);
-	q_entry_t *entry = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	class_q_entry_t *class_entry =
-	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
-
-	if (!entry || !class_entry)
+	if (total_size > MAX_CLASS_EVENT_SZ)
 	{
-		LOG_ERROR("Unable to allocate room from arena for q entries!");
-		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		LOG_ERROR("Class event too large for ring buffer: %zu > %d",
+		          total_size,
+		          MAX_CLASS_EVENT_SZ);
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		goto cleanup;
 	}
 
-	class_entry->class_sig = arena_strdup(q_entry_arena, class_sig);
-	class_entry->klass     = global_class_ref;
-
-	/* Check if string allocation failed */
-	if (!class_entry->class_sig)
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->class_ring, &handle) != 0)
 	{
-		LOG_ERROR("Failed to duplicate class signature for: %s", class_sig);
-		arena_free(q_entry_arena, class_entry->class_sig);
-		arena_free(q_entry_arena, class_entry);
-		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		LOG_ERROR("Class ring full, dropping class: %s", class_sig);
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		goto cleanup;
 	}
 
-	entry->type = Q_ENTRY_CLASS;
-	entry->data = class_entry;
-
-	if (entry->type != Q_ENTRY_CLASS)
+	void *buffer = mpsc_ring_get(&global_ctx->class_ring, handle);
+	if (!buffer)
 	{
-		LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) immediately "
-		          "after setting!",
-		          entry->type,
-		          entry->type);
-		arena_free(q_entry_arena, class_entry->class_sig);
-		arena_free(q_entry_arena, class_entry);
-		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		goto cleanup;
 	}
 
-	if (q_enq(global_ctx->class_queue, entry) != 0)
-	{
-		LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
-		/* Clean up the global reference if we couldn't enqueue */
-		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-		/* Release entry mem back to arena on enqueue failure */
-		arena_free(q_entry_arena, class_entry->class_sig);
-		arena_free(q_entry_arena, class_entry);
-		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
-		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-	}
+	serialized_class_event_t *event = (serialized_class_event_t *)buffer;
+	event->klass                    = global_class_ref;
+	event->class_sig_len            = (uint16_t)sig_len;
 
-	pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+	/* Copy string into variable length data area */
+	memcpy(event->data, class_sig, sig_len);
+	event->data[sig_len] = '\0';
+
+	mpsc_ring_commit(&global_ctx->class_ring, handle);
 
 cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1256,77 +1227,63 @@ record_method_event(method_event_type_e event_type,
                     const char *method_name,
                     const char *method_sig)
 {
-	pthread_mutex_lock(&global_ctx->tm_ctx.method_event_lock);
+	if (!class_name || !method_name || !method_sig)
+		return;
 
-	arena_t *q_entry_arena = global_ctx->arenas[METHOD_Q_ENTRY_ARENA_ID];
-	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	method_q_entry_t *method_entry =
-	    arena_alloc(q_entry_arena, sizeof(method_q_entry_t));
+	size_t c_len = strlen(class_name);
+	size_t m_len = strlen(method_name);
+	size_t s_len = strlen(method_sig);
 
-	if (!entry || !method_entry)
+	/* Calculate total size needed: struct + strings + null terminators */
+	size_t total_size =
+	    sizeof(serialized_method_event_t) + c_len + 1 + m_len + 1 + s_len + 1;
+
+	if (total_size > MAX_METHOD_EVENT_SZ)
 	{
-		LOG_ERROR("Failed to allocate queue entry for method event");
-		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
+		/* Event too large for the ring buffer slot */
 		return;
 	}
 
-	/* Populate method event */
-	method_entry->event_type  = event_type;
-	method_entry->class_name  = arena_strdup(q_entry_arena, class_name);
-	method_entry->method_name = arena_strdup(q_entry_arena, method_name);
-	method_entry->method_sig  = arena_strdup(q_entry_arena, method_sig);
-	method_entry->timestamp   = get_current_time_ns();
-	method_entry->thread_id   = get_current_thread_id();
-
-	/* Check if any string allocation failed */
-	if (!method_entry->class_name || !method_entry->method_name
-	    || !method_entry->method_sig)
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->method_ring, &handle) != 0)
 	{
-		LOG_ERROR("Failed to allocate strings for method event");
-		/* Clean up any partial allocations */
-		if (method_entry->class_name)
-			arena_free(q_entry_arena, method_entry->class_name);
-		if (method_entry->method_name)
-			arena_free(q_entry_arena, method_entry->method_name);
-		if (method_entry->method_sig)
-			arena_free(q_entry_arena, method_entry->method_sig);
-		arena_free(q_entry_arena, method_entry);
-		arena_free(q_entry_arena, entry);
-		pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
+		/* Ring full - drop event */
 		return;
 	}
+
+	void *buffer = mpsc_ring_get(&global_ctx->method_ring, handle);
+	if (!buffer)
+		return;
+
+	serialized_method_event_t *event = (serialized_method_event_t *)buffer;
+	event->type                      = event_type;
+	event->timestamp                 = get_current_time_ns();
+	event->thread_id                 = get_current_thread_id();
 
 	if (event_type == METHOD_ENTRY)
-		method_entry->cpu = cycles_start();
+		event->cpu = cycles_start();
 	else
-		method_entry->cpu = cycles_end();
+		event->cpu = cycles_end();
 
-	entry->type = Q_ENTRY_METHOD;
-	entry->data = method_entry;
-	/* DEBUGGING */
-	entry->debug_id = atomic_fetch_add(&next_entry_id, 1);
-	entry->processed = 0;
+	event->class_name_len  = (uint16_t)c_len;
+	event->method_name_len = (uint16_t)m_len;
+	event->method_sig_len  = (uint16_t)s_len;
 
-	if (entry->type != Q_ENTRY_METHOD)
-	{
-		LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) immediately "
-		          "after setting!",
-		          entry->type,
-		          entry->type);
-	}
+	/* Copy strings into the variable length data area */
+	char *data_ptr = event->data;
 
-	/* Enqueue for background processing */
-	if (q_enq(global_ctx->method_queue, entry) != 0)
-	{
-		LOG_ERROR("Failed to enqueue method event");
-		arena_free(q_entry_arena, method_entry->class_name);
-		arena_free(q_entry_arena, method_entry->method_name);
-		arena_free(q_entry_arena, method_entry->method_sig);
-		arena_free(q_entry_arena, method_entry);
-		arena_free(q_entry_arena, entry);
-	}
+	memcpy(data_ptr, class_name, c_len);
+	data_ptr[c_len] = '\0';
+	data_ptr += c_len + 1;
 
-	pthread_mutex_unlock(&global_ctx->tm_ctx.method_event_lock);
+	memcpy(data_ptr, method_name, m_len);
+	data_ptr[m_len] = '\0';
+	data_ptr += m_len + 1;
+
+	memcpy(data_ptr, method_sig, s_len);
+	data_ptr[s_len] = '\0';
+
+	mpsc_ring_commit(&global_ctx->method_ring, handle);
 }
 
 JNIEXPORT void JNICALL
@@ -1736,57 +1693,43 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			goto deallocate;
 		}
 
-		/* Passed filter, enqueue for background processing */
-		arena_t *q_entry_arena = global_ctx->arenas[CLASS_Q_ENTRY_ARENA_ID];
-		pthread_mutex_lock(&global_ctx->tm_ctx.class_cache_lock);
-		q_entry_t *entry = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-		class_q_entry_t *class_entry =
-		    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+		size_t sig_len    = strlen(class_sig);
+		size_t total_size = sizeof(serialized_class_event_t) + sig_len
+		                    + 1; /* +1 for null terminator */
 
-		class_entry->class_sig =
-		    arena_strdup(q_entry_arena, class_sig); // class_sig;
-		/* Use the GLOBAL reference, not the local one */
-		class_entry->klass = global_class_ref;
-
-		if (!entry || !class_entry)
+		if (total_size > MAX_CLASS_EVENT_SZ)
 		{
-			LOG_ERROR("Unable to allocate room from arena for q entries!");
-			arena_free(q_entry_arena, class_entry);
-			arena_free(q_entry_arena, entry);
-			pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+			LOG_ERROR("Class event too large for ring buffer: %zu > %d",
+			          total_size,
+			          MAX_CLASS_EVENT_SZ);
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			goto deallocate;
 		}
 
-		entry->type = Q_ENTRY_CLASS;
-		entry->data = class_entry;
-
-		if (entry->type != Q_ENTRY_CLASS)
+		uint32_t handle;
+		if (mpsc_ring_reserve(&global_ctx->class_ring, &handle) != 0)
 		{
-			LOG_ERROR("CORRUPTION: entry->type changed to %d (0x%x) "
-			          "immediately after setting!",
-			          entry->type,
-			          entry->type);
-			arena_free(q_entry_arena, class_entry->class_sig);
-			arena_free(q_entry_arena, class_entry);
-			arena_free(q_entry_arena, entry);
-			pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+			LOG_ERROR("Class ring full, dropping class: %s", class_sig);
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			goto deallocate;
 		}
 
-		if (q_enq(global_ctx->class_queue, entry) != 0)
+		void *buffer = mpsc_ring_get(&global_ctx->class_ring, handle);
+		if (!buffer)
 		{
-			LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
-			/* Clean up the global reference if we couldn't enqueue */
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-			/* Release entry mem back to arena on enqueue failure */
-			arena_free(q_entry_arena, class_entry->class_sig);
-			arena_free(q_entry_arena, entry);
-			arena_free(q_entry_arena, class_entry);
+			goto deallocate;
 		}
 
-		pthread_mutex_unlock(&global_ctx->tm_ctx.class_cache_lock);
+		serialized_class_event_t *event = (serialized_class_event_t *)buffer;
+		event->klass                    = global_class_ref;
+		event->class_sig_len            = (uint16_t)sig_len;
+
+		/* Copy string into variable length data area */
+		memcpy(event->data, class_sig, sig_len);
+		event->data[sig_len] = '\0';
+
+		mpsc_ring_commit(&global_ctx->class_ring, handle);
 
 	deallocate:
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -2034,7 +1977,13 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	if (options && strstr(options, "loglevel=debug"))
 		current_log_level = LOG_LEVEL_DEBUG;
 
-	q_t *log_queue = calloc(1, sizeof(q_t));
+	/* Initialize logging ring buffer */
+	if (mpsc_ring_init(&global_ctx->log_ring, LOG_RING_CAPACITY, MAX_LOG_MSG_SZ)
+	    != MPSC_OK)
+	{
+		printf("Failed to init log ring\n");
+		return JNI_ERR;
+	}
 
 	/*
 	  We initialise all the arenas we need in this function and we
@@ -2084,27 +2033,32 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	}
 
 	/* We start the logging thread as we initialise the system now */
-	if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
+	if (init_log_system(&global_ctx->log_ring, log_arena, global_ctx->log_file)
+	    != COOPER_OK)
 	{
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
 
-	q_t *class_queue = calloc(1, sizeof(q_t));
-	if (q_init(class_queue) != COOPER_OK)
+	/* Initialize class ring */
+	if (mpsc_ring_init(
+		&global_ctx->class_ring, CLASS_RING_CAPACITY, MAX_CLASS_EVENT_SZ)
+	    != 0)
 	{
+		LOG_ERROR("Failed to init class ring");
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
-	global_ctx->class_queue = class_queue;
 
-	q_t *method_queue = calloc(1, sizeof(q_t));
-	if (q_init(method_queue) != COOPER_OK)
+	/* Initialize method ring */
+	if (mpsc_ring_init(
+		&global_ctx->method_ring, METHOD_RING_CAPACITY, MAX_METHOD_EVENT_SZ)
+	    != 0)
 	{
+		LOG_ERROR("Failed to init method ring");
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
-	global_ctx->method_queue = method_queue;
 
 	// arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
 	// if (!class_cache_arena)
@@ -2278,7 +2232,9 @@ Agent_OnUnload(JavaVM *vm)
 
 		/* Finally shutdown logging */
 		cleanup_log_system();
-
+		mpsc_ring_free(&global_ctx->log_ring);
+		mpsc_ring_free(&global_ctx->method_ring);
+		mpsc_ring_free(&global_ctx->class_ring);
 		ring_channel_free(&global_ctx->call_stack_channel);
 
 		/* Cleanup the arenas - this will free all cache managers and cache data

@@ -8,6 +8,7 @@
 #define COOPER_TYPES_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <jvmti.h>
 
 typedef struct package_filter package_filter_t;
@@ -55,5 +56,27 @@ struct method_q_entry
 	uint64_t cpu;
 	uint64_t thread_id;
 };
+
+typedef struct
+{
+	method_event_type_e type;
+	uint64_t timestamp;
+	uint64_t cpu;
+	uint64_t thread_id;
+	uint16_t class_name_len;
+	uint16_t method_name_len;
+	uint16_t method_sig_len;
+	/* Variable length data follows: class_name, method_name, method_sig (all null
+	 * terminated) */
+	char data[];
+} serialized_method_event_t;
+
+typedef struct
+{
+	jclass klass; /* Global ref */
+	uint16_t class_sig_len;
+	/* Variable length data follows: class_sig (null terminated) */
+	char data[];
+} serialized_class_event_t;
 
 #endif /* COOPER_TYPES_H */
