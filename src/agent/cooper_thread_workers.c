@@ -682,13 +682,12 @@ flamegraph_export_thread(void *arg)
 		{
 			/* Flush all buckets */
 			for (size_t i = 0; i < bucket_count; i++)
-			{
 				fprintf(out,
 				        "%s %zu\n",
 				        buckets[i].stack_str,
 				        buckets[i].count);
-				arena_free(arena, buckets[i].stack_str);
-			}
+
+			arena_reset(arena);
 			fclose(out);
 
 			/* Reset buckets */
@@ -715,10 +714,9 @@ flamegraph_export_thread(void *arg)
 	if (out)
 	{
 		for (size_t i = 0; i < bucket_count; i++)
-		{
 			fprintf(out, "%s %zu\n", buckets[i].stack_str, buckets[i].count);
-			arena_free(arena, buckets[i].stack_str);
-		}
+
+		arena_reset(arena);
 		fclose(out);
 	}
 
@@ -2039,7 +2037,9 @@ record_method_entry_event(agent_context_t *ctx,
 	if ((current_calls % sample_rate) != 0)
 		return; /* Don't sample this call. */
 
-	LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build", me->class_name, me->method_name);
+	LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build",
+	         me->class_name,
+	         me->method_name);
 	return;
 
 	thread_context_t *tc = get_thread_local_context();
