@@ -202,68 +202,6 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
 	return COOPER_OK;
 }
 
-// /* Record method execution metrics */
-// void
-// record_method_execution(agent_context_t *ctx,
-//                         int method_index,
-//                         uint64_t exec_time_ns,
-//                         uint64_t memory_bytes,
-//                         uint64_t cycles)
-// {
-// 	method_metrics_soa_t *metrics = ctx->metrics;
-
-// 	/* Check for valid index */
-// 	if (method_index < 0 || (size_t)method_index >= metrics->count)
-// 	{
-// 		LOG_WARN("WARNING: method_index: %d not found in soa struct\n",
-// 		         method_index);
-// 		return;
-// 	}
-
-// 	// /* Update sample count */
-// 	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
-// 	// memory_order_relaxed);
-
-// 	/* Update timing metrics if enabled */
-// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
-// 	{
-// 		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
-// 		                          exec_time_ns,
-// 		                          memory_order_relaxed);
-
-// 		/* Update min/max */
-// 		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-
-// 		if (exec_time_ns < metrics->min_time_ns[method_index])
-// 			metrics->min_time_ns[method_index] = exec_time_ns;
-
-// 		if (exec_time_ns > metrics->max_time_ns[method_index])
-// 			metrics->max_time_ns[method_index] = exec_time_ns;
-
-// 		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-// 	}
-
-// 	/* Update memory metrics if enabled */
-// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
-// 	{
-// 		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
-// 		                          memory_bytes,
-// 		                          memory_order_relaxed);
-
-// 		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-
-// 		if (memory_bytes > metrics->peak_memory[method_index])
-// 			metrics->peak_memory[method_index] = memory_bytes;
-
-// 		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-// 	}
-
-// 	/* Update CPU metrics if enabled */
-// 	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-// 		atomic_fetch_add_explicit(
-// 		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
-// }
-
 static object_allocation_metrics_t *
 init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 {
