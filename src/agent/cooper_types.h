@@ -15,6 +15,8 @@ typedef struct package_filter package_filter_t;
 typedef struct class_q_entry class_q_entry_t;
 typedef struct method_q_entry method_q_entry_t;
 
+typedef struct serialized_method_event serialized_method_event_t;
+typedef struct serialized_class_event serialized_class_event_t;
 typedef enum method_event_type method_event_type_e;
 
 enum method_event_type
@@ -57,7 +59,7 @@ struct method_q_entry
 	uint64_t thread_id;
 };
 
-typedef struct
+struct serialized_method_event
 {
 	method_event_type_e type;
 	uint64_t timestamp;
@@ -69,14 +71,14 @@ typedef struct
 	/* Variable length data follows: class_name, method_name, method_sig (all null
 	 * terminated) */
 	char data[];
-} serialized_method_event_t;
+};
 
-typedef struct
+struct serialized_class_event
 {
 	jclass klass; /* Global ref */
 	uint16_t class_sig_len;
 	/* Variable length data follows: class_sig (null terminated) */
 	char data[];
-} serialized_class_event_t;
+};
 
 #endif /* COOPER_TYPES_H */
