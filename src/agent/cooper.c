@@ -202,46 +202,6 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
 	return COOPER_OK;
 }
 
-// /**
-//  * Initialise a method_sample_t structure
-//  *
-//  * Return NULL if it fails to allocate space in the provided arena
-//  */
-// method_sample_t *
-// init_method_sample(arena_t *arena,
-//                    int method_index,
-//                    jmethodID method_id,
-//                    uint64_t timestamp,
-//                    uint64_t cpu)
-// {
-
-// 	assert(arena != NULL);
-// 	assert(method_id != NULL);
-// 	assert(method_index >= 0);
-
-// 	if (!arena || method_index < 0 || !method_id)
-// 		return NULL;
-
-// 	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
-// 	if (!sample)
-// 		return NULL;
-
-// 	/* Initialise sample */
-// 	sample->method_index = method_index;
-// 	sample->method_id    = method_id;
-// 	/* current_alloc_bytes and parent already zero-initialized by arena_alloc */
-
-// 	unsigned int flags = global_ctx->metrics->metric_flags[method_index];
-
-// 	if (flags & METRIC_FLAG_TIME)
-// 		sample->start_time = timestamp;
-
-// 	if (flags & METRIC_FLAG_CPU)
-// 		sample->start_cpu = cpu;
-
-// 	return sample;
-// }
-
 // /* Record method execution metrics */
 // void
 // record_method_execution(agent_context_t *ctx,

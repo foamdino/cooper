@@ -2059,13 +2059,6 @@ record_method_entry_event(agent_context_t *ctx,
 	if (flags & METRIC_FLAG_CPU)
 		sample->start_cpu = event->cpu;
 
-	// method_sample_t *sample =
-	// 	init_method_sample(arena,
-	// 						method_info->sample_index,
-	// 						mid,
-	// 						event->timestamp,
-	// 						event->cpu);
-
 	sample->parent = tc->sample;
 	tc->sample     = sample;
 	tc->stack_depth++;
@@ -2120,14 +2113,12 @@ record_method_exit_event(agent_context_t *ctx,
 				if (parent)
 					parent->parent =
 					    current
-						->parent; /* Skip over
-					                                                this
+						->parent; /* Skip over this
 					                     node */
 				else
 					context->sample =
 					    current
-						->parent; /* Update head
-					                                                of
+						->parent; /* Update head of
 					                     list */
 
 				context->stack_depth--;
@@ -2221,13 +2212,6 @@ record_method_exit_event(agent_context_t *ctx,
 		atomic_fetch_add_explicit(
 		    &metrics->cpu_cycles[method_idx], cpu_delta, memory_order_relaxed);
 	}
-
-	// /* Record the metrics */
-	// record_method_execution(ctx,
-	// 						target->method_index,
-	// 						exec_time,
-	// 						memory_delta,
-	// 						cpu_delta);
 }
 
 /**

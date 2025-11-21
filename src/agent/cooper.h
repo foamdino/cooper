@@ -435,11 +435,6 @@ int add_method_to_metrics(agent_context_t *ctx,
                           int sample_rate,
                           unsigned int flags);
 int find_method_index(method_metrics_soa_t *metrics, const char *signature);
-void record_method_execution(agent_context_t *ctx,
-                             int method_index,
-                             uint64_t exec_time_ns,
-                             uint64_t memory_bytes,
-                             uint64_t cycles);
 
 /* Export functions */
 void export_to_file(agent_context_t *ctx);
