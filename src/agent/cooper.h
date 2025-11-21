@@ -60,50 +60,47 @@
 #define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define EXCEPTION_ARENA_SZ      1024 * 1024
-#define LOG_ARENA_SZ            1024 * 1024
-#define SAMPLE_ARENA_SZ         2048 * 1024
-#define CONFIG_ARENA_SZ         512 * 1024
-#define METRICS_ARENA_SZ        8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ        16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ    12 * 1024 * 1024
-#define METHOD_Q_ENTRY_ARENA_SZ 4 * 1024 * 1024
-#define CLASS_Q_ENTRY_ARENA_SZ  4 * 1024 * 1024
-#define CALL_STACK_ARENA_SZ     64 * 1024 * 1024
-#define FLAMEGRAPH_ARENA_SZ     1024 * 1024
-#define METHOD_CACHE_ARENA_SZ   2 * 1024 * 1024
-#define BYTECODE_ARENA_SZ       8 * 1024 * 1024
+#define EXCEPTION_ARENA_SZ    1024 * 1024
+#define LOG_ARENA_SZ          1024 * 1024
+#define SAMPLE_ARENA_SZ       2048 * 1024
+#define CONFIG_ARENA_SZ       512 * 1024
+#define METRICS_ARENA_SZ      8 * 1024 * 1024
+#define SCRATCH_ARENA_SZ      16 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
+
+#define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ   1024 * 1024
+#define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
+#define BYTECODE_ARENA_SZ     8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
-#define EXCEPTION_ARENA_BLOCKS      1024
-#define LOG_ARENA_BLOCKS            1024
-#define EVENT_ARENA_BLOCKS          1024
-#define SAMPLE_ARENA_BLOCKS         1024
-#define CONFIG_ARENA_BLOCKS         1024
-#define METRICS_ARENA_BLOCKS        1024
-#define CLASS_CACHE_ARENA_BLOCKS    1024
-#define SCRATCH_ARENA_BLOCKS        1024
-#define METHOD_Q_ENTRY_ARENA_BLOCKS 1024
-#define CLASS_Q_ENTRY_ARENA_BLOCKS  1024
-#define CALL_STACK_ARENA_BLOCKS     1024
-#define FLAMEGRAPH_ARENA_BLOCKS     1024
-#define METHOD_CACHE_ARENA_BLOCKS   1024
-#define BYTECODE_ARENA_BLOCKS       1024
+#define EXCEPTION_ARENA_BLOCKS    1024
+#define LOG_ARENA_BLOCKS          1024
+#define EVENT_ARENA_BLOCKS        1024
+#define SAMPLE_ARENA_BLOCKS       1024
+#define CONFIG_ARENA_BLOCKS       1024
+#define METRICS_ARENA_BLOCKS      1024
+#define CLASS_CACHE_ARENA_BLOCKS  1024
+#define SCRATCH_ARENA_BLOCKS      1024
+
+#define CALL_STACK_ARENA_BLOCKS   1024
+#define FLAMEGRAPH_ARENA_BLOCKS   1024
+#define METHOD_CACHE_ARENA_BLOCKS 1024
+#define BYTECODE_ARENA_BLOCKS     1024
 
 /* Arena Names */
-#define EXCEPTION_ARENA_NAME      "exception_arena"
-#define LOG_ARENA_NAME            "log_arena"
-#define SAMPLE_ARENA_NAME         "sample_arena"
-#define CONFIG_ARENA_NAME         "config_arena"
-#define METRICS_ARENA_NAME        "metrics_arena"
-#define CLASS_CACHE_ARENA_NAME    "class_cache_arena"
-#define SCRATCH_ARENA_NAME        "scratch_arena"
-#define METHOD_Q_ENTRY_ARENA_NAME "method_q_entry_arena"
-#define CLASS_Q_ENTRY_ARENA_NAME  "class_q_entry_arena"
-#define CALL_STACK_ARENA_NAME     "call_stack_arena"
-#define FLAMEGRAPH_ARENA_NAME     "flamegraph_arena"
-#define METHOD_CACHE_ARENA_NAME   "method_cache_arena"
-#define BYTECODE_ARENA_NAME       "bytecode_arena"
+#define EXCEPTION_ARENA_NAME    "exception_arena"
+#define LOG_ARENA_NAME          "log_arena"
+#define SAMPLE_ARENA_NAME       "sample_arena"
+#define CONFIG_ARENA_NAME       "config_arena"
+#define METRICS_ARENA_NAME      "metrics_arena"
+#define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
+#define SCRATCH_ARENA_NAME      "scratch_arena"
+
+#define CALL_STACK_ARENA_NAME   "call_stack_arena"
+#define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
+#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
+#define BYTECODE_ARENA_NAME     "bytecode_arena"
 
 /* Ok/Err */
 #define COOPER_OK        0
@@ -144,8 +141,6 @@ enum arenas
 	METRICS_ARENA_ID,
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
-	METHOD_Q_ENTRY_ARENA_ID,
-	CLASS_Q_ENTRY_ARENA_ID,
 	CALL_STACK_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
 	METHOD_CACHE_ARENA_ID,
