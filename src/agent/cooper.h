@@ -182,26 +182,26 @@ struct method_metrics_soa
 	char **signatures; /**< Array of method signatures */
 	int *sample_rates; /**< Configured sample rate for each method */
 
+	/* Flags for which metrics are collected for each method */
+	unsigned int *metric_flags;
+
 	/* Counters */
-	uint64_t *call_counts; /**< Number of times each method has been called */
+	_Atomic(uint64_t) *call_counts; /**< Number of times each method has been called */
 	// uint64_t *sample_counts; /**< Number of times each method has been sampled */
 
 	/* Timing metrics */
-	uint64_t *total_time_ns; /**< Total execution time in nanoseconds */
-	uint64_t *min_time_ns;   /**< Minimum execution time */
-	uint64_t *max_time_ns;   /**< Maximum execution time */
+	_Atomic(uint64_t) *total_time_ns; /**< Total execution time in nanoseconds */
+	_Atomic(uint64_t) *min_time_ns;   /**< Minimum execution time */
+	_Atomic(uint64_t) *max_time_ns;   /**< Maximum execution time */
 
 	/* Memory metrics */
-	uint64_t *alloc_bytes; /**< Total bytes allocated */
-	uint64_t *peak_memory; /**< Peak memory usage */
+	_Atomic(uint64_t) *alloc_bytes; /**< Total bytes allocated */
+	_Atomic(uint64_t) *peak_memory; /**< Peak memory usage */
 
 	/* CPU metrics */
-	uint64_t *cpu_cycles; /**< CPU cycles used */
+	_Atomic(uint64_t) *cpu_cycles; /**< CPU cycles used */
 
-	uint64_t *call_sample_counts; /**< Call stack sample counts */
-
-	/* Flags for which metrics are collected for each method */
-	unsigned int *metric_flags;
+	_Atomic(uint64_t) *call_sample_counts; /**< Call stack sample counts */	
 };
 
 struct app_memory_metrics
