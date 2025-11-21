@@ -32,7 +32,6 @@
 #include "../lib/thread_util.h"
 #include "../lib/heap.h"
 #include "../lib/ht.h"
-#include "../lib/q.h"
 #include "../lib/ring/ring_channel.h"
 #include "../lib/jvm/class.h"
 #include "../lib/jvm/injection.h"
