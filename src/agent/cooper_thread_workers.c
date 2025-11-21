@@ -1413,9 +1413,6 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 {
 	assert(jvmti_env != NULL);
 
-	static int cache_call_count = 0;
-	cache_call_count++;
-
 	char *class_sig = NULL;
 	jvmtiError err =
 	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
