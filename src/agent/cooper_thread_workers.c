@@ -1990,13 +1990,17 @@ call_stack_sampling_thread_func(void *arg)
 /* Create a new sample on METHOD_ENTRY */
 static void
 record_method_entry_event(agent_context_t *ctx,
-                          method_q_entry_t *me,
+                          serialized_method_event_t *event,
                           jmethodID mid,
                           arena_t *arena)
 {
 	assert(ctx != NULL);
-	assert(me != NULL);
+	assert(event != NULL);
 	assert(arena != NULL);
+
+	/* Chomp the class_name that comes first, we don't use it */
+	// char *class_name  = event->data;
+	char *method_name = event->data + event->class_name_len + 1;
 
 	/* Lookup method info from hashtable via jmethodID */
 	cooper_method_info_t *method_info = ht_get(ctx->interesting_methods, mid);
@@ -2023,16 +2027,15 @@ record_method_entry_event(agent_context_t *ctx,
 	if ((current_calls % sample_rate) != 0)
 		return; /* Don't sample this call. */
 
-	LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build",
-	         me->class_name,
-	         me->method_name);
-	return;
+	// LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build",
+	//          class_name,
+	//          method_name);
+	// return;
 
 	thread_context_t *tc = get_thread_local_context();
 	if (!tc)
 	{
-		LOG_ERROR("Unable to get thread context for %s, skipping",
-		          me->method_name);
+		LOG_ERROR("Unable to get thread context for %s, skipping", method_name);
 		return;
 	}
 
@@ -2041,7 +2044,7 @@ record_method_entry_event(agent_context_t *ctx,
 	{
 		LOG_ERROR("Unable to create method info sample for %s, "
 		          "skipping",
-		          me->method_name);
+		          method_name);
 		return;
 	}
 
@@ -2051,17 +2054,17 @@ record_method_entry_event(agent_context_t *ctx,
 	unsigned int flags = ctx->metrics->metric_flags[method_info->sample_index];
 
 	if (flags & METRIC_FLAG_TIME)
-		sample->start_time = me->timestamp;
+		sample->start_time = event->timestamp;
 
 	if (flags & METRIC_FLAG_CPU)
-		sample->start_cpu = me->cpu;
+		sample->start_cpu = event->cpu;
 
 	// method_sample_t *sample =
 	// 	init_method_sample(arena,
 	// 						method_info->sample_index,
 	// 						mid,
-	// 						me->timestamp,
-	// 						me->cpu);
+	// 						event->timestamp,
+	// 						event->cpu);
 
 	sample->parent = tc->sample;
 	tc->sample     = sample;
@@ -2070,10 +2073,12 @@ record_method_entry_event(agent_context_t *ctx,
 
 /* Update an existing sample on METHOD_EXIT */
 static void
-record_method_exit_event(agent_context_t *ctx, method_q_entry_t *me, jmethodID mid)
+record_method_exit_event(agent_context_t *ctx,
+                         serialized_method_event_t *event,
+                         jmethodID mid)
 {
 	assert(ctx != NULL);
-	assert(me != NULL);
+	assert(event != NULL);
 
 	/* Get thread-local context */
 	thread_context_t *context = get_thread_local_context();
@@ -2164,7 +2169,7 @@ record_method_exit_event(agent_context_t *ctx, method_q_entry_t *me, jmethodID m
 	/* Calculate execution time */
 	if ((flags & METRIC_FLAG_TIME) && target->start_time > 0)
 	{
-		uint64_t end_time = me->timestamp;
+		uint64_t end_time = event->timestamp;
 		exec_time         = end_time - target->start_time;
 
 		atomic_fetch_add_explicit(&ctx->metrics->total_time_ns[method_idx],
@@ -2204,7 +2209,7 @@ record_method_exit_event(agent_context_t *ctx, method_q_entry_t *me, jmethodID m
 
 	if (flags & METRIC_FLAG_CPU)
 	{
-		uint64_t end_cpu = me->cpu;
+		uint64_t end_cpu = event->cpu;
 
 		if (end_cpu > target->start_cpu)
 			cpu_delta = end_cpu - target->start_cpu;
@@ -2280,32 +2285,20 @@ method_event_thread_func(void *arg)
 		char *method_sig =
 		    data_ptr + event->class_name_len + 1 + event->method_name_len + 1;
 
-		/* Reconstruct method_q_entry_t for compatibility with existing functions
-		 * (for now) */
-		method_q_entry_t me = {0};
-		me.event_type       = event->type;
-		me.class_name       = class_name;
-		me.method_name      = method_name;
-		me.method_sig       = method_sig;
-		me.timestamp        = event->timestamp;
-		me.cpu              = event->cpu;
-		me.thread_id        = event->thread_id;
-
-		jclass clazz = (*jni)->FindClass(jni, me.class_name);
+		jclass clazz = (*jni)->FindClass(jni, class_name);
 		if (!clazz)
 		{
 			(*jni)->ExceptionClear(jni);
 			goto cleanup;
 		}
 
-		jmethodID mid =
-		    (*jni)->GetMethodID(jni, clazz, me.method_name, me.method_sig);
+		jmethodID mid = (*jni)->GetMethodID(jni, clazz, method_name, method_sig);
 		if (!mid)
 		{
 			(*jni)->ExceptionClear(jni);
 			/* Not found for instance method, retry for static */
 			mid = (*jni)->GetStaticMethodID(
-			    jni, clazz, me.method_name, me.method_sig);
+			    jni, clazz, method_name, method_sig);
 			if (!mid)
 			{
 				(*jni)->ExceptionClear(jni);
@@ -2313,10 +2306,10 @@ method_event_thread_func(void *arg)
 			}
 		}
 
-		if (me.event_type == METHOD_ENTRY)
-			record_method_entry_event(ctx, &me, mid, sample_arena);
+		if (event->type == METHOD_ENTRY)
+			record_method_entry_event(ctx, event, mid, sample_arena);
 		else
-			record_method_exit_event(ctx, &me, mid);
+			record_method_exit_event(ctx, event, mid);
 
 	cleanup:
 		if (clazz != NULL)

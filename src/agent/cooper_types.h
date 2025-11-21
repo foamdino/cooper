@@ -12,9 +12,6 @@
 #include <jvmti.h>
 
 typedef struct package_filter package_filter_t;
-typedef struct class_q_entry class_q_entry_t;
-typedef struct method_q_entry method_q_entry_t;
-
 typedef struct serialized_method_event serialized_method_event_t;
 typedef struct serialized_class_event serialized_class_event_t;
 typedef enum method_event_type method_event_type_e;
@@ -39,24 +36,6 @@ struct package_filter
 	char **include_packages;
 	size_t *package_lengths;
 	size_t num_packages;
-};
-
-struct class_q_entry
-{
-	jclass klass;       /**< Class reference to process */
-	char *class_sig;    /**< Class signature (for logging) */
-	char **annotations; /**< Array of annotations */
-};
-
-struct method_q_entry
-{
-	method_event_type_e event_type; /**< Entry/Exit */
-	char *class_name;
-	char *method_name;
-	char *method_sig;
-	uint64_t timestamp;
-	uint64_t cpu;
-	uint64_t thread_id;
 };
 
 struct serialized_method_event
