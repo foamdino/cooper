@@ -8,3 +8,4 @@ java-src/com/github/foamdino/cooper/agent/*.class
 *.log
 java-src/.idea
 *.db
+.cache

@@ -154,8 +154,6 @@ export_to_file(agent_context_t *ctx)
 		return;
 	}
 
-	/* Lock metrics for thread safe exporting */
-	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 	/* Write header with time stamp */
 	time_t now;
 	time(&now);
@@ -226,6 +224,8 @@ export_to_file(agent_context_t *ctx)
 
 	pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
+	/* Lock for object metrics as they are updated by app threads */
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 	object_allocation_metrics_t *obj_metrics = ctx->object_metrics;
 
 	if (obj_metrics)
@@ -252,6 +252,8 @@ export_to_file(agent_context_t *ctx)
 	else
 		fprintf(fp, "# No object allocation metrics available\n");
 
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+
 	fprintf(fp, "# ------ \n\n");
 
 	fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
@@ -273,20 +275,20 @@ export_to_file(agent_context_t *ctx)
 			/* Calculate avg time if samples exist */
 			uint64_t avg_time = 0;
 
-			uint64_t call_count = atomic_load_explicit(&ctx->metrics->call_counts[i],
-                                                    memory_order_relaxed);
-			uint64_t total_time = atomic_load_explicit(&ctx->metrics->total_time_ns[i],
-														memory_order_relaxed);
-			uint64_t min_time = atomic_load_explicit(&ctx->metrics->min_time_ns[i],
-													memory_order_relaxed);
-			uint64_t max_time = atomic_load_explicit(&ctx->metrics->max_time_ns[i],
-													memory_order_relaxed);
-			uint64_t alloc = atomic_load_explicit(&ctx->metrics->alloc_bytes[i],
-												memory_order_relaxed);
-			uint64_t peak = atomic_load_explicit(&ctx->metrics->peak_memory[i],
-												memory_order_relaxed);
+			uint64_t call_count = atomic_load_explicit(
+			    &ctx->metrics->call_counts[i], memory_order_relaxed);
+			uint64_t total_time = atomic_load_explicit(
+			    &ctx->metrics->total_time_ns[i], memory_order_relaxed);
+			uint64_t min_time = atomic_load_explicit(
+			    &ctx->metrics->min_time_ns[i], memory_order_relaxed);
+			uint64_t max_time = atomic_load_explicit(
+			    &ctx->metrics->max_time_ns[i], memory_order_relaxed);
+			uint64_t alloc = atomic_load_explicit(
+			    &ctx->metrics->alloc_bytes[i], memory_order_relaxed);
+			uint64_t peak = atomic_load_explicit(
+			    &ctx->metrics->peak_memory[i], memory_order_relaxed);
 			uint64_t cpu = atomic_load_explicit(&ctx->metrics->cpu_cycles[i],
-												memory_order_relaxed);
+			                                    memory_order_relaxed);
 
 			// if (ctx->metrics->sample_counts[i] > 0)
 			// 	avg_time = ctx->metrics->total_time_ns[i]
@@ -294,17 +296,17 @@ export_to_file(agent_context_t *ctx)
 
 			/* Use the loaded values in fprintf */
 			fprintf(fp,
-					"%s,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
-					ctx->metrics->signatures[i],
-					(unsigned long)call_count,
-					0, // sample_count
-					(unsigned long)total_time,
-					(unsigned long)avg_time,
-					(unsigned long)(min_time == UINT64_MAX ? 0 : min_time),
-					(unsigned long)max_time,
-					(unsigned long)alloc,
-					(unsigned long)peak,
-					(unsigned long)cpu);
+			        "%s,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+			        ctx->metrics->signatures[i],
+			        (unsigned long)call_count,
+			        0, // sample_count
+			        (unsigned long)total_time,
+			        (unsigned long)avg_time,
+			        (unsigned long)(min_time == UINT64_MAX ? 0 : min_time),
+			        (unsigned long)max_time,
+			        (unsigned long)alloc,
+			        (unsigned long)peak,
+			        (unsigned long)cpu);
 
 			total_calls += call_count;
 			// total_samples += ctx->metrics->sample_counts[i];
@@ -363,8 +365,6 @@ export_to_file(agent_context_t *ctx)
 	         (unsigned long)total_calls,
 	         (unsigned long)total_samples);
 
-	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-
 	fclose(fp);
 }
 
@@ -385,25 +385,25 @@ export_method_to_shm(agent_context_t *ctx)
 			        ctx->metrics->signatures[i],
 			        COOPER_MAX_SIGNATURE_LEN - 1);
 			method_data.signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
-			method_data.metric_flags  = ctx->metrics->metric_flags[i];
+			method_data.metric_flags = ctx->metrics->metric_flags[i];
 
 			/* Load atomics */
-			method_data.call_count = atomic_load_explicit(&ctx->metrics->call_counts[i],
-                                                    memory_order_relaxed);
+			method_data.call_count = atomic_load_explicit(
+			    &ctx->metrics->call_counts[i], memory_order_relaxed);
 			// method_data.sample_count  = ctx->metrics->sample_counts[i];
-			method_data.total_time_ns = atomic_load_explicit(&ctx->metrics->total_time_ns[i],
-                                                    memory_order_relaxed);
-			method_data.min_time_ns   = atomic_load_explicit(&ctx->metrics->min_time_ns[i],
-                                                    memory_order_relaxed);
-			method_data.max_time_ns   = atomic_load_explicit(&ctx->metrics->max_time_ns[i],
-                                                    memory_order_relaxed);
-			method_data.alloc_bytes   = atomic_load_explicit(&ctx->metrics->alloc_bytes[i],
-                                                    memory_order_relaxed);
-			method_data.peak_memory   = atomic_load_explicit(&ctx->metrics->peak_memory[i],
-                                                    memory_order_relaxed);
-			method_data.cpu_cycles    = atomic_load_explicit(&ctx->metrics->cpu_cycles[i],
-                                                    memory_order_relaxed);
-			
+			method_data.total_time_ns = atomic_load_explicit(
+			    &ctx->metrics->total_time_ns[i], memory_order_relaxed);
+			method_data.min_time_ns = atomic_load_explicit(
+			    &ctx->metrics->min_time_ns[i], memory_order_relaxed);
+			method_data.max_time_ns = atomic_load_explicit(
+			    &ctx->metrics->max_time_ns[i], memory_order_relaxed);
+			method_data.alloc_bytes = atomic_load_explicit(
+			    &ctx->metrics->alloc_bytes[i], memory_order_relaxed);
+			method_data.peak_memory = atomic_load_explicit(
+			    &ctx->metrics->peak_memory[i], memory_order_relaxed);
+			method_data.cpu_cycles = atomic_load_explicit(
+			    &ctx->metrics->cpu_cycles[i], memory_order_relaxed);
+
 			cooper_shm_write_data(
 			    ctx->shm_ctx, COOPER_DATA_METHOD_METRIC, &method_data);
 		}
@@ -521,7 +521,7 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 		return;
 
 	// TODO perhaps need different lock
-	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+	// pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	for (size_t i = 0; i < ctx->last_heap_stats_count; i++)
 	{
@@ -546,9 +546,10 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 	}
 
 	// TODO diff lock??
-	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+	// pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
+// TODO complete this stub
 static void
 export_call_stack_samples_to_shm(agent_context_t *ctx)
 {
@@ -2124,15 +2125,11 @@ record_method_exit_event(agent_context_t *ctx,
 				target = current;
 				/* Remove node from linked-list/stack */
 				if (parent)
-					parent->parent =
-					    current
-						->parent; /* Skip over this
-					                     node */
+					parent->parent = current->parent; /* Skip over
+					                                     this node */
 				else
-					context->sample =
-					    current
-						->parent; /* Update head of
-					                     list */
+					context->sample = current->parent; /* Update head
+					                                      of list */
 
 				context->stack_depth--;
 				break;
@@ -2177,26 +2174,26 @@ record_method_exit_event(agent_context_t *ctx,
 		exec_time         = end_time - target->start_time;
 
 		atomic_fetch_add_explicit(&ctx->metrics->total_time_ns[method_idx],
-								exec_time,
-								memory_order_relaxed);
+		                          exec_time,
+		                          memory_order_relaxed);
 
 		/* Update min/max using relaxed atomics - no mutex needed */
-		uint64_t current_min = atomic_load_explicit(&metrics->min_time_ns[method_idx],
-													memory_order_relaxed);
+		uint64_t current_min = atomic_load_explicit(
+		    &metrics->min_time_ns[method_idx], memory_order_relaxed);
 		if (exec_time < current_min)
 		{
 			atomic_store_explicit(&metrics->min_time_ns[method_idx],
-								exec_time,
-								memory_order_relaxed);
+			                      exec_time,
+			                      memory_order_relaxed);
 		}
 
-		uint64_t current_max = atomic_load_explicit(&metrics->max_time_ns[method_idx],
-													memory_order_relaxed);
+		uint64_t current_max = atomic_load_explicit(
+		    &metrics->max_time_ns[method_idx], memory_order_relaxed);
 		if (exec_time > current_max)
 		{
 			atomic_store_explicit(&metrics->max_time_ns[method_idx],
-								exec_time,
-								memory_order_relaxed);
+			                      exec_time,
+			                      memory_order_relaxed);
 		}
 	}
 
@@ -2205,17 +2202,17 @@ record_method_exit_event(agent_context_t *ctx,
 		memory_delta = target->current_alloc_bytes;
 
 		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_idx],
-								memory_delta,
-								memory_order_relaxed);
+		                          memory_delta,
+		                          memory_order_relaxed);
 
 		/* Update peak memory - no mutex needed */
-		uint64_t current_peak = atomic_load_explicit(&metrics->peak_memory[method_idx],
-													memory_order_relaxed);
+		uint64_t current_peak = atomic_load_explicit(
+		    &metrics->peak_memory[method_idx], memory_order_relaxed);
 		if (memory_delta > current_peak)
 		{
 			atomic_store_explicit(&metrics->peak_memory[method_idx],
-								memory_delta,
-								memory_order_relaxed);
+			                      memory_delta,
+			                      memory_order_relaxed);
 		}
 	}
 
@@ -2227,12 +2224,11 @@ record_method_exit_event(agent_context_t *ctx,
 			cpu_delta = end_cpu - target->start_cpu;
 		else
 			LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu",
-					(unsigned long long)end_cpu,
-					(unsigned long long)target->start_cpu);
+			          (unsigned long long)end_cpu,
+			          (unsigned long long)target->start_cpu);
 
-		atomic_fetch_add_explicit(&metrics->cpu_cycles[method_idx],
-								cpu_delta,
-								memory_order_relaxed);
+		atomic_fetch_add_explicit(
+		    &metrics->cpu_cycles[method_idx], cpu_delta, memory_order_relaxed);
 	}
 }
 
