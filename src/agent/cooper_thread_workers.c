@@ -1414,7 +1414,8 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 {
 	assert(jvmti_env != NULL);
 
-	char *class_sig = NULL;
+	char *class_sig    = NULL;
+	jmethodID *methods = NULL;
 	jvmtiError err =
 	    (*jvmti_env)->GetClassSignature(jvmti_env, klass, &class_sig, NULL);
 
@@ -1422,8 +1423,7 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 		goto deallocate;
 
 	/* Get all methods for the class */
-	jint method_count  = 0;
-	jmethodID *methods = NULL;
+	jint method_count = 0;
 	err = (*jvmti_env)->GetClassMethods(jvmti_env, klass, &method_count, &methods);
 
 	if (err != JVMTI_ERROR_NONE)
@@ -1433,25 +1433,22 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	if (method_count == 0)
 		goto deallocate;
 
-	/* Allocate the main class_info struct from the class cache arena */
-	cooper_class_info_t *info = arena_alloc(arena, sizeof(cooper_class_info_t));
+	/* Calculate total size needed for class info and methods array */
+	size_t total_size =
+	    sizeof(cooper_class_info_t) + (sizeof(cooper_method_info_t) * method_count);
+
+	/* Allocate the main class_info struct and methods array in one go */
+	cooper_class_info_t *info = arena_alloc(arena, total_size);
 	if (info == NULL)
 		goto deallocate;
 
 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
 	info->in_heap_iteration = 0;
 
-	/* Allocate space for the method info array in the same arena */
-	info->methods = arena_alloc(arena, sizeof(cooper_method_info_t) * method_count);
+	/* Set up the methods pointer to point to the memory immediately following the
+	 * struct */
+	info->methods      = (cooper_method_info_t *)(info + 1);
 	info->method_count = method_count;
-
-	/* If we are unable to allocate mem for methods,
-	free the class_info mem and stop processing this class */
-	if (!info->methods)
-	{
-		arena_free(arena, info);
-		goto deallocate;
-	}
 
 	/* Loop through each method and cache details */
 	for (int i = 0; i < method_count; i++)

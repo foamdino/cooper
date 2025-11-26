@@ -481,35 +481,6 @@ test_arena()
 	/* Write to the second block */
 	memset(block2, 'B', 200);
 
-	/* Test arena_free */
-	int result = arena_free(arena, block1);
-	assert(result == 1);
-	assert(arena->free_count == 1);
-
-	/* Test allocating after freeing */
-	void *block3 = arena_alloc(arena, 100);
-	assert(block3 != NULL);
-
-	/* Check that the reused block has the correct magic number */
-	block_header_t *header3 =
-	    (block_header_t *)((char *)block3 - sizeof(block_header_t));
-	assert(header3->magic == ARENA_BLOCK_MAGIC);
-	assert(header3->block_sz == 100);
-
-	/* If the free block was reused, block3 should be the same as block1 */
-	if (arena->free_count == 0)
-	{
-		assert(block3 == block1);
-	}
-
-	/* Test corrupting a block header and verifying that free fails */
-	header2->magic = 0xDEADBEEF; /* Corrupt the magic number */
-	result         = arena_free(arena, block2);
-	assert(result == 0); /* Should fail due to invalid magic number */
-
-	/* Restore the magic number */
-	header2->magic = ARENA_BLOCK_MAGIC;
-
 	/* Test arena_destroy */
 	arena_destroy(arena);
 
@@ -551,30 +522,6 @@ test_arena()
 		    (block_header_t *)((char *)small_blocks[i] - sizeof(block_header_t));
 		assert(header->magic == ARENA_BLOCK_MAGIC);
 	}
-
-	/* Only free the blocks that were successfully allocated */
-	for (i = 0; i < max_blocks && small_blocks[i] != NULL; i++)
-	{
-		result = arena_free(arena, small_blocks[i]);
-		assert(result == 1);
-	}
-
-	/* Try to free one more block - this should fail if we've reached max_free_blocks
-	 */
-	if (arena->free_count > 0 && arena->free_count >= arena->max_free_blocks)
-	{
-		block1 = arena_alloc(arena, 10);
-		if (block1 != NULL)
-		{
-			result = arena_free(arena, block1);
-			assert(result == 0);
-		}
-	}
-
-	/* Test freeing an invalid pointer that's not part of our arena */
-	char dummy[10];
-	result = arena_free(arena, dummy);
-	assert(result == 0);
 
 	arena_destroy(arena);
 
@@ -1222,38 +1169,6 @@ test_buffer_overflow_protection(void)
 		}
 	}
 
-	/* Step 4: Free one chunk and verify we can allocate again */
-	if (chunk_count > 0)
-	{
-		arena_free(test_arena, chunks[0]);
-
-		void *new_block =
-		    arena_alloc(test_arena, 64 * 1024); /* 64KB should fit */
-		assert(new_block != NULL);
-
-		/* Test corruption detection */
-		block_header_t *header =
-		    (block_header_t *)((char *)new_block - sizeof(block_header_t));
-		uint32_t original_magic = header->magic;
-		header->magic           = 0xDEADBEEF;
-
-		int free_result = arena_free(test_arena, new_block);
-		assert(free_result == 0); /* Should fail due to corruption */
-
-		/* Restore for cleanup */
-		header->magic = original_magic;
-		arena_free(test_arena, new_block);
-	}
-
-	/* Cleanup remaining chunks */
-	for (int i = 1; i < chunk_count; i++)
-	{
-		if (chunks[i] != NULL)
-		{
-			arena_free(test_arena, chunks[i]);
-		}
-	}
-
 	destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);
 	cleanup_test_context(ctx);
 
@@ -1291,63 +1206,6 @@ test_arena_bounds_checking(void)
 			assert((char *)blocks[i] + 64
 			       <= (char *)test_arena->memory + test_arena->total_sz);
 		}
-	}
-
-	/* Test freeing invalid pointers */
-	char external_buffer[64];
-	int result = arena_free(test_arena, external_buffer);
-	assert(result == 0); /* Should fail - not from arena */
-
-	result = arena_free(test_arena, NULL);
-	assert(result == 0); /* Should fail - NULL pointer */
-
-	/* Test freeing pointer with corrupted header location */
-	char *fake_block = (char *)test_arena->memory + sizeof(block_header_t);
-	block_header_t *fake_header =
-	    (block_header_t *)((char *)fake_block - sizeof(block_header_t));
-	fake_header->magic = 0x12345678; /* Wrong magic */
-	result             = arena_free(test_arena, fake_block);
-	assert(result == 0); /* Should fail - wrong magic */
-
-	/* Test arena free list bounds */
-	for (int i = 0; i < 4; i++)
-	{
-		if (blocks[i] != NULL)
-		{
-			arena_free(test_arena, blocks[i]);
-		}
-	}
-
-	/* Try to exceed max_free_blocks */
-	void *extra_blocks[8];
-	size_t allocated_count = 0;
-	for (int i = 0; i < 8; i++)
-	{
-		extra_blocks[i] = arena_alloc(test_arena, 32);
-		if (extra_blocks[i] != NULL)
-		{
-			allocated_count++;
-		}
-	}
-
-	/* Free more blocks than max_free_blocks can track */
-	int freed_count = 0;
-	for (size_t i = 0; i < allocated_count && i < test_arena->max_free_blocks; i++)
-	{
-		if (extra_blocks[i] != NULL)
-		{
-			result = arena_free(test_arena, extra_blocks[i]);
-			if (result == 1)
-				freed_count++;
-		}
-	}
-
-	/* Additional frees should fail when free list is full */
-	if (allocated_count > test_arena->max_free_blocks)
-	{
-		result =
-		    arena_free(test_arena, extra_blocks[test_arena->max_free_blocks]);
-		assert(result == 0); /* Should fail - free list full */
 	}
 
 	destroy_all_arenas(ctx->arenas, ARENA_ID__LAST);

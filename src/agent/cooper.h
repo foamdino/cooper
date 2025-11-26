@@ -59,7 +59,6 @@
 #define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define EXCEPTION_ARENA_SZ    1024 * 1024
 #define LOG_ARENA_SZ          1024 * 1024
 #define SAMPLE_ARENA_SZ       2048 * 1024
 #define CONFIG_ARENA_SZ       512 * 1024
@@ -73,7 +72,6 @@
 #define BYTECODE_ARENA_SZ     8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
-#define EXCEPTION_ARENA_BLOCKS    1024
 #define LOG_ARENA_BLOCKS          1024
 #define EVENT_ARENA_BLOCKS        1024
 #define SAMPLE_ARENA_BLOCKS       1024
@@ -88,7 +86,6 @@
 #define BYTECODE_ARENA_BLOCKS     1024
 
 /* Arena Names */
-#define EXCEPTION_ARENA_NAME    "exception_arena"
 #define LOG_ARENA_NAME          "log_arena"
 #define SAMPLE_ARENA_NAME       "sample_arena"
 #define CONFIG_ARENA_NAME       "config_arena"
@@ -133,7 +130,6 @@ typedef struct cooper_class_info cooper_class_info_t;
 
 enum arenas
 {
-	EXCEPTION_ARENA_ID,
 	LOG_ARENA_ID,
 	SAMPLE_ARENA_ID,
 	CONFIG_ARENA_ID,
@@ -186,7 +182,8 @@ struct method_metrics_soa
 	unsigned int *metric_flags;
 
 	/* Counters */
-	_Atomic(uint64_t) *call_counts; /**< Number of times each method has been called */
+	_Atomic(uint64_t)
+	    *call_counts; /**< Number of times each method has been called */
 	// uint64_t *sample_counts; /**< Number of times each method has been sampled */
 
 	/* Timing metrics */
@@ -201,7 +198,7 @@ struct method_metrics_soa
 	/* CPU metrics */
 	_Atomic(uint64_t) *cpu_cycles; /**< CPU cycles used */
 
-	_Atomic(uint64_t) *call_sample_counts; /**< Call stack sample counts */	
+	_Atomic(uint64_t) *call_sample_counts; /**< Call stack sample counts */
 };
 
 struct app_memory_metrics

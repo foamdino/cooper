@@ -91,20 +91,6 @@ void *arena_alloc(arena_t *arena, size_t sz);
 void *arena_alloc_aligned(arena_t *arena, size_t size, size_t alignment);
 
 /**
- * Free memory back to the arena
- *
- * Returns a previously allocated block to the arena's free list for potential reuse.
- * The function validates that the pointer was allocated from this arena by checking
- * its header magic number. The size is automatically retrieved from the block header.
- *
- * @param arena         Pointer to the arena
- * @param ptr           Pointer to memory previously allocated with arena_alloc
- *
- * @return              1 on success, 0 on failure (invalid pointer or arena full)
- */
-int arena_free(arena_t *arena, void *ptr);
-
-/**
  * Destroy an arena and free all associated memory
  *
  * Releases all memory managed by the arena, including the arena structure itself.

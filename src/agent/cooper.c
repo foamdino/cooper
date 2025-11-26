@@ -17,7 +17,6 @@ static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 /* clang-format off */
 static const arena_config_t arena_configs[] = 
 {
-    {EXCEPTION_ARENA_ID, EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
     {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
     {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
     {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
@@ -366,14 +365,17 @@ update_object_allocation_stats(agent_context_t *ctx,
  *
  */
 static char *
-get_parameter_value(arena_t *arena,
+get_parameter_value(char *buffer,
+                    size_t buffer_size,
                     jvmtiEnv *jvmti,
                     JNIEnv *jni_env,
                     jthread thread,
                     jint param_slot,
                     char param_type)
 {
-	char *result = NULL;
+	if (!buffer || buffer_size == 0)
+		return NULL;
+
 	jvalue value;
 	jvmtiError err;
 
@@ -385,11 +387,8 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				/* Allocate space for result (max int digist + sign +
-				 * null) */
-				result = arena_alloc(arena, 12);
-				if (result)
-					sprintf(result, "%d", value.i);
+				snprintf(buffer, buffer_size, "%d", value.i);
+				return buffer;
 			}
 			break;
 
@@ -399,9 +398,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.j);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 21);
-				if (result)
-					sprintf(result, "%lld", (long long)value.j);
+				snprintf(buffer, buffer_size, "%lld", (long long)value.j);
+				return buffer;
 			}
 			break;
 
@@ -411,9 +409,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.f);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 32);
-				if (result)
-					sprintf(result, "%f", value.f);
+				snprintf(buffer, buffer_size, "%f", value.f);
+				return buffer;
 			}
 			break;
 
@@ -423,10 +420,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.d);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				/* TODO check this as it's the same size as a float?? */
-				result = arena_alloc(arena, 32);
-				if (result)
-					sprintf(result, "%f", value.d);
+				snprintf(buffer, buffer_size, "%f", value.d);
+				return buffer;
 			}
 			break;
 
@@ -436,9 +431,11 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 6);
-				if (result)
-					sprintf(result, "%s", value.i ? "true" : "false");
+				snprintf(buffer,
+				         buffer_size,
+				         "%s",
+				         value.i ? "true" : "false");
+				return buffer;
 			}
 			break;
 
@@ -449,9 +446,8 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 12);
-				if (result)
-					sprintf(result, "%d", value.i);
+				snprintf(buffer, buffer_size, "%d", value.i);
+				return buffer;
 			}
 			break;
 
@@ -474,17 +470,13 @@ get_parameter_value(arena_t *arena,
 						jni_env, obj, NULL);
 					if (str_value)
 					{
-						result = arena_alloc(
-						    arena,
-						    strlen(str_value)
-							+ 3); /* includes quotes and null
-						               */
-						if (result)
-							sprintf(
-							    result, "\"%s\"", str_value);
-
+						snprintf(buffer,
+						         buffer_size,
+						         "\"%s\"",
+						         str_value);
 						(*jni_env)->ReleaseStringUTFChars(
 						    jni_env, obj, str_value);
+						return buffer;
 					}
 				}
 				else /* Non-string object */
@@ -507,48 +499,37 @@ get_parameter_value(arena_t *arena,
 							jni_env, str, NULL);
 						if (str_value)
 						{
-							result = arena_alloc(
-							    arena, strlen(str_value) + 1);
-							if (result)
-								strcpy(result, str_value);
-
+							snprintf(buffer,
+							         buffer_size,
+							         "%s",
+							         str_value);
 							(*jni_env)->ReleaseStringUTFChars(
 							    jni_env, str, str_value);
+							return buffer;
 						}
 					}
 					else
 					{
-						result = arena_alloc(arena, 5);
-						if (result)
-							strcpy(result, "null");
+						snprintf(buffer, buffer_size, "null");
+						return buffer;
 					}
 				}
 			}
 			else
 			{
-				result = arena_alloc(arena, 5);
-				if (result)
-					strcpy(result, "null");
+				snprintf(buffer, buffer_size, "null");
+				return buffer;
 			}
 		}
 		break;
 
 		default:
-			result = arena_alloc(arena, 16);
-			if (result)
-				sprintf(result, "<unknown type>");
-
-			break;
+			snprintf(buffer, buffer_size, "<unknown type>");
+			return buffer;
 	}
 
-	if (!result)
-	{
-		result = arena_alloc(arena, 10);
-		if (result)
-			sprintf(result, "<error>");
-	}
-
-	return result;
+	snprintf(buffer, buffer_size, "<error>");
+	return buffer;
 }
 #endif
 
@@ -692,15 +673,6 @@ exception_callback(jvmtiEnv *jvmti_env,
 		int param_idx = 0;
 		int slot = is_static ? 0 : 1; /* Start at either 0 or 1 skipping 'this' */
 
-		LOG_DEBUG("Method params: \n");
-
-		arena_t *arena = global_ctx->arenas[EXCEPTION_ARENA_ID];
-		if (arena == NULL)
-		{
-			LOG_ERROR(">> Unable to find exception arena on list! <<\n");
-			goto deallocate;
-		}
-
 		while (*params != ')' && *params != '\0')
 		{
 			char param_type  = *params;
@@ -730,16 +702,19 @@ exception_callback(jvmtiEnv *jvmti_env,
 			}
 
 			/* Get the param value */
-			char *param_val = get_parameter_value(
-			    arena, jvmti_env, jni_env, thread, slot, param_type);
+			char param_buffer[1024];
+			char *param_val = get_parameter_value(param_buffer,
+			                                      sizeof(param_buffer),
+			                                      jvmti_env,
+			                                      jni_env,
+			                                      thread,
+			                                      slot,
+			                                      param_type);
 
 			LOG_DEBUG("\tParam %d (%s): %s\n",
 			          param_idx,
 			          param_name ? param_name : "<unknown>",
 			          param_val ? param_val : "<error>");
-
-			if (param_val)
-				arena_free(arena, param_val);
 
 			slot++;
 			param_idx++;
