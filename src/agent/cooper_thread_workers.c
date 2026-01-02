@@ -6,6 +6,7 @@
 
 #include "cooper.h"
 #include "cooper_ring.h"
+#include "src/lib/log.h"
 #include "cooper_thread_workers.h"
 
 /* Helper functions */
@@ -2047,7 +2048,7 @@ record_method_entry_event(agent_context_t *ctx,
 	one we're configured to sample. */
 	if (method_info == NULL)
 	{
-		LOG_WARN("Method info not found for mid %p (%s)", mid, method_name);
+		LOG_DEBUG("Method info not found for mid %p (%s)", mid, method_name);
 		return;
 	}
 
@@ -2059,9 +2060,9 @@ record_method_entry_event(agent_context_t *ctx,
 		return;
 	}
 
-	LOG_INFO("Found method: %s in interesting_methods hashtable (index %d)",
-	         method_info->full_name,
-	         method_info->sample_index);
+	LOG_DEBUG("Found method: %s in interesting_methods hashtable (index %d)",
+	          method_info->full_name,
+	          method_info->sample_index);
 
 	/* We found a method to track. Atomically increment its total call count. */
 	uint64_t current_calls = atomic_fetch_add_explicit(
@@ -2076,11 +2077,6 @@ record_method_entry_event(agent_context_t *ctx,
 	/* Decide whether to sample this specific call based on the rate. */
 	if ((current_calls % sample_rate) != 0)
 		return; /* Don't sample this call. */
-
-	// LOG_INFO("entry: would sample %s.%s, skipping stack mutation in debug build",
-	//          class_name,
-	//          method_name);
-	// return;
 
 	thread_context_t *tc = get_thread_local_context();
 	if (!tc)
@@ -2296,7 +2292,7 @@ method_event_thread_func(void *arg)
 		return NULL;
 	}
 
-	LOG_INFO("Method event thread started");
+	LOG_DEBUG("Method event thread started");
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING))
 	{
@@ -2324,14 +2320,6 @@ method_event_thread_func(void *arg)
 		char *method_sig =
 		    data_ptr + event->class_name_len + 1 + event->method_name_len + 1;
 
-		// jclass clazz = (*jni)->FindClass(jni, class_name);
-		// if (!clazz)
-		// {
-		// 	(*jni)->ExceptionClear(jni);
-		// 	LOG_ERROR("FindClass failed for '%s'", class_name);
-		// 	goto cleanup;
-		// }
-
 		jmethodID mid = (*jni)->GetMethodID(jni, klass, method_name, method_sig);
 		if (!mid)
 		{
@@ -2350,20 +2338,20 @@ method_event_thread_func(void *arg)
 			}
 		}
 
-		LOG_INFO("Resolved mid %p for %s.%s", mid, class_name, method_name);
+		LOG_DEBUG("Resolved mid %p for %s.%s", mid, class_name, method_name);
 
 		if (event->type == METHOD_ENTRY)
 		{
-			LOG_INFO("Calling record_method_entry_event for %s.%s",
-			         class_name,
-			         method_name);
+			LOG_DEBUG("Calling record_method_entry_event for %s.%s",
+			          class_name,
+			          method_name);
 			record_method_entry_event(ctx, event, mid, sample_arena);
 		}
 		else
 		{
-			LOG_INFO("Calling record_method_exit_event for %s.%s",
-			         class_name,
-			         method_name);
+			LOG_DEBUG("Calling record_method_exit_event for %s.%s",
+			          class_name,
+			          method_name);
 			record_method_exit_event(ctx, event, mid);
 		}
 

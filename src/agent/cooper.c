@@ -899,8 +899,6 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (!should_process_class(&global_ctx->unified_filter, class_sig))
 		goto cleanup;
 
-	LOG_INFO("Class load callback, processing %s", class_sig);
-
 	/* Convert signature (Lorg/foo/Bar;) to internal class name (org/foo/Bar)
 	 * for FindClass compatibility in method_event_thread_func */
 	char *class_name = class_sig;
@@ -1008,7 +1006,6 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
 
-	LOG_INFO("injecting bytecode for %s", name);
 	/* Get the temp bytecode arena and reset */
 	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
 	arena_reset(bc_arena);
@@ -1113,7 +1110,7 @@ record_method_event(method_event_type_e event_type,
 	if (!class_name || !method_name || !method_sig)
 		return COOPER_ERR;
 
-	LOG_INFO("Recording method event for method: %s", method_name);
+	LOG_DEBUG("Recording method event for method: %s", method_name);
 
 	size_t c_len = strlen(class_name);
 	size_t m_len = strlen(method_name);
@@ -1174,7 +1171,7 @@ record_method_event(method_event_type_e event_type,
 	data_ptr[s_len] = '\0';
 
 	mpsc_ring_commit(&global_ctx->method_ring, handle);
-	LOG_INFO("Recorded method event for method: %s", method_name);
+	LOG_DEBUG("Recorded method event for method: %s", method_name);
 	return COOPER_OK;
 }
 
@@ -1188,39 +1185,25 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
 	UNUSED(env);   /* Not needed for hashtable lookup */
 
-	LOG_INFO("JNICALL onMethodEntry");
-
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
 	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
 
 	if (!class_cstr || !method_cstr || !sig_cstr)
-	{
-		if (class_cstr)
-			(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-		if (method_cstr)
-			(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-		if (sig_cstr)
-			(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
-		return;
-	}
+		goto release;
 
 	/* Build the class signature key: L<classname>; */
 	char class_sig_key[MAX_SIG_SZ];
 	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
 
-	/* Lookup class info from hashtable */
+	/* Lookup class info from hashtable -
+	it's ok not to find a class, we will not
+	have a cached version on startup */
 	cooper_class_info_t *class_info =
 	    ht_get(global_ctx->class_info_by_name, class_sig_key);
 	if (!class_info || !class_info->global_ref)
-	{
-		LOG_WARN("Class not found in cache: %s", class_sig_key);
-		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
-		return;
-	}
+		goto release;
 
 	/* Use the cached GlobalRef - no need to create a new one */
 	int res = record_method_event(
@@ -1229,10 +1212,14 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 	if (res != COOPER_OK)
 		LOG_ERROR("Failed to record method entry event");
 
+release:
 	/* Release strings */
-	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-	(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-	(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+	if (class_cstr)
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	if (method_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	if (sig_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
 }
 
 JNIEXPORT void JNICALL
@@ -1251,31 +1238,19 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
 
 	if (!class_cstr || !method_cstr || !sig_cstr)
-	{
-		if (class_cstr)
-			(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-		if (method_cstr)
-			(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-		if (sig_cstr)
-			(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
-		return;
-	}
+		goto release;
 
 	/* Build the class signature key: L<classname>; */
 	char class_sig_key[MAX_SIG_SZ];
 	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
 
-	/* Lookup class info from hashtable */
+	/* Lookup class info from hashtable -
+	it's ok not to find a class, we will not
+	have a cached version on startup */
 	cooper_class_info_t *class_info =
 	    ht_get(global_ctx->class_info_by_name, class_sig_key);
 	if (!class_info || !class_info->global_ref)
-	{
-		LOG_WARN("Class not found in cache: %s", class_sig_key);
-		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
-		return;
-	}
+		goto release;
 
 	/* Use the cached GlobalRef - no need to create a new one */
 	int res = record_method_event(
@@ -1284,9 +1259,13 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 	if (res != COOPER_OK)
 		LOG_ERROR("Failed to record method exit event");
 
-	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-	(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-	(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+release:
+	if (class_cstr)
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	if (method_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	if (sig_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
 }
 
 jclass
