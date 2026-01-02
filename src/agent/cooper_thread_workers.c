@@ -224,10 +224,7 @@ export_to_file(agent_context_t *ctx)
 
 	pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
-	/* Lock for object metrics as they are updated by app threads */
-	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 	object_allocation_metrics_t *obj_metrics = ctx->object_metrics;
-
 	if (obj_metrics)
 	{
 		/* Add object allocation statistics section */
@@ -238,21 +235,35 @@ export_to_file(agent_context_t *ctx)
 
 		for (size_t i = 0; i < obj_metrics->count; i++)
 		{
+			uint64_t alloc_count = atomic_load_explicit(
+			    &obj_metrics->allocation_counts[i], memory_order_relaxed);
+			uint64_t total_bytes = atomic_load_explicit(
+			    &obj_metrics->total_bytes[i], memory_order_relaxed);
+			uint64_t current_inst = atomic_load_explicit(
+			    &obj_metrics->current_instances[i], memory_order_relaxed);
+
+			uint64_t avg_size = atomic_load_explicit(
+			    &obj_metrics->avg_size[i], memory_order_relaxed);
+			uint64_t min_size = atomic_load_explicit(
+			    &obj_metrics->min_size[i], memory_order_relaxed);
+			uint64_t max_size = atomic_load_explicit(
+			    &obj_metrics->max_size[i], memory_order_relaxed);
+
 			fprintf(fp,
 			        "%s,%lu,%lu,%lu,%lu,%lu,%lu\n",
 			        obj_metrics->class_signatures[i],
-			        (unsigned long)obj_metrics->allocation_counts[i],
-			        (unsigned long)obj_metrics->total_bytes[i],
-			        (unsigned long)obj_metrics->current_instances[i],
-			        (unsigned long)obj_metrics->avg_size[i],
-			        (unsigned long)obj_metrics->min_size[i],
-			        (unsigned long)obj_metrics->max_size[i]);
+			        (unsigned long)alloc_count,
+			        (unsigned long)total_bytes,
+			        (unsigned long)current_inst,
+			        (unsigned long)avg_size,
+			        (unsigned long)min_size,
+			        (unsigned long)max_size);
 		}
 	}
 	else
 		fprintf(fp, "# No object allocation metrics available\n");
 
-	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+	// pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
 	fprintf(fp, "# ------ \n\n");
 
@@ -475,12 +486,12 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 	if (!ctx->shm_ctx || !ctx->object_metrics)
 		return;
 
-	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-
 	for (size_t i = 0; i < ctx->object_metrics->count; i++)
 	{
-		if (ctx->object_metrics->class_signatures[i]
-		    && ctx->object_metrics->allocation_counts[i] > 0)
+		uint64_t alloc_count = atomic_load_explicit(
+		    &ctx->object_metrics->allocation_counts[i], memory_order_relaxed);
+
+		if (ctx->object_metrics->class_signatures[i] && alloc_count > 0)
 		{
 
 			/* Clean object allocation data */
@@ -492,23 +503,26 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 			alloc_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
 
 			/* Semantic field names */
-			alloc_data.allocation_count =
-			    ctx->object_metrics->allocation_counts[i];
-			alloc_data.current_instances =
-			    ctx->object_metrics->current_instances[i];
-			alloc_data.total_bytes = ctx->object_metrics->total_bytes[i];
+			alloc_data.allocation_count  = alloc_count;
+			alloc_data.current_instances = atomic_load_explicit(
+			    &ctx->object_metrics->current_instances[i],
+			    memory_order_relaxed);
+			alloc_data.total_bytes = atomic_load_explicit(
+			    &ctx->object_metrics->total_bytes[i], memory_order_relaxed);
 			alloc_data.peak_instances =
-			    ctx->object_metrics->peak_instances[i];
-			alloc_data.min_size = ctx->object_metrics->min_size[i];
-			alloc_data.max_size = ctx->object_metrics->max_size[i];
-			alloc_data.avg_size = ctx->object_metrics->avg_size[i];
+			    atomic_load_explicit(&ctx->object_metrics->peak_instances[i],
+			                         memory_order_relaxed);
+			alloc_data.min_size = atomic_load_explicit(
+			    &ctx->object_metrics->min_size[i], memory_order_relaxed);
+			alloc_data.max_size = atomic_load_explicit(
+			    &ctx->object_metrics->max_size[i], memory_order_relaxed);
+			alloc_data.avg_size = atomic_load_explicit(
+			    &ctx->object_metrics->avg_size[i], memory_order_relaxed);
 
 			cooper_shm_write_data(
 			    ctx->shm_ctx, COOPER_DATA_OBJECT_ALLOC, &alloc_data);
 		}
 	}
-
-	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 static void
@@ -519,9 +533,6 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 
 	if (!ctx->last_heap_stats || ctx->last_heap_stats_count == 0)
 		return;
-
-	// TODO perhaps need different lock
-	// pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
 
 	for (size_t i = 0; i < ctx->last_heap_stats_count; i++)
 	{
@@ -544,9 +555,6 @@ export_heap_stats_to_shm(agent_context_t *ctx)
 		cooper_shm_write_data(
 		    ctx->shm_ctx, COOPER_DATA_HEAP_STATS, &heap_stats_data);
 	}
-
-	// TODO diff lock??
-	// pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 // TODO complete this stub
@@ -1410,9 +1418,14 @@ cleanup_classes:
 
 /* Caches class and method info using SetTag */
 static void
-cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jclass klass)
+cache_class_info(agent_context_t *ctx,
+                 arena_t *arena,
+                 jvmtiEnv *jvmti_env,
+                 JNIEnv *jni_env,
+                 jclass klass)
 {
 	assert(jvmti_env != NULL);
+	assert(jni_env != NULL);
 
 	char *class_sig    = NULL;
 	jmethodID *methods = NULL;
@@ -1441,6 +1454,14 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	cooper_class_info_t *info = arena_alloc(arena, total_size);
 	if (info == NULL)
 		goto deallocate;
+
+	/* Create GlobalRef for this class - this survives across threads */
+	info->global_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
+	if (!info->global_ref)
+	{
+		LOG_ERROR("Failed to create GlobalRef for class %s", class_sig);
+		goto deallocate;
+	}
 
 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
 	info->in_heap_iteration = 0;
@@ -1552,6 +1573,12 @@ cache_class_info(agent_context_t *ctx, arena_t *arena, jvmtiEnv *jvmti_env, jcla
 	err       = (*jvmti_env)->SetTag(jvmti_env, klass, tag);
 	if (err != JVMTI_ERROR_NONE)
 		LOG_ERROR("Failed to set tag for class %s, error: %d", class_sig, err);
+
+	/* Add to class_info_by_name hashtable for lookup by class name string.
+	   Note: We use info->class_sig as the key since it's arena-allocated and
+	   persists for the lifetime of the agent. */
+	if (ht_put(ctx->class_info_by_name, info->class_sig, info) != COOPER_OK)
+		LOG_WARN("Failed to add class %s to name lookup hashtable", class_sig);
 
 deallocate:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1843,7 +1870,7 @@ class_cache_thread_func(void *arg)
 
 		classes_processed++;
 		LOG_DEBUG("Processing class #%d from ring", classes_processed);
-		cache_class_info(ctx, arena, ctx->jvmti_env, event->klass);
+		cache_class_info(ctx, arena, ctx->jvmti_env, jni, event->klass);
 
 		/* Delete the global reference after processing */
 		(*jni)->DeleteGlobalRef(jni, event->klass);
@@ -2018,11 +2045,23 @@ record_method_entry_event(agent_context_t *ctx,
 
 	/* We either didn't find the method (should be rare) or it's not
 	one we're configured to sample. */
-	if (method_info == NULL || method_info->sample_index < 0)
+	if (method_info == NULL)
+	{
+		LOG_WARN("Method info not found for mid %p (%s)", mid, method_name);
 		return;
+	}
 
-	LOG_INFO("Found method: %s in interesting_methods hashtable",
-	         method_info->full_name);
+	if (method_info->sample_index < 0)
+	{
+		LOG_DEBUG("Method %s not sampled (index %d)",
+		          method_name,
+		          method_info->sample_index);
+		return;
+	}
+
+	LOG_INFO("Found method: %s in interesting_methods hashtable (index %d)",
+	         method_info->full_name,
+	         method_info->sample_index);
 
 	/* We found a method to track. Atomically increment its total call count. */
 	uint64_t current_calls = atomic_fetch_add_explicit(
@@ -2279,41 +2318,58 @@ method_event_thread_func(void *arg)
 		serialized_method_event_t *event = (serialized_method_event_t *)buffer;
 		char *data_ptr                   = event->data;
 
+		jclass klass      = event->klass;
 		char *class_name  = data_ptr;
 		char *method_name = data_ptr + event->class_name_len + 1;
 		char *method_sig =
 		    data_ptr + event->class_name_len + 1 + event->method_name_len + 1;
 
-		jclass clazz = (*jni)->FindClass(jni, class_name);
-		if (!clazz)
-		{
-			(*jni)->ExceptionClear(jni);
-			goto cleanup;
-		}
+		// jclass clazz = (*jni)->FindClass(jni, class_name);
+		// if (!clazz)
+		// {
+		// 	(*jni)->ExceptionClear(jni);
+		// 	LOG_ERROR("FindClass failed for '%s'", class_name);
+		// 	goto cleanup;
+		// }
 
-		jmethodID mid = (*jni)->GetMethodID(jni, clazz, method_name, method_sig);
+		jmethodID mid = (*jni)->GetMethodID(jni, klass, method_name, method_sig);
 		if (!mid)
 		{
 			(*jni)->ExceptionClear(jni);
 			/* Not found for instance method, retry for static */
 			mid = (*jni)->GetStaticMethodID(
-			    jni, clazz, method_name, method_sig);
+			    jni, klass, method_name, method_sig);
 			if (!mid)
 			{
 				(*jni)->ExceptionClear(jni);
+				LOG_ERROR("GetMethodID failed for %s.%s%s",
+				          class_name,
+				          method_name,
+				          method_sig);
 				goto cleanup;
 			}
 		}
 
+		LOG_INFO("Resolved mid %p for %s.%s", mid, class_name, method_name);
+
 		if (event->type == METHOD_ENTRY)
+		{
+			LOG_INFO("Calling record_method_entry_event for %s.%s",
+			         class_name,
+			         method_name);
 			record_method_entry_event(ctx, event, mid, sample_arena);
+		}
 		else
+		{
+			LOG_INFO("Calling record_method_exit_event for %s.%s",
+			         class_name,
+			         method_name);
 			record_method_exit_event(ctx, event, mid);
+		}
 
 	cleanup:
-		if (clazz != NULL)
-			(*jni)->DeleteLocalRef(jni, clazz);
-
+		/* Note: klass is now a reference to a cached GlobalRef in
+		   class_info_by_name, owned by the hashtable - do NOT delete it here */
 		mpsc_ring_release(&ctx->method_ring, handle);
 	}
 

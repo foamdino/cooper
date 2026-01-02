@@ -41,6 +41,7 @@ struct package_filter
 struct serialized_method_event
 {
 	method_event_type_e type;
+	jclass klass;
 	uint64_t timestamp;
 	uint64_t cpu;
 	uint64_t thread_id;

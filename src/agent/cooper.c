@@ -6,6 +6,7 @@
 
 #include "cooper.h"
 #include "cooper_thread_manager.h"
+#include "src/lib/log.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -898,7 +899,18 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (!should_process_class(&global_ctx->unified_filter, class_sig))
 		goto cleanup;
 
-	// LOG_INFO("Class load callback, processing %s", class_sig);
+	LOG_INFO("Class load callback, processing %s", class_sig);
+
+	/* Convert signature (Lorg/foo/Bar;) to internal class name (org/foo/Bar)
+	 * for FindClass compatibility in method_event_thread_func */
+	char *class_name = class_sig;
+	size_t name_len  = strlen(class_sig);
+
+	if (name_len >= 2 && class_sig[0] == 'L' && class_sig[name_len - 1] == ';')
+	{
+		class_name = class_sig + 1; /* Skip leading 'L' */
+		name_len   = name_len - 2;  /* Exclude 'L' and ';' */
+	}
 
 	/* Create a global reference for the class so it's valid in the worker thread */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
@@ -908,9 +920,8 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 		goto cleanup;
 	}
 
-	size_t sig_len = strlen(class_sig);
 	size_t total_size =
-	    sizeof(serialized_class_event_t) + sig_len + 1; /* +1 for null terminator */
+	    sizeof(serialized_class_event_t) + name_len + 1; /* +1 for null terminator */
 
 	if (total_size > MAX_CLASS_EVENT_SZ)
 	{
@@ -938,11 +949,11 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 
 	serialized_class_event_t *event = (serialized_class_event_t *)buffer;
 	event->klass                    = global_class_ref;
-	event->class_sig_len            = (uint16_t)sig_len;
+	event->class_sig_len            = (uint16_t)name_len;
 
 	/* Copy string into variable length data area */
-	memcpy(event->data, class_sig, sig_len);
-	event->data[sig_len] = '\0';
+	memcpy(event->data, class_name, name_len);
+	event->data[name_len] = '\0';
 
 	mpsc_ring_commit(&global_ctx->class_ring, handle);
 
@@ -997,8 +1008,8 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
 
-	LOG_DEBUG("injecting bytecode for %s", name);
-	/* Get the temp bytecode arena and rest */
+	LOG_INFO("injecting bytecode for %s", name);
+	/* Get the temp bytecode arena and reset */
 	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
 	arena_reset(bc_arena);
 
@@ -1092,14 +1103,17 @@ get_current_thread_id()
 As multiple JVMTI callback threads will try to record events concurrently
 We need to use a mutex around allocations in this function
 */
-void
+int
 record_method_event(method_event_type_e event_type,
+                    jclass global_class,
                     const char *class_name,
                     const char *method_name,
                     const char *method_sig)
 {
 	if (!class_name || !method_name || !method_sig)
-		return;
+		return COOPER_ERR;
+
+	LOG_INFO("Recording method event for method: %s", method_name);
 
 	size_t c_len = strlen(class_name);
 	size_t m_len = strlen(method_name);
@@ -1112,21 +1126,26 @@ record_method_event(method_event_type_e event_type,
 	if (total_size > MAX_METHOD_EVENT_SZ)
 	{
 		/* Event too large for the ring buffer slot */
-		return;
+		return COOPER_ERR;
 	}
 
 	uint32_t handle;
 	if (mpsc_ring_reserve(&global_ctx->method_ring, &handle) != 0)
 	{
 		/* Ring full - drop event */
-		return;
+		LOG_WARN("Method ring full - dropping event");
+		return COOPER_ERR;
 	}
 
 	void *buffer = mpsc_ring_get(&global_ctx->method_ring, handle);
 	if (!buffer)
-		return;
+	{
+		LOG_WARN("Failed to get buffer for method event");
+		return COOPER_ERR;
+	}
 
 	serialized_method_event_t *event = (serialized_method_event_t *)buffer;
+	event->klass                     = global_class;
 	event->type                      = event_type;
 	event->timestamp                 = get_current_time_ns();
 	event->thread_id                 = get_current_thread_id();
@@ -1155,26 +1174,60 @@ record_method_event(method_event_type_e event_type,
 	data_ptr[s_len] = '\0';
 
 	mpsc_ring_commit(&global_ctx->method_ring, handle);
+	LOG_INFO("Recorded method event for method: %s", method_name);
+	return COOPER_OK;
 }
 
 JNIEXPORT void JNICALL
 Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
-                                                                  jclass clazz,
+                                                                  jclass klass,
                                                                   jstring className,
                                                                   jstring methodName,
                                                                   jstring methodSignature)
 {
-	UNUSED(clazz);
+	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
+	UNUSED(env);   /* Not needed for hashtable lookup */
 
-	// LOG_INFO("JNICALL onMethodEntry");
+	LOG_INFO("JNICALL onMethodEntry");
 
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
 	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
 
-	/* Record entry event using your existing infrastructure */
-	record_method_event(METHOD_ENTRY, class_cstr, method_cstr, sig_cstr);
+	if (!class_cstr || !method_cstr || !sig_cstr)
+	{
+		if (class_cstr)
+			(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+		if (method_cstr)
+			(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+		if (sig_cstr)
+			(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+		return;
+	}
+
+	/* Build the class signature key: L<classname>; */
+	char class_sig_key[MAX_SIG_SZ];
+	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
+
+	/* Lookup class info from hashtable */
+	cooper_class_info_t *class_info =
+	    ht_get(global_ctx->class_info_by_name, class_sig_key);
+	if (!class_info || !class_info->global_ref)
+	{
+		LOG_WARN("Class not found in cache: %s", class_sig_key);
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+		return;
+	}
+
+	/* Use the cached GlobalRef - no need to create a new one */
+	int res = record_method_event(
+	    METHOD_ENTRY, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
+
+	if (res != COOPER_OK)
+		LOG_ERROR("Failed to record method entry event");
 
 	/* Release strings */
 	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
@@ -1184,20 +1237,52 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 
 JNIEXPORT void JNICALL
 Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
-                                                                 jclass clazz,
+                                                                 jclass klass,
                                                                  jstring className,
                                                                  jstring methodName,
                                                                  jstring methodSignature)
 {
-	UNUSED(clazz);
+	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
+	UNUSED(env);   /* Not needed for hashtable lookup */
 
-	// LOG_INFO("JNICALL onMethodExit");
-
+	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
 	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
 
-	record_method_event(METHOD_EXIT, class_cstr, method_cstr, sig_cstr);
+	if (!class_cstr || !method_cstr || !sig_cstr)
+	{
+		if (class_cstr)
+			(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+		if (method_cstr)
+			(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+		if (sig_cstr)
+			(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+		return;
+	}
+
+	/* Build the class signature key: L<classname>; */
+	char class_sig_key[MAX_SIG_SZ];
+	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
+
+	/* Lookup class info from hashtable */
+	cooper_class_info_t *class_info =
+	    ht_get(global_ctx->class_info_by_name, class_sig_key);
+	if (!class_info || !class_info->global_ref)
+	{
+		LOG_WARN("Class not found in cache: %s", class_sig_key);
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+		return;
+	}
+
+	/* Use the cached GlobalRef - no need to create a new one */
+	int res = record_method_event(
+	    METHOD_EXIT, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
+
+	if (res != COOPER_OK)
+		LOG_ERROR("Failed to record method exit event");
 
 	(*env)->ReleaseStringUTFChars(env, className, class_cstr);
 	(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
@@ -1555,6 +1640,18 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		if (!should_process_class(&global_ctx->unified_filter, class_sig))
 			goto deallocate;
 
+		/* Convert signature (Lorg/foo/Bar;) to internal class name (org/foo/Bar)
+		 * for FindClass compatibility in method_event_thread_func */
+		char *class_name = class_sig;
+		size_t name_len  = strlen(class_sig);
+
+		if (name_len >= 2 && class_sig[0] == 'L'
+		    && class_sig[name_len - 1] == ';')
+		{
+			class_name = class_sig + 1; /* Skip leading 'L' */
+			name_len   = name_len - 2;  /* Exclude 'L' and ';' */
+		}
+
 		/* Create a global reference for the class */
 		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
 		if (global_class_ref == NULL)
@@ -1564,8 +1661,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			goto deallocate;
 		}
 
-		size_t sig_len    = strlen(class_sig);
-		size_t total_size = sizeof(serialized_class_event_t) + sig_len
+		size_t total_size = sizeof(serialized_class_event_t) + name_len
 		                    + 1; /* +1 for null terminator */
 
 		if (total_size > MAX_CLASS_EVENT_SZ)
@@ -1594,11 +1690,11 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 
 		serialized_class_event_t *event = (serialized_class_event_t *)buffer;
 		event->klass                    = global_class_ref;
-		event->class_sig_len            = (uint16_t)sig_len;
+		event->class_sig_len            = (uint16_t)name_len;
 
 		/* Copy string into variable length data area */
-		memcpy(event->data, class_sig, sig_len);
-		event->data[sig_len] = '\0';
+		memcpy(event->data, class_name, name_len);
+		event->data[name_len] = '\0';
 
 		mpsc_ring_commit(&global_ctx->class_ring, handle);
 
@@ -1894,6 +1990,14 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	              0.75,
 	              hash_jmethodid,
 	              cmp_jmethodid);
+
+	/* cache for class_sig -> cooper_class_info_t* for lookup in onMethodEntry/Exit */
+	global_ctx->class_info_by_name =
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
+	              1000,
+	              0.75,
+	              hash_string,
+	              cmp_string);
 
 	/* Init logging after all arenas are created */
 	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];

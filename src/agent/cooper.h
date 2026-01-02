@@ -225,14 +225,14 @@ struct object_allocation_metrics
 
 	char **class_signatures; /**< Array of class signatures */
 
-	uint64_t *allocation_counts; /**< Number of instances allocated */
-	uint64_t *total_bytes;       /**< Total bytes allocated for this type */
-	uint64_t *peak_instances;    /**< Peak number of live instances */
-	uint64_t *current_instances; /**< Current live instances */
+	_Atomic(uint64_t) *allocation_counts; /**< Number of instances allocated */
+	_Atomic(uint64_t) *total_bytes;       /**< Total bytes allocated for this type */
+	_Atomic(uint64_t) *peak_instances;    /**< Peak number of live instances */
+	_Atomic(uint64_t) *current_instances; /**< Current live instances */
 
-	uint64_t *min_size; /**< Min object size seen */
-	uint64_t *max_size; /**< Max object size seen */
-	uint64_t *avg_size; /**< Avg object size seen */
+	_Atomic(uint64_t) *min_size; /**< Min object size seen */
+	_Atomic(uint64_t) *max_size; /**< Max object size seen */
+	_Atomic(uint64_t) *avg_size; /**< Avg object size seen */
 };
 
 /**
@@ -327,6 +327,7 @@ struct cooper_method_info
 
 struct cooper_class_info
 {
+	jclass global_ref; /**< GlobalRef to the class, valid across threads */
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
 	uint32_t method_count;
@@ -396,6 +397,8 @@ struct agent_context
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
 	hashtable_t
 	    *interesting_classes; /**< Hashtable of scanned classes we care about */
+	hashtable_t
+	    *class_info_by_name; /**< Hashtable: class_sig -> cooper_class_info_t* */
 	hashtable_t *interesting_methods; /**< Hashtable of methods we care about */
 	method_metrics_soa_t *metrics;    /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */

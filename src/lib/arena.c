@@ -130,7 +130,7 @@ arena_alloc(arena_t *arena, size_t sz)
 		{
 			block = arena->free_blocks[i];
 
-			// #ifdef ENABLE_DEBUG_LOGS
+#ifdef ENABLE_DEBUG_LOGS
 			/* DIAGNOSTIC: check that block looks like a header */
 			block_header_t *hdr = (block_header_t *)block;
 			if (hdr->magic != ARENA_BLOCK_MAGIC)
@@ -151,20 +151,20 @@ arena_alloc(arena_t *arena, size_t sz)
 					        arena->block_sizes[j]);
 				abort(); /* fail fast with diagnostics */
 			}
-			// #endif
+#endif
 			/* Remove this block from free list by moving the last one here */
 			arena->free_blocks[i] = arena->free_blocks[arena->free_count - 1];
 			arena->block_sizes[i] = arena->block_sizes[arena->free_count - 1];
 			arena->free_count--;
 
-			fprintf(stderr,
-			        "[ARENA_ALLOC] %s REUSE block=%p user=%p size=%zu "
-			        "free_count(before)=%zu\n",
-			        arena->name,
-			        block,
-			        (char *)block + header_size,
-			        sz,
-			        arena->free_count);
+			// fprintf(stderr,
+			//         "[ARENA_ALLOC] %s REUSE block=%p user=%p size=%zu "
+			//         "free_count(before)=%zu\n",
+			//         arena->name,
+			//         block,
+			//         (char *)block + header_size,
+			//         sz,
+			//         arena->free_count);
 
 			/* Reuse this block */
 			goto init_block;
@@ -189,15 +189,15 @@ arena_alloc(arena_t *arena, size_t sz)
 	block = (char *)arena->memory + arena->used;
 	arena->used += req_size;
 
-	fprintf(
-	    stderr,
-	    "[ARENA_ALLOC] %s NEW block=%p user=%p size=%zu used=%zu free_count=%zu\n",
-	    arena->name,
-	    block,
-	    (char *)block + header_size,
-	    sz,
-	    arena->used,
-	    arena->free_count);
+	// fprintf(
+	//     stderr,
+	//     "[ARENA_ALLOC] %s NEW block=%p user=%p size=%zu used=%zu free_count=%zu\n",
+	//     arena->name,
+	//     block,
+	//     (char *)block + header_size,
+	//     sz,
+	//     arena->used,
+	//     arena->free_count);
 
 init_block:
 	/* Initialize block header */
