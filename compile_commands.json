@@ -86,23 +86,18 @@
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper_thread_manager.c",
-    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_thread_manager.c -o build/cooper_thread_manager.o"
-  },
-  {
-    "directory": "/home/kev/projects/cooper",
     "file": "src/agent/config.c",
     "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/config.c -o build/config.o"
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper_thread_workers.c",
-    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_thread_workers.c -o build/cooper_thread_workers.o"
+    "file": "src/agent/cooper.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper.c",
-    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
+    "file": "src/agent/cooper_threads.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_threads.c -o build/cooper_threads.o"
   },
   {
     "directory": "/home/kev/projects/cooper",
@@ -191,23 +186,18 @@
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper_thread_manager.c",
-    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_thread_manager.c -o build/cooper_thread_manager.o"
-  },
-  {
-    "directory": "/home/kev/projects/cooper",
     "file": "src/agent/config.c",
     "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/config.c -o build/config.o"
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper_thread_workers.c",
-    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_thread_workers.c -o build/cooper_thread_workers.o"
+    "file": "src/agent/cooper.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
   },
   {
     "directory": "/home/kev/projects/cooper",
-    "file": "src/agent/cooper.c",
-    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
+    "file": "src/agent/cooper_threads.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_threads.c -o build/cooper_threads.o"
   },
   {
     "directory": "/home/kev/projects/cooper",

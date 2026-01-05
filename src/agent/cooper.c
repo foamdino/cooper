@@ -5,7 +5,7 @@
  */
 
 #include "cooper.h"
-#include "cooper_thread_manager.h"
+#include "cooper_threads.h"
 #include "src/lib/log.h"
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
