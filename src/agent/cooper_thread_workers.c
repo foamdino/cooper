@@ -31,15 +31,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 	pid_t result        = 0;
 	jvmtiEnv *jvmti_env = ctx->jvmti_env;
 
-	jvmtiPhase jvm_phase;
-	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
-	    || jvm_phase != JVMTI_PHASE_LIVE)
-	{
-		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
-		          jvm_phase);
-		return 0;
-	}
-
 	if (ctx->java_thread_class == NULL || ctx->getId_method == NULL)
 	{
 		LOG_ERROR("Failed to get Thread class or getId method");
