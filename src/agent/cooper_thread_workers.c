@@ -574,10 +574,6 @@ flamegraph_export_thread(void *arg)
 		return NULL;
 
 	JNIEnv *jni = NULL;
-	jvmtiError err;
-	jvmtiPhase jvm_phase;
-
-	arena_t *arena = ctx->arenas[FLAMEGRAPH_ARENA_ID];
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -610,16 +606,6 @@ flamegraph_export_thread(void *arg)
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
 	{
-		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
-		{
-			LOG_ERROR("[flamegraph export thread] Error getting JVM phase, "
-			          "or JVM not in live phase: %d",
-			          err);
-			sleep(10);
-			continue;
-		}
-
 		uint32_t idx;
 		call_stack_sample_t *sample =
 		    sample_consume(&ctx->call_stack_channel, &idx);
@@ -693,7 +679,7 @@ flamegraph_export_thread(void *arg)
 			if (i == bucket_count && bucket_count < MAX_BUCKETS)
 			{
 				buckets[bucket_count].stack_str =
-				    arena_strdup(arena, buf);
+				    arena_strdup(ctx->arenas[FLAMEGRAPH_ARENA_ID], buf);
 				buckets[bucket_count].count = 1;
 				bucket_count++;
 			}
@@ -712,7 +698,7 @@ flamegraph_export_thread(void *arg)
 				        buckets[i].stack_str,
 				        buckets[i].count);
 
-			arena_reset(arena);
+			arena_reset(ctx->arenas[FLAMEGRAPH_ARENA_ID]);
 			fclose(out);
 
 			/* Reset buckets */
@@ -741,14 +727,12 @@ flamegraph_export_thread(void *arg)
 		for (size_t i = 0; i < bucket_count; i++)
 			fprintf(out, "%s %zu\n", buckets[i].stack_str, buckets[i].count);
 
-		arena_reset(arena);
+		arena_reset(ctx->arenas[FLAMEGRAPH_ARENA_ID]);
 		fclose(out);
 	}
 
 	/* Detach from JVM */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Flamegraph export thread exiting");
 
@@ -925,20 +909,16 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 		/* If not found, create new metrics structure */
 		if (!found)
 		{
-			arena_t *metrics_arena = ctx->arenas[METRICS_ARENA_ID];
-			if (metrics_arena)
+			thread_metrics = arena_alloc(ctx->arenas[METRICS_ARENA_ID],
+			                             sizeof(thread_memory_metrics_t));
+			if (thread_metrics)
 			{
-				thread_metrics = arena_alloc(
-				    metrics_arena, sizeof(thread_memory_metrics_t));
-				if (thread_metrics)
-				{
-					thread_metrics->thread_id = thread_id;
-					thread_metrics->next      = ctx->thread_mem_head;
-					ctx->thread_mem_head      = thread_metrics;
-					LOG_INFO("Created new thread memory metrics for "
-					         "thread %lld",
-					         (long long)thread_id);
-				}
+				thread_metrics->thread_id = thread_id;
+				thread_metrics->next      = ctx->thread_mem_head;
+				ctx->thread_mem_head      = thread_metrics;
+				LOG_INFO("Created new thread memory metrics for "
+				         "thread %lld",
+				         (long long)thread_id);
 			}
 		}
 
@@ -1042,11 +1022,11 @@ calculate_hashtable_size(int class_count)
 }
 
 static class_stats_t *
-find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
+find_or_create_stats(heap_iteration_context_t *heap_ctx, const char *class_sig)
 {
 
-	assert(ctx != NULL);
-	assert(ctx->class_table != NULL);
+	assert(heap_ctx != NULL);
+	assert(heap_ctx->class_table != NULL);
 	assert(class_sig != NULL);
 
 	/* Additional validation */
@@ -1054,19 +1034,20 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 		return NULL;
 
 	/* Try to find existing stats using API */
-	class_stats_t *stats = (class_stats_t *)ht_get(ctx->class_table, class_sig);
+	class_stats_t *stats = (class_stats_t *)ht_get(heap_ctx->class_table, class_sig);
 	if (stats)
 		return stats; /* Found existing entry */
 
 	/* Check load factor before creating new entry */
-	if (ht_get_load(ctx->class_table) >= 0.75)
+	if (ht_get_load(heap_ctx->class_table) >= 0.75)
 	{
 		LOG_ERROR("Hash table load factor exceeded");
 		return NULL;
 	}
 
 	/* Create new stats entry - stats will be memset to 0 by arena */
-	stats = arena_alloc_aligned(ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
+	stats =
+	    arena_alloc_aligned(heap_ctx->arena, sizeof(class_stats_t), CACHE_LINE_SZ);
 	if (!stats)
 	{
 		LOG_ERROR("Failed to allocate class stats");
@@ -1074,7 +1055,7 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 	}
 
 	/* Add to hashtable using API */
-	if (ht_put(ctx->class_table, class_sig, stats) != COOPER_OK)
+	if (ht_put(heap_ctx->class_table, class_sig, stats) != COOPER_OK)
 	{
 		LOG_ERROR("Failed to add class stats to hashtable");
 		return NULL;
@@ -1082,7 +1063,7 @@ find_or_create_stats(heap_iteration_context_t *ctx, const char *class_sig)
 
 	LOG_DEBUG("Created new hash entry for class '%s' (load: %.2f)",
 	          class_sig,
-	          ht_get_load(ctx->class_table));
+	          ht_get_load(heap_ctx->class_table));
 	return stats;
 }
 
@@ -1683,8 +1664,6 @@ mem_sampling_thread_func(void *arg)
 	         ctx->config.mem_sample_interval);
 
 	JNIEnv *jni = NULL;
-	jvmtiError err;
-	jvmtiPhase jvm_phase;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1700,23 +1679,6 @@ mem_sampling_thread_func(void *arg)
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, MEM_SAMPLING_RUNNING))
 	{
-		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("Error getting the current jvm phase - maybe during "
-			          "shutdown? error %d",
-			          err);
-			return NULL;
-		}
-
-		if (jvm_phase != JVMTI_PHASE_LIVE)
-		{
-			LOG_INFO("JVM is not in live phase, cannot sample thread memory, "
-			         "current jvm phase: %d",
-			         jvm_phase);
-			return NULL;
-		}
-
 		/* Get current timestamp for this sample */
 		uint64_t timestamp = get_current_time_ns();
 
@@ -1750,10 +1712,7 @@ mem_sampling_thread_func(void *arg)
 		sleep(ctx->config.mem_sample_interval);
 	}
 
-	/* We cannot detach thread if the jvmPhase is not JVMTI_PHASE_LIVE */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Memory sampling thread terminated\n");
 	return NULL;
@@ -1770,8 +1729,6 @@ heap_stats_thread_func(void *arg)
 	LOG_INFO("Heap statistics thread started, interval=60 seconds\n");
 
 	JNIEnv *jni = NULL;
-	jvmtiError err;
-	jvmtiPhase jvm_phase;
 
 	/* Attach this thread to the JVM to get a JNIEnv */
 	jint res =
@@ -1788,24 +1745,6 @@ heap_stats_thread_func(void *arg)
 	// TODO extract sleep interval to config
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, HEAP_STATS_RUNNING))
 	{
-		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("Error getting JVM phase in heap stats thread: %d",
-			          err);
-			// goto cleanup;
-			sleep(10);
-			continue;
-		}
-
-		if (jvm_phase != JVMTI_PHASE_LIVE)
-		{
-			LOG_INFO(
-			    "JVM not in live phase, skipping heap statistics collection");
-			sleep(10);
-			continue;
-		}
-
 		/* Collect heap statistics */
 		collect_heap_statistics(ctx, jni);
 
@@ -1813,10 +1752,8 @@ heap_stats_thread_func(void *arg)
 		sleep(60);
 	}
 
-	/* Detach from JVM if JVM is still live */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	/* Detach from JVM */
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Heap statistics thread terminated\n");
 	return NULL;
@@ -1835,8 +1772,6 @@ class_cache_thread_func(void *arg)
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
-	jvmtiError err;
-	jvmtiPhase jvm_phase;
 
 	jint res =
 	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
@@ -1879,9 +1814,7 @@ class_cache_thread_func(void *arg)
 	}
 
 	/* Detach from JVM */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Class cache thread exiting");
 	return NULL;
@@ -1895,7 +1828,6 @@ call_stack_sampling_thread_func(void *arg)
 {
 	agent_context_t *ctx = (agent_context_t *)arg;
 	jvmtiEnv *jvmti      = ctx->jvmti_env;
-	jvmtiPhase jvm_phase;
 	jvmtiError err;
 
 	/* Get JNI environment for this thread */
@@ -1917,16 +1849,6 @@ call_stack_sampling_thread_func(void *arg)
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
 	{
-		err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-		if ((err != JVMTI_ERROR_NONE) || (jvm_phase != JVMTI_PHASE_LIVE))
-		{
-			LOG_ERROR("[call stack sampling thread] Error getting JVM phase, "
-			          "or JVM not in live phase: %d",
-			          err);
-			sleep(10);
-			continue;
-		}
-
 		// TODO decouple the thread func from the body...
 		//  sleep for configured interval
 		//  usleep(ctx->config.stack_sample_interval * 1000); // e.g. 10ms
@@ -2016,9 +1938,7 @@ call_stack_sampling_thread_func(void *arg)
 	}
 
 	/* Detach from JVM */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Call stack sampling thread exiting");
 
@@ -2269,8 +2189,6 @@ method_event_thread_func(void *arg)
 
 	/* Get JNI environment for this thread */
 	JNIEnv *jni = NULL;
-	jvmtiError err;
-	jvmtiPhase jvm_phase;
 
 	jint res =
 	    (*ctx->jvm)->AttachCurrentThreadAsDaemon(ctx->jvm, (void **)&jni, NULL);
@@ -2357,9 +2275,7 @@ method_event_thread_func(void *arg)
 	}
 
 	/* Detach from JVM */
-	err = (*ctx->jvmti_env)->GetPhase(ctx->jvmti_env, &jvm_phase);
-	if (err == JVMTI_ERROR_NONE && jvm_phase == JVMTI_PHASE_LIVE)
-		(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Method events thread exiting");
 	return NULL;

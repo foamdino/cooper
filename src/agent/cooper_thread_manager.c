@@ -6,6 +6,7 @@
 
 #include "cooper_thread_manager.h"
 #include "cooper_thread_workers.h"
+#include "src/lib/log.h"
 
 /*
  * Start all background threads
@@ -163,6 +164,13 @@ stop_all_threads(agent_context_t *ctx)
 	if (!ctx)
 	{
 		LOG_ERROR("Cannot stop threads with NULL context");
+		return;
+	}
+
+	if (ctx->tm_ctx.worker_statuses == 0)
+	{
+		LOG_DEBUG(
+		    "stop_all_threads called but threads already signalled to stop");
 		return;
 	}
 

@@ -1764,6 +1764,16 @@ error:
 	exit(1);
 }
 
+static void JNICALL
+vm_death_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
+{
+	UNUSED(jvmti_env);
+	UNUSED(jni_env);
+
+	LOG_INFO("VMDeath received, stopping background threads");
+	stop_all_threads(global_ctx);
+}
+
 static int
 init_jvm_capabilities(agent_context_t *ctx)
 {
@@ -1804,6 +1814,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 	ctx->callbacks.event_callbacks.VMObjectAlloc     = &object_alloc_callback;
 	ctx->callbacks.event_callbacks.ThreadEnd         = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit            = &vm_init_callback;
+	ctx->callbacks.event_callbacks.VMDeath           = &vm_death_callback;
 	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
 	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
@@ -1825,6 +1836,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 	                       JVMTI_EVENT_VM_OBJECT_ALLOC,
 	                       JVMTI_EVENT_THREAD_END,
 	                       JVMTI_EVENT_VM_INIT,
+	                       JVMTI_EVENT_VM_DEATH,
 	                       JVMTI_EVENT_CLASS_LOAD,
 	                       JVMTI_EVENT_CLASS_PREPARE,
 	                       JVMTI_EVENT_CLASS_FILE_LOAD_HOOK};
