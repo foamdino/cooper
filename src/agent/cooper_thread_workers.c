@@ -6,7 +6,9 @@
 
 #include "cooper.h"
 #include "cooper_ring.h"
+#include "src/agent/cooper_shm.h"
 #include "src/lib/log.h"
+#include <stdint.h>
 #include "cooper_thread_workers.h"
 
 /* Helper functions */
@@ -431,6 +433,8 @@ export_memory_to_shm(agent_context_t *ctx)
 	if (!ctx->shm_ctx || !ctx->app_memory_metrics)
 		return;
 
+	cooper_memory_data_t memory_data = {0};
+
 	pthread_mutex_lock(&ctx->app_memory_metrics->lock);
 
 	/* Export latest process memory sample */
@@ -439,12 +443,8 @@ export_memory_to_shm(agent_context_t *ctx)
 		size_t latest_idx =
 		    (ctx->app_memory_metrics->sample_count - 1) % MAX_MEMORY_SAMPLES;
 
-		/* Clean memory data structure */
-		cooper_memory_data_t memory_data = {
-		    .process_memory =
-			ctx->app_memory_metrics->process_memory_sample[latest_idx],
-		    .thread_id     = 0, /* Process-wide */
-		    .thread_memory = 0};
+		memory_data.process_memory =
+		    ctx->app_memory_metrics->process_memory_sample[latest_idx];
 
 		cooper_shm_write_data(
 		    ctx->shm_ctx, COOPER_DATA_MEMORY_SAMPLE, &memory_data);
@@ -461,11 +461,10 @@ export_memory_to_shm(agent_context_t *ctx)
 				size_t latest_idx =
 				    (tm->sample_count - 1) % MAX_MEMORY_SAMPLES;
 
-				cooper_memory_data_t memory_data = {
-				    .process_memory =
-					0, /* Not applicable for thread-specific */
-				    .thread_id     = tm->thread_id,
-				    .thread_memory = tm->memory_samples[latest_idx]};
+				memory_data           = (cooper_memory_data_t){0};
+				memory_data.thread_id = tm->thread_id;
+				memory_data.thread_memory =
+				    tm->memory_samples[latest_idx];
 
 				cooper_shm_write_data(ctx->shm_ctx,
 				                      COOPER_DATA_MEMORY_SAMPLE,
@@ -2191,19 +2190,13 @@ record_method_exit_event(agent_context_t *ctx,
 	if (flags == 0)
 		return;
 
-	method_metrics_soa_t *metrics = ctx->metrics;
-	int method_idx                = target->method_index;
-
-	/* Get metrics if they were enabled */
-	uint64_t exec_time    = 0;
-	uint64_t memory_delta = 0;
-	uint64_t cpu_delta    = 0;
+	int method_idx = target->method_index;
 
 	/* Calculate execution time */
 	if ((flags & METRIC_FLAG_TIME) && target->start_time > 0)
 	{
-		uint64_t end_time = event->timestamp;
-		exec_time         = end_time - target->start_time;
+		uint64_t end_time  = event->timestamp;
+		uint64_t exec_time = end_time - target->start_time;
 
 		atomic_fetch_add_explicit(&ctx->metrics->total_time_ns[method_idx],
 		                          exec_time,
@@ -2211,19 +2204,19 @@ record_method_exit_event(agent_context_t *ctx,
 
 		/* Update min/max using relaxed atomics - no mutex needed */
 		uint64_t current_min = atomic_load_explicit(
-		    &metrics->min_time_ns[method_idx], memory_order_relaxed);
+		    &ctx->metrics->min_time_ns[method_idx], memory_order_relaxed);
 		if (exec_time < current_min)
 		{
-			atomic_store_explicit(&metrics->min_time_ns[method_idx],
+			atomic_store_explicit(&ctx->metrics->min_time_ns[method_idx],
 			                      exec_time,
 			                      memory_order_relaxed);
 		}
 
 		uint64_t current_max = atomic_load_explicit(
-		    &metrics->max_time_ns[method_idx], memory_order_relaxed);
+		    &ctx->metrics->max_time_ns[method_idx], memory_order_relaxed);
 		if (exec_time > current_max)
 		{
-			atomic_store_explicit(&metrics->max_time_ns[method_idx],
+			atomic_store_explicit(&ctx->metrics->max_time_ns[method_idx],
 			                      exec_time,
 			                      memory_order_relaxed);
 		}
@@ -2231,18 +2224,18 @@ record_method_exit_event(agent_context_t *ctx,
 
 	if (flags & METRIC_FLAG_MEMORY)
 	{
-		memory_delta = target->current_alloc_bytes;
+		uint64_t memory_delta = target->current_alloc_bytes;
 
-		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_idx],
+		atomic_fetch_add_explicit(&ctx->metrics->alloc_bytes[method_idx],
 		                          memory_delta,
 		                          memory_order_relaxed);
 
 		/* Update peak memory - no mutex needed */
 		uint64_t current_peak = atomic_load_explicit(
-		    &metrics->peak_memory[method_idx], memory_order_relaxed);
+		    &ctx->metrics->peak_memory[method_idx], memory_order_relaxed);
 		if (memory_delta > current_peak)
 		{
-			atomic_store_explicit(&metrics->peak_memory[method_idx],
+			atomic_store_explicit(&ctx->metrics->peak_memory[method_idx],
 			                      memory_delta,
 			                      memory_order_relaxed);
 		}
@@ -2250,7 +2243,8 @@ record_method_exit_event(agent_context_t *ctx,
 
 	if (flags & METRIC_FLAG_CPU)
 	{
-		uint64_t end_cpu = event->cpu;
+		uint64_t end_cpu   = event->cpu;
+		uint64_t cpu_delta = 0;
 
 		if (end_cpu > target->start_cpu)
 			cpu_delta = end_cpu - target->start_cpu;
@@ -2259,8 +2253,9 @@ record_method_exit_event(agent_context_t *ctx,
 			          (unsigned long long)end_cpu,
 			          (unsigned long long)target->start_cpu);
 
-		atomic_fetch_add_explicit(
-		    &metrics->cpu_cycles[method_idx], cpu_delta, memory_order_relaxed);
+		atomic_fetch_add_explicit(&ctx->metrics->cpu_cycles[method_idx],
+		                          cpu_delta,
+		                          memory_order_relaxed);
 	}
 }
 
