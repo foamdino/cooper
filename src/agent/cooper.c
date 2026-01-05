@@ -270,18 +270,17 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 
 	for (size_t i = 0; i < obj_metrics->count; i++)
 	{
-		if (obj_metrics->class_signatures[i] != NULL)
-		{
-			if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
-				return i;
-		}
-		else
+		if (obj_metrics->class_signatures[i] == NULL)
 		{
 			LOG_ERROR("class_signatures[%d] is NULL when count=%zu\n",
 			          i,
 			          obj_metrics->count);
 			return -1;
 		}
+
+		/* We found the signature */
+		if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
+			return i;
 	}
 
 	/* Do we have space to add new allocation stats? */
@@ -292,16 +291,10 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 		return -1;
 	}
 
-	arena_t *arena = global_ctx->arenas[METRICS_ARENA_ID];
-	if (!arena)
-	{
-		LOG_ERROR("unable to find metrics arena!\n");
-		return -1;
-	}
-
 	int index = obj_metrics->count;
 
-	obj_metrics->class_signatures[index] = arena_strdup(arena, class_sig);
+	obj_metrics->class_signatures[index] =
+	    arena_strdup(global_ctx->arenas[METRICS_ARENA_ID], class_sig);
 	if (!obj_metrics->class_signatures[index])
 	{
 		LOG_ERROR("Failed to allocate memory for class signature: %s\n",
@@ -970,10 +963,8 @@ class_name_to_sig(const char *name)
 	if (!name)
 		return NULL;
 
-	/* Use scratch arena */
-	arena_t *arena = global_ctx->arenas[SCRATCH_ARENA_ID];
 	/* We need "L" + name + ";" + '\0' */
-	char *sig = arena_alloc(arena, strlen(name) + 3);
+	char *sig = arena_alloc(global_ctx->arenas[SCRATCH_ARENA_ID], strlen(name) + 3);
 	sprintf(sig, "L%s;", name);
 	return sig;
 }
