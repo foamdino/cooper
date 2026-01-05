@@ -319,6 +319,8 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 	return index;
 }
 
+// TODO - if we move object allocation stats to a background thread
+// this function becomes simpler - possible to remove mutex and atomics
 static void
 update_object_allocation_stats(agent_context_t *ctx,
                                const char *class_sig,
@@ -780,6 +782,8 @@ deallocate:
 #endif
 }
 
+// TODO - we should move the processing of the stats to a background thread
+//  similar to the method etc handling
 static void JNICALL
 object_alloc_callback(jvmtiEnv *jvmti_env,
                       JNIEnv *jni,
