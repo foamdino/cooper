@@ -1446,19 +1446,12 @@ heap_object_callback(
 	return JVMTI_VISIT_OBJECTS;
 }
 
-/* Fully robust heap statistics collection maintaining all safety checks */
+/* */
 static void
 collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 {
-	arena_t *scratch_arena = ctx->arenas[SCRATCH_ARENA_ID];
-	if (!scratch_arena)
-	{
-		LOG_ERROR("Failed to find scratch arena");
-		return;
-	}
-
 	/* Reset scratch arena to reclaim previous allocations */
-	arena_reset(scratch_arena);
+	arena_reset(ctx->arenas[SCRATCH_ARENA_ID]);
 
 	/* Clear previous heap stats as these are now invalid */
 	ctx->last_heap_stats       = NULL;
@@ -1488,7 +1481,8 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	LOG_INFO("Collecting heap statistics for %d loaded classes", class_count);
 
 	/* Create min heap with error checking */
-	min_heap_t *heap = min_heap_create(scratch_arena, TOP_N, class_stats_compare);
+	min_heap_t *heap =
+	    min_heap_create(ctx->arenas[SCRATCH_ARENA_ID], TOP_N, class_stats_compare);
 	if (!heap)
 	{
 		LOG_ERROR("Failed to create min heap");
@@ -1496,9 +1490,9 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Create generic hashtable for class statistics */
-	size_t hash_size = calculate_hashtable_size(class_count);
-	hashtable_t *class_ht =
-	    ht_create(scratch_arena, hash_size, 0.75, hash_string, cmp_string);
+	size_t hash_size      = calculate_hashtable_size(class_count);
+	hashtable_t *class_ht = ht_create(
+	    ctx->arenas[SCRATCH_ARENA_ID], hash_size, 0.75, hash_string, cmp_string);
 
 	if (!class_ht)
 	{
@@ -1507,8 +1501,10 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Set up iteration context with validation */
-	heap_iteration_context_t iter_ctx = {
-	    .env = env, .jvmti = jvmti, .arena = scratch_arena, .class_table = class_ht};
+	heap_iteration_context_t iter_ctx = {.env         = env,
+	                                     .jvmti       = jvmti,
+	                                     .arena       = ctx->arenas[SCRATCH_ARENA_ID],
+	                                     .class_table = class_ht};
 
 	/* Tag classes for heap iteration */
 	for (int i = 0; i < class_count; i++)
@@ -1570,8 +1566,8 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 		if (heap->size < TOP_N
 		    || sort_size > ((class_stats_t *)heap->elements[0])->total_deep_size)
 		{
-			class_stats_t *heap_entry =
-			    arena_alloc(scratch_arena, sizeof(class_stats_t));
+			class_stats_t *heap_entry = arena_alloc(
+			    ctx->arenas[SCRATCH_ARENA_ID], sizeof(class_stats_t));
 			if (!heap_entry)
 			{
 				LOG_WARN("Failed to allocate heap entry %zu", i);
@@ -1579,8 +1575,9 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			}
 
 			/* Copy stats */
-			*heap_entry            = *stats;
-			heap_entry->class_name = arena_strdup(scratch_arena, entry->key);
+			*heap_entry = *stats;
+			heap_entry->class_name =
+			    arena_strdup(ctx->arenas[SCRATCH_ARENA_ID], entry->key);
 
 			/* Without a class name nothing to do */
 			if (!heap_entry->class_name)
