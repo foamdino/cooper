@@ -1892,16 +1892,6 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		printf("ERROR: pthread_mutex_init failed\n");
 		return JNI_ERR;
 	}
-	if (pthread_mutex_init(&global_ctx->tm_ctx.method_event_lock, NULL) != 0)
-	{
-		printf("ERROR: pthread_mutex_init failed\n");
-		return JNI_ERR;
-	}
-	if (pthread_mutex_init(&global_ctx->tm_ctx.class_cache_lock, NULL) != 0)
-	{
-		printf("ERROR: pthread_mutex_init failed\n");
-		return JNI_ERR;
-	}
 
 	/* Redirect output */
 	if (options && strncmp(options, "logfile=", 8) == 0)
@@ -2195,8 +2185,6 @@ Agent_OnUnload(JavaVM *vm)
 
 		/* Destroy mutex */
 		pthread_mutex_destroy(&global_ctx->tm_ctx.samples_lock);
-		pthread_mutex_destroy(&global_ctx->tm_ctx.method_event_lock);
-		pthread_mutex_destroy(&global_ctx->tm_ctx.class_cache_lock);
 
 		free(global_ctx);
 		global_ctx = NULL;
