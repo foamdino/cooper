@@ -5,6 +5,7 @@
  */
 
 #include "cooper_threads.h"
+#include "src/agent/cooper.h"
 
 /*
  * Start all background threads
@@ -307,58 +308,55 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 
 	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
+	/* If we already have a pid just return now */
+	if (result != 0)
+		return result;
+
 	/*
 	This is a new thread id, not previously found in our mappings.
 	We'll need to have the thread tell us its native ID. This part
 	can only be done from within the thread itself...
 	*/
 
-	if (result == 0)
+	/* check if current thread */
+	jthread current_thread;
+	jvmtiError err = (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
+	if (err != JVMTI_ERROR_NONE)
 	{
-		/* check if current thread */
-		jthread current_thread;
-		jvmtiError err =
-		    (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
-		if (err != JVMTI_ERROR_NONE)
+		LOG_ERROR("GetCurrentThread failed with error %d", err);
+		return 0;
+	}
+
+	jboolean is_same_thread = (*jni)->IsSameObject(jni, thread, current_thread);
+	(*jni)->DeleteLocalRef(jni, current_thread);
+	if (is_same_thread)
+	{
+		result = syscall(SYS_gettid);
+		LOG_DEBUG("Current thread ID: %d for Java thread ID: %lld",
+		          result,
+		          (long long)thread_id);
+
+		/* Add to our map */
+		int empty_slot = -1;
+		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+		for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
 		{
-			LOG_ERROR("GetCurrentThread failed with error %d", err);
-			return 0;
+			if (ctx->thread_mappings[i].java_thread_id == 0)
+			{
+				empty_slot = i;
+				break;
+			}
 		}
 
-		jboolean is_same_thread =
-		    (*jni)->IsSameObject(jni, thread, current_thread);
-		(*jni)->DeleteLocalRef(jni, current_thread);
-		if (is_same_thread)
+		if (empty_slot >= 0)
 		{
-			result = syscall(SYS_gettid);
-			LOG_DEBUG("Current thread ID: %d for Java thread ID: %lld",
-			          result,
-			          (long long)thread_id);
-
-			/* Add to our map */
-			int empty_slot = -1;
-			pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-			for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
-			{
-				if (ctx->thread_mappings[i].java_thread_id == 0)
-				{
-					empty_slot = i;
-					break;
-				}
-			}
-
-			if (empty_slot >= 0)
-			{
-				ctx->thread_mappings[empty_slot].java_thread_id =
-				    thread_id;
-				ctx->thread_mappings[empty_slot].native_thread_id =
-				    result;
-			}
-			else
-				LOG_ERROR("No empty slots available for thread mapping");
-
-			pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
+			ctx->thread_mappings[empty_slot].java_thread_id   = thread_id;
+			ctx->thread_mappings[empty_slot].native_thread_id = result;
 		}
+		else
+			LOG_ERROR("No empty slots available for thread mapping");
+
+		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 	}
 
 	return result;
@@ -1208,52 +1206,6 @@ class_stats_compare(const void *a, const void *b)
 	return 0;
 }
 
-/* Improved hashtable sizing with better limits */
-static size_t
-calculate_hashtable_size(int class_count)
-{
-	/* Defensive bounds checking - check negative first */
-	if (class_count <= 0)
-	{
-		LOG_WARN("Invalid class count (%d), using minimum hash size of %d",
-		         class_count,
-		         MIN_HASH_SIZE);
-		return MIN_HASH_SIZE;
-	}
-
-	/* Now safe to cast to unsigned for overflow check */
-	size_t class_count_unsigned = (size_t)class_count;
-
-	/* Use load factor of 0.6 for better performance, with overflow protection */
-	size_t estimated_size;
-	if (class_count_unsigned > SIZE_MAX / 2)
-	{
-		LOG_WARN("Class count too large, capping hash table size to %d",
-		         MAX_HASH_SIZE);
-		estimated_size = MAX_HASH_SIZE;
-	}
-	else
-		estimated_size =
-		    (size_t)(class_count_unsigned * 1.7); /* Account for heap growth */
-
-	if (estimated_size < MIN_HASH_SIZE)
-	{
-		estimated_size = MIN_HASH_SIZE;
-	}
-	else if (estimated_size > MAX_HASH_SIZE)
-	{
-		LOG_WARN("Capping hash table size from %zu to %zu for safety",
-		         estimated_size,
-		         MAX_HASH_SIZE);
-		estimated_size = MAX_HASH_SIZE;
-	}
-
-	LOG_DEBUG("Calculated hash table size: %zu for %d classes",
-	          estimated_size,
-	          class_count_unsigned);
-	return estimated_size;
-}
-
 static class_stats_t *
 find_or_create_stats(heap_iteration_context_t *heap_ctx, const char *class_sig)
 {
@@ -1490,9 +1442,8 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Create generic hashtable for class statistics */
-	size_t hash_size      = calculate_hashtable_size(class_count);
 	hashtable_t *class_ht = ht_create(
-	    ctx->arenas[SCRATCH_ARENA_ID], hash_size, 0.75, hash_string, cmp_string);
+	    ctx->arenas[SCRATCH_ARENA_ID], MAX_HASH_SIZE, 0.75, hash_string, cmp_string);
 
 	if (!class_ht)
 	{

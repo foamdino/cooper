@@ -102,9 +102,6 @@
 #define COOPER_OK        0
 #define COOPER_ERR       1
 
-#define MIN_HASH_SIZE    1000
-#define MAX_HASH_SIZE    20000
-
 #define MAX_STACK_FRAMES 64
 
 typedef struct package_filter package_filter_t;

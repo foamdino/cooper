@@ -19,6 +19,7 @@
 #include "../lib/thread_util.h"
 #include "../lib/proc_mem.h"
 
+#define MAX_HASH_SIZE 20000
 #define MAX_BUCKETS   16384
 #define ROLL_INTERVAL (1 * 60 * 1000000000ULL) //(10 * 60 * 1000000000ULL)
 
