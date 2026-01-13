@@ -9,6 +9,7 @@
 
 #include <pthread.h>
 #include <stdint.h>
+#include <string.h>
 // #include <errno.h>
 
 #include "cooper.h"
@@ -24,10 +25,36 @@
 #define ROLL_INTERVAL (1 * 60 * 1000000000ULL) //(10 * 60 * 1000000000ULL)
 
 typedef struct stack_bucket stack_bucket_t;
+typedef struct thread_cfg thread_cfg_t;
+typedef enum thread_workers_status thread_workers_status_e;
+
+enum thread_workers_status
+{
+	EXPORT_RUNNING            = (1 << 0),
+	MEM_SAMPLING_RUNNING      = (1 << 1),
+	SHM_EXPORT_RUNNING        = (1 << 2),
+	HEAP_STATS_RUNNING        = (1 << 3),
+	CLASS_CACHE_RUNNING       = (1 << 4),
+	CALL_STACK_RUNNNG         = (1 << 5),
+	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6),
+	METHOD_EVENTS_RUNNING     = (1 << 7)
+};
+
 struct stack_bucket
 {
 	char *stack_str; /**< semicolon-joined call stack */
 	size_t count;
+};
+
+/**
+ * Config for a background thread
+ */
+struct thread_cfg
+{
+	const char *name;
+	thread_id_e id;
+	void *(*thread_fn)(void *);
+	thread_workers_status_e status;
 };
 
 /* Simple thread management functions */

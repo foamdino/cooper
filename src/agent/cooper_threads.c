@@ -6,6 +6,22 @@
 
 #include "cooper_threads.h"
 #include "src/agent/cooper.h"
+#include "src/lib/thread_util.h"
+#include <stddef.h>
+
+/* clang-format off */
+static const thread_cfg_t thread_cfgs[] = 
+{
+    {"Export", THREAD_ID_EXPORT, export_thread_func, EXPORT_RUNNING},
+	{"Memory sampling", THREAD_ID_MEM_SAMPLING, mem_sampling_thread_func, MEM_SAMPLING_RUNNING},
+	{"Heap stats", THREAD_ID_HEAP_STATS, heap_stats_thread_func, HEAP_STATS_RUNNING},
+	{"SHM export", THREAD_ID_SHM_EXPORT, shm_export_thread_func, SHM_EXPORT_RUNNING},
+	{"Class caching", THREAD_ID_CLASS_CACHE, class_cache_thread_func, CLASS_CACHE_RUNNING},
+	{"Call stack sampling", THREAD_ID_CALL_STACK, call_stack_sampling_thread_func, CALL_STACK_RUNNNG},
+	{"Flamegraph export", THREAD_ID_FLAMEGRAPH, flamegraph_export_thread, FLAMEGRAPH_EXPORT_RUNNING},
+	{"Method events", THREAD_ID_METHOD_EVENTS, method_event_thread_func, METHOD_EVENTS_RUNNING},
+};
+/* clang-format on */
 
 /*
  * Start all background threads
@@ -22,133 +38,25 @@ start_all_threads(agent_context_t *ctx)
 		return COOPER_ERR;
 	}
 
-	/* Start export thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, EXPORT_RUNNING);
-	if (pthread_create(&ctx->tm_ctx.export_thread, NULL, export_thread_func, ctx)
-	    != 0)
+	for (size_t i = 0; i < THREAD_ID__COUNT; i++)
 	{
-		LOG_ERROR("Failed to start export thread: %s", strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, EXPORT_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Export thread started");
+		const thread_cfg_t *cfg = &thread_cfgs[i];
 
-	/* Start memory sampling thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, MEM_SAMPLING_RUNNING);
-	if (pthread_create(
-		&ctx->tm_ctx.mem_sampling_thread, NULL, mem_sampling_thread_func, ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start memory sampling thread: %s", strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, MEM_SAMPLING_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Memory sampling thread started");
+		set_worker_status(&ctx->tm_ctx.worker_statuses, cfg->status);
 
-	/* Start heap statistics thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, HEAP_STATS_RUNNING);
-	if (pthread_create(
-		&ctx->tm_ctx.heap_stats_thread, NULL, heap_stats_thread_func, ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start heap stats thread: %s", strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, HEAP_STATS_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Heap statistics thread started");
-
-	/* Start shared memory export thread if configured */
-	if (ctx->shm_ctx != NULL)
-	{
-		/* Initialize shared memory first */
-		if (cooper_shm_init_agent(ctx->shm_ctx) != 0)
+		if (pthread_create(
+			&ctx->tm_ctx.threads[cfg->id], NULL, cfg->thread_fn, ctx)
+		    != 0)
 		{
-			LOG_ERROR("Failed to initialize shared memory for agent");
+			LOG_ERROR(
+			    "Failed to start %s thread: %s", cfg->name, strerror(errno));
+			clear_worker_status(&ctx->tm_ctx.worker_statuses, cfg->status);
+			return COOPER_ERR;
 		}
 		else
-		{
-			set_worker_status(&ctx->tm_ctx.worker_statuses,
-			                  SHM_EXPORT_RUNNING);
-			if (pthread_create(&ctx->tm_ctx.shm_export_thread,
-			                   NULL,
-			                   shm_export_thread_func,
-			                   ctx)
-			    != 0)
-			{
-				LOG_ERROR("Failed to start shm export thread: %s",
-				          strerror(errno));
-				clear_worker_status(&ctx->tm_ctx.worker_statuses,
-				                    SHM_EXPORT_RUNNING);
-				return COOPER_ERR;
-			}
-			else
-				LOG_INFO("Shared memory export thread started");
-		}
+			LOG_INFO("%s thread started", cfg->name);
 	}
 
-	/* Start class caching background thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING);
-	if (pthread_create(
-		&ctx->tm_ctx.class_cache_thread, NULL, class_cache_thread_func, ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start class caching thread: %s", strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Class caching thread started");
-
-	/* Start background call stack sampling thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG);
-	if (pthread_create(&ctx->tm_ctx.call_stack_sample_thread,
-	                   NULL,
-	                   call_stack_sampling_thread_func,
-	                   ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start call stack sampling thread: %s",
-		          strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Call stack sampling thread started");
-
-	/* Start flamegraph / call stack export */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, FLAMEGRAPH_EXPORT_RUNNING);
-	if (pthread_create(&ctx->tm_ctx.flamegraph_export_thread,
-	                   NULL,
-	                   flamegraph_export_thread,
-	                   ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start flamegraph export thread: %s",
-		          strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses,
-		                    FLAMEGRAPH_EXPORT_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Flamegraph export thread started");
-
-	/* Start method event thread */
-	set_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
-	if (pthread_create(
-		&ctx->tm_ctx.method_event_thread, NULL, method_event_thread_func, ctx)
-	    != 0)
-	{
-		LOG_ERROR("Failed to start method event thread: %s", strerror(errno));
-		clear_worker_status(&ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING);
-		return COOPER_ERR;
-	}
-	else
-		LOG_INFO("Method event thread started");
-
-	LOG_INFO("All background threads started successfully");
 	return COOPER_OK;
 }
 
@@ -179,77 +87,16 @@ stop_all_threads(agent_context_t *ctx)
 	/* Zero all flag/bits */
 	ctx->tm_ctx.worker_statuses = 0;
 
-	LOG_INFO("Stopping call stack sampling thread");
-	if (ctx->tm_ctx.call_stack_sample_thread)
+	for (size_t i = 0; i < THREAD_ID__COUNT; i++)
 	{
-		LOG_INFO("Waiting for call stack sampling thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.call_stack_sample_thread, 3);
-		if (res != 0)
-			LOG_WARN(
-			    "Call stack sampling thread did not terminate cleanly: %d",
-			    res);
-	}
+		const thread_cfg_t *cfg = &thread_cfgs[i];
 
-	/* Wait for export thread */
-	if (ctx->tm_ctx.export_thread)
-	{
-		LOG_INFO("Waiting for export thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.export_thread, 3);
+		LOG_INFO("Waiting for %s thread to terminate", cfg->name);
+		int res = safe_thread_join(ctx->tm_ctx.threads[cfg->id], 2);
 		if (res != 0)
-			LOG_WARN("Export thread did not terminate cleanly: %d", res);
-	}
-
-	/* Wait for memory sampling thread */
-	if (ctx->tm_ctx.mem_sampling_thread)
-	{
-		LOG_INFO("Waiting for memory sampling thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.mem_sampling_thread, 3);
-		if (res != 0)
-			LOG_WARN("Memory sampling thread did not terminate cleanly: %d",
-			         res);
-	}
-
-	/* Wait for heap stats thread */
-	if (ctx->tm_ctx.heap_stats_thread)
-	{
-		LOG_INFO("Waiting for heap statistics thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.heap_stats_thread, 3);
-		if (res != 0)
-			LOG_WARN("Heap statistics thread did not terminate cleanly: %d",
-			         res);
-	}
-
-	/* Wait for shared memory export thread */
-	if (ctx->shm_ctx != NULL && ctx->tm_ctx.shm_export_thread)
-	{
-		LOG_INFO("Waiting for shared memory export thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.shm_export_thread, 2);
-		if (res != 0)
-		{
-			LOG_WARN(
-			    "Shared memory export thread did not terminate cleanly: %d",
-			    res);
-		}
-
-		/* Cleanup shared memory */
-		cooper_shm_cleanup_agent(ctx->shm_ctx);
-	}
-
-	if (ctx->tm_ctx.class_cache_thread)
-	{
-		LOG_INFO("Waiting for class caching thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.class_cache_thread, 3);
-		if (res != 0)
-			LOG_WARN("Class caching thread did not terminate cleanly: %d",
-			         res);
-	}
-
-	if (ctx->tm_ctx.method_event_thread)
-	{
-		LOG_INFO("Waiting for method event thread to terminate");
-		int res = safe_thread_join(ctx->tm_ctx.method_event_thread, 3);
-		if (res != 0)
-			LOG_WARN("Method event thread did not terminate cleanly: %d",
+			LOG_WARN("%s did not terminate "
+			         "cleanly: %d",
+			         cfg->name,
 			         res);
 	}
 }
@@ -1800,7 +1647,7 @@ shm_export_thread_func(void *arg)
 	/* TODO move export interval to const */
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, SHM_EXPORT_RUNNING))
 	{
-		if (ctx->shm_ctx == NULL)
+		if (ctx->shm_ctx == NULL || ctx->shm_ctx->status_shm == NULL)
 		{
 			sleep(2);
 			continue;

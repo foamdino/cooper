@@ -125,6 +125,8 @@ typedef struct callbacks callbacks_t;
 typedef struct cooper_method_info cooper_method_info_t;
 typedef struct cooper_class_info cooper_class_info_t;
 
+typedef enum thread_id thread_id_e;
+
 enum arenas
 {
 	LOG_ARENA_ID,
@@ -140,16 +142,17 @@ enum arenas
 	ARENA_ID__LAST
 };
 
-enum thread_workers_status
+enum thread_id
 {
-	EXPORT_RUNNING            = (1 << 0),
-	MEM_SAMPLING_RUNNING      = (1 << 1),
-	SHM_EXPORT_RUNNING        = (1 << 2),
-	HEAP_STATS_RUNNING        = (1 << 3),
-	CLASS_CACHE_RUNNING       = (1 << 4),
-	CALL_STACK_RUNNNG         = (1 << 5),
-	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6),
-	METHOD_EVENTS_RUNNING     = (1 << 7)
+	THREAD_ID_EXPORT,
+	THREAD_ID_MEM_SAMPLING,
+	THREAD_ID_HEAP_STATS,
+	THREAD_ID_SHM_EXPORT,
+	THREAD_ID_CLASS_CACHE,
+	THREAD_ID_CALL_STACK,
+	THREAD_ID_FLAMEGRAPH,
+	THREAD_ID_METHOD_EVENTS,
+	THREAD_ID__COUNT
 };
 
 struct call_stack_sample
@@ -358,17 +361,10 @@ struct config
 
 struct thread_manager_ctx
 {
-	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
-	                                      see thread_workers_status */
-	pthread_t export_thread;       /**< Export background thread */
-	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
-	pthread_t shm_export_thread;   /**< Export via shared mem background thread */
-	pthread_t heap_stats_thread;   /**< Heap stats background thread */
-	pthread_t class_cache_thread;  /**< Class caching background thread */
-	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
-	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
-	pthread_t method_event_thread;      /**< Method event background thread */
-	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
+	pthread_t threads[THREAD_ID__COUNT];
+	unsigned int worker_statuses; /**< Bitfield flags for background worker threads -
+	                                     see thread_workers_status */
+	pthread_mutex_t samples_lock; /**< Lock for sample arrays */
 };
 
 struct agent_context
