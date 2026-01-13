@@ -26,6 +26,8 @@
 
 typedef struct stack_bucket stack_bucket_t;
 typedef struct thread_cfg thread_cfg_t;
+typedef struct deep_sz_cfg deep_sz_cfg_t;
+
 typedef enum thread_workers_status thread_workers_status_e;
 
 enum thread_workers_status
@@ -55,6 +57,13 @@ struct thread_cfg
 	thread_id_e id;
 	void *(*thread_fn)(void *);
 	thread_workers_status_e status;
+};
+
+struct deep_sz_cfg
+{
+	const char *pattern;
+	uint32_t mult;
+	uint64_t overhead_bytes;
 };
 
 /* Simple thread management functions */

@@ -21,6 +21,34 @@ static const thread_cfg_t thread_cfgs[] =
 	{"Flamegraph export", THREAD_ID_FLAMEGRAPH, flamegraph_export_thread, FLAMEGRAPH_EXPORT_RUNNING},
 	{"Method events", THREAD_ID_METHOD_EVENTS, method_event_thread_func, METHOD_EVENTS_RUNNING},
 };
+
+/* Lookups for deep size estimates */
+static const deep_sz_cfg_t deep_sz_cfgs[] =
+{
+	/* Core library and framework classes */
+	{"java/lang/String", 2, 0},
+	{"java/lang/", 2, 0},
+	{"java/time/", 2, 0},
+	{"java/util/HashMap", 4, 0},
+	{"java/util/ConcurrentHashMap", 4, 0},
+	{"java/util/ArrayList", 3, 0},
+	{"java/util/", 3, 0},
+	{"org/springframework/data/", 3, 64 * 1024},
+	{"org/hibernate/", 3, 64 * 1024},
+	{"javax/persistence/", 3, 64 * 1024},
+	{"org/springframework/", 2, 8 * 1024},
+
+	/* Typical classes in a Java microservice */
+	{"Repository", 3, 64 * 1024},
+	{"DAO", 3, 64 * 1024},
+	{"Controller", 2, 8 * 1024},
+	{"Resource", 2, 8 * 1024},
+	{"Transformer", 2, 8 * 1024},
+	{"Mapper", 2, 8 * 1024},
+	{"Service", 2, 8 * 1024},
+	{"Consumer", 2, 8 * 1024},
+	{"Producer", 2, 8 * 1024},
+};
 /* clang-format on */
 
 /*
@@ -1099,6 +1127,20 @@ find_or_create_stats(heap_iteration_context_t *heap_ctx, const char *class_sig)
 	return stats;
 }
 
+static uint64_t
+est_deep_sz(const char *class_sig, uint64_t shallow_size)
+{
+	for (size_t i = 0; i < sizeof(deep_sz_cfgs) / sizeof(deep_sz_cfgs[0]); i++)
+	{
+		if (strstr(class_sig, deep_sz_cfgs[i].pattern))
+			return (shallow_size * deep_sz_cfgs[i].mult)
+			       + deep_sz_cfgs[i].overhead_bytes;
+	}
+
+	/* Conservative default */
+	return shallow_size * 2;
+}
+
 static jint JNICALL
 heap_object_callback(
     jlong class_tag, jlong size, jlong *tag_ptr, jint length, void *user_data)
@@ -1167,30 +1209,12 @@ heap_object_callback(
 		stats->avg_size = stats->total_size / stats->instance_count;
 
 	uint64_t estimated_deep_size = safe_size;
-	// TODO move this into a table of name->value
 
 	/* Apply class-specific multipliers based on class signature */
 	const char *class_sig = info->class_sig;
 
-	if (strstr(class_sig, "java/util/"))
+	if (class_sig[0] == '[')
 	{
-		/* Collections – size dominated by backing arrays, often ~3-5x */
-		if (strstr(class_sig, "HashMap")
-		    || strstr(class_sig, "ConcurrentHashMap"))
-			estimated_deep_size = safe_size * 4;
-		else if (strstr(class_sig, "ArrayList"))
-			estimated_deep_size = safe_size * 3;
-		else
-			estimated_deep_size = safe_size * 3;
-	}
-	else if (strstr(class_sig, "java/lang/String"))
-	{
-		/* Strings include char[] backing – ~2x is a good rule */
-		estimated_deep_size = safe_size * 2;
-	}
-	else if (class_sig[0] == '[')
-	{
-		/* Arrays: estimate based on component type */
 		if (strstr(class_sig, "[L"))
 		{
 			/* Object arrays – references dominate */
@@ -1202,34 +1226,8 @@ heap_object_callback(
 			estimated_deep_size = safe_size + (safe_size / 8);
 		}
 	}
-	else if (strstr(class_sig, "java/lang/") || strstr(class_sig, "java/time/")
-	         || strstr(class_sig, "java/"))
-	{
-		/* Standard Java objects – modest overhead */
-		estimated_deep_size = safe_size + (safe_size / 2);
-	}
-	else if (strstr(class_sig, "org/springframework/data/")
-	         || strstr(class_sig, "javax/persistence/")
-	         || strstr(class_sig, "org/hibernate/") || strstr(class_sig, "Repository")
-	         || strstr(class_sig, "DAO"))
-	{
-		/* Persistence layer beans are heavy due to proxies + metadata */
-		estimated_deep_size =
-		    safe_size * 3 + (64 * 1024); /* add ~64KB overhead */
-	}
-	else if (strstr(class_sig, "org/springframework/")
-	         || strstr(class_sig, "Controller") || strstr(class_sig, "Transformer")
-	         || strstr(class_sig, "Service"))
-	{
-		/* Typical Spring beans / app classes – proxies, reflection, annotations
-		 */
-		estimated_deep_size = safe_size * 2 + (8 * 1024); /* add ~8KB baseline */
-	}
 	else
-	{
-		/* Unknown application objects – conservative fallback */
-		estimated_deep_size = safe_size * 2;
-	}
+		estimated_deep_size = est_deep_sz(class_sig, safe_size);
 
 	/* Update deep size statistics */
 	stats->total_deep_size += estimated_deep_size;
