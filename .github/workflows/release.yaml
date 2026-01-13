@@ -44,7 +44,7 @@ jobs:
         
         # Create tokei report
         {
-          echo "## 📊 Code Statistics"
+          echo "## Code Statistics"
           echo ""
           echo "**Generated:** $(date -u '+%Y-%m-%d %H:%M:%S UTC') for release \`${{ github.ref_name }}\`"
           echo ""
@@ -54,11 +54,10 @@ jobs:
           tokei --sort code .
           echo "\`\`\`"
           echo ""
-          echo "**Key Metrics:**"
+          echo "**Notes:**"
           echo "- **External Dependencies:** 0 (excluding system libraries)"
           echo "- **Build Tool:** Custom (nob.c)"
           echo ""
-          echo "*Lower complexity = easier maintenance, faster builds, and reduced attack surface.*"
         } > tokei_report.md
         
         echo "✓ Code statistics generated"

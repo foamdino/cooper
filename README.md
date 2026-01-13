@@ -97,7 +97,7 @@ We need to extend the cpu.h lib to support retrieving the number of cores.
 
 
 <!-- TOKEI-START -->
-## 📊 Code Statistics
+## Code Statistics
 
 **Generated:** 2025-09-12 08:39:55 UTC for release `v0.0.4-alpha`
 
@@ -125,9 +125,7 @@ This report tracks project complexity to maintain the goal of a minimal, depende
 ===============================================================================
 ```
 
-**Key Metrics:**
+**Notes:**
 - **External Dependencies:** 0 (excluding system libraries)
 - **Build Tool:** Custom (nob.c)
-
-*Lower complexity = easier maintenance, faster builds, and reduced attack surface.*
 <!-- TOKEI-END -->
