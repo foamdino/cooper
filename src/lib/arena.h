@@ -9,7 +9,6 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,7 +48,7 @@ struct block_header
 struct arena
 {
 	void *memory;           /* Pre-allocated memory buffer */
-	void *original_memory;  /* Original pointer returned by malloc */
+	void *original_memory;  /* Original pointer returned by mmap */
 	size_t requested_sz;    /* Requested size during init */
 	size_t alloc_sz;        /* Total allocation size, used for cleanup */
 	size_t available_sz;    /* Available (total - tracking metadata)  */

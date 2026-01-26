@@ -65,22 +65,17 @@
 #define METRICS_ARENA_SZ      8 * 1024 * 1024
 #define SCRATCH_ARENA_SZ      16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
-
-#define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
 #define FLAMEGRAPH_ARENA_SZ   1024 * 1024
 #define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
 #define BYTECODE_ARENA_SZ     8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
 #define LOG_ARENA_BLOCKS          1024
-#define EVENT_ARENA_BLOCKS        1024
 #define SAMPLE_ARENA_BLOCKS       1024
 #define CONFIG_ARENA_BLOCKS       1024
 #define METRICS_ARENA_BLOCKS      1024
 #define CLASS_CACHE_ARENA_BLOCKS  1024
 #define SCRATCH_ARENA_BLOCKS      1024
-
-#define CALL_STACK_ARENA_BLOCKS   1024
 #define FLAMEGRAPH_ARENA_BLOCKS   1024
 #define METHOD_CACHE_ARENA_BLOCKS 1024
 #define BYTECODE_ARENA_BLOCKS     1024
@@ -92,8 +87,6 @@
 #define METRICS_ARENA_NAME      "metrics_arena"
 #define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
 #define SCRATCH_ARENA_NAME      "scratch_arena"
-
-#define CALL_STACK_ARENA_NAME   "call_stack_arena"
 #define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
 #define METHOD_CACHE_ARENA_NAME "method_cache_arena"
 #define BYTECODE_ARENA_NAME     "bytecode_arena"
@@ -135,7 +128,6 @@ enum arenas
 	METRICS_ARENA_ID,
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
-	CALL_STACK_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
 	METHOD_CACHE_ARENA_ID,
 	BYTECODE_ARENA_ID,

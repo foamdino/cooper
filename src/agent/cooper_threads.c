@@ -1866,13 +1866,6 @@ call_stack_sampling_thread_func(void *arg)
 		return NULL;
 	}
 
-	arena_t *arena = ctx->arenas[CALL_STACK_ARENA_ID];
-	if (!arena)
-	{
-		LOG_ERROR("Call stack arena is not initialised");
-		return NULL;
-	}
-
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
 	{
 		// TODO decouple the thread func from the body...
