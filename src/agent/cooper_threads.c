@@ -6,6 +6,7 @@
 
 #include "cooper_threads.h"
 #include "src/agent/cooper.h"
+#include "src/lib/log.h"
 #include "src/lib/thread_util.h"
 #include <stddef.h>
 
@@ -2023,14 +2024,14 @@ record_method_entry_event(agent_context_t *ctx,
 		return;
 	}
 
-	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
-	if (!sample)
+	if (tc->stack_depth >= MAX_STACK_FRAMES)
 	{
-		LOG_ERROR("Unable to create method info sample for %s, "
-		          "skipping",
-		          method_name);
+		LOG_WARN("Method sample stack overflow for %s, skipping", method_name);
 		return;
 	}
+
+	/* Use fixed array slot */
+	method_sample_t *sample = &tc->samples[tc->stack_depth];
 
 	sample->method_index = method_info->sample_index;
 	sample->method_id    = mid;
@@ -2043,8 +2044,6 @@ record_method_entry_event(agent_context_t *ctx,
 	if (flags & METRIC_FLAG_CPU)
 		sample->start_cpu = event->cpu;
 
-	sample->parent = tc->sample;
-	tc->sample     = sample;
 	tc->stack_depth++;
 }
 
@@ -2064,6 +2063,9 @@ record_method_exit_event(agent_context_t *ctx,
 	if (!context)
 		return;
 
+	method_sample_t *target = NULL;
+	int target_idx          = -1;
+
 	/* We need to look in our stack to find a corresponding method
 	entry Note that the JVM doesn't guarantee ordering of method
 	entry/exits for a variety of reasons:
@@ -2071,52 +2073,32 @@ record_method_exit_event(agent_context_t *ctx,
 	- Optimizations
 	- etc
 	*/
-	method_sample_t *current = context->sample;
-	method_sample_t *parent  = NULL;
-	method_sample_t *target  = NULL;
 
-	/* Top of stack matches - quick case */
-	if (current != NULL && current->method_id == mid)
+	/* Search from the top of the stack of samples */
+	for (int i = context->stack_depth - 1; i >= 0; i--)
 	{
-		target          = current;
-		context->sample = current->parent; /* Pop from top of stack */
-		context->stack_depth--;
-	}
-	else if (current != NULL)
-	{
-		/* We need to search the stack for a matching method -
-		 * this seems to be the common case */
-
-		/* Traverse stack to find target */
-		while (current)
+		if (context->samples[i].method_id == mid)
 		{
-			if (current->method_id == mid)
-			{
-				target = current;
-				/* Remove node from linked-list/stack */
-				if (parent)
-					parent->parent = current->parent; /* Skip over
-					                                     this node */
-				else
-					context->sample = current->parent; /* Update head
-					                                      of list */
-
-				context->stack_depth--;
-				break;
-			}
-			/* not found, move onto next */
-			parent  = current;
-			current = current->parent;
+			target     = &context->samples[i];
+			target_idx = i;
+			break;
 		}
 	}
 
-	/* Only process the exit if it matches the current method at the
-	top of our stack of samples */
 	if (!target)
-	{
-		// LOG_DEBUG("No matching method found for methodID
-		// [%p]\n", method);
 		return;
+
+	/* Mark slot as empty by zeroing method_id, or compact the array.
+	 * For simplicity, just decrement stack_depth if it's the top */
+	if (target_idx == context->stack_depth - 1)
+		context->stack_depth--;
+	else
+	{
+		/* Move remaining items down to fill the gap (compact) */
+		for (int i = target_idx; i < context->stack_depth - 1; i++)
+			context->samples[i] = context->samples[i + 1];
+
+		context->stack_depth--;
 	}
 
 	unsigned int flags = 0;

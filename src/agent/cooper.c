@@ -25,7 +25,6 @@ static const arena_config_t arena_configs[] =
     {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
     {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
 	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
-	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS},
 	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ, BYTECODE_ARENA_BLOCKS}
 };
 
@@ -84,12 +83,12 @@ debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 		return;
 
 	LOG_DEBUG("Method stack dump (depth=%d):\n", tc->stack_depth);
-
-	method_sample_t *current = tc->sample;
-	int level                = 0;
-
-	while (current && level < 20) /* Have a depth cutoff */
+	/* Iterate from top of stack down */
+	int level = 0;
+	for (int i = tc->stack_depth - 1; i >= 0 && level < 20; i--)
 	{
+		method_sample_t *current = &tc->samples[i];
+
 		/* Get method details */
 		char *method_name = NULL;
 		char *method_sig  = NULL;
@@ -120,7 +119,6 @@ debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 			          current->method_id,
 			          current->method_index);
 
-		current = current->parent;
 		level++;
 	}
 }
@@ -131,11 +129,8 @@ destroy_thread_context(void *data)
 {
 	thread_context_t *tc = (thread_context_t *)data;
 
-	/* We can ignore cleaning up the method_samples
-	as they are arena allocated*/
 	if (tc)
 	{
-		tc->sample      = NULL;
 		tc->stack_depth = 0;
 		free(tc);
 	}
@@ -167,7 +162,6 @@ get_thread_local_context()
 		context = calloc(1, sizeof(thread_context_t));
 		if (context)
 		{
-			context->sample      = NULL;
 			context->stack_depth = 0;
 			pthread_setspecific(context_key, context);
 		}
@@ -806,9 +800,11 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	if (!context)
 		return;
 
-	method_sample_t *sample = context->sample;
-	if (!sample)
+	if (context->stack_depth == 0)
 		return;
+
+	/* Get current method sample from top of stack */
+	method_sample_t *sample = &context->samples[context->stack_depth - 1];
 
 	/* Check if memory metrics are enabled for this method */
 	if (sample->method_index < 0
@@ -1336,8 +1332,6 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	thread_context_t *context = get_thread_local_context();
 	if (context)
 	{
-		/* No need to manually free each call since they're arena-allocated */
-		context->sample      = NULL;
 		context->stack_depth = 0;
 
 		/* Free the context itself */
@@ -1960,7 +1954,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
 	/* cache for jmethodid -> method_info_t */
 	global_ctx->interesting_methods =
-	    ht_create(global_ctx->arenas[METHOD_CACHE_ARENA_ID],
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
 	              1000,
 	              0.75,
 	              hash_jmethodid,

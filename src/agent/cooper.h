@@ -59,37 +59,34 @@
 #define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define LOG_ARENA_SZ          1024 * 1024
-#define SAMPLE_ARENA_SZ       2048 * 1024
-#define CONFIG_ARENA_SZ       512 * 1024
-#define METRICS_ARENA_SZ      8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ      16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
-#define FLAMEGRAPH_ARENA_SZ   1024 * 1024
-#define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
-#define BYTECODE_ARENA_SZ     8 * 1024 * 1024
+#define LOG_ARENA_SZ         1024 * 1024
+#define SAMPLE_ARENA_SZ      2048 * 1024
+#define CONFIG_ARENA_SZ      512 * 1024
+#define METRICS_ARENA_SZ     8 * 1024 * 1024
+#define SCRATCH_ARENA_SZ     16 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ  1024 * 1024
+#define BYTECODE_ARENA_SZ    8 * 1024 * 1024
 
 /* Arena Counts - Amount of blocks for each arena */
-#define LOG_ARENA_BLOCKS          1024
-#define SAMPLE_ARENA_BLOCKS       1024
-#define CONFIG_ARENA_BLOCKS       1024
-#define METRICS_ARENA_BLOCKS      1024
-#define CLASS_CACHE_ARENA_BLOCKS  1024
-#define SCRATCH_ARENA_BLOCKS      1024
-#define FLAMEGRAPH_ARENA_BLOCKS   1024
-#define METHOD_CACHE_ARENA_BLOCKS 1024
-#define BYTECODE_ARENA_BLOCKS     1024
+#define LOG_ARENA_BLOCKS         1024
+#define SAMPLE_ARENA_BLOCKS      1024
+#define CONFIG_ARENA_BLOCKS      1024
+#define METRICS_ARENA_BLOCKS     1024
+#define CLASS_CACHE_ARENA_BLOCKS 1024
+#define SCRATCH_ARENA_BLOCKS     1024
+#define FLAMEGRAPH_ARENA_BLOCKS  1024
+#define BYTECODE_ARENA_BLOCKS    1024
 
 /* Arena Names */
-#define LOG_ARENA_NAME          "log_arena"
-#define SAMPLE_ARENA_NAME       "sample_arena"
-#define CONFIG_ARENA_NAME       "config_arena"
-#define METRICS_ARENA_NAME      "metrics_arena"
-#define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
-#define SCRATCH_ARENA_NAME      "scratch_arena"
-#define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
-#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
-#define BYTECODE_ARENA_NAME     "bytecode_arena"
+#define LOG_ARENA_NAME         "log_arena"
+#define SAMPLE_ARENA_NAME      "sample_arena"
+#define CONFIG_ARENA_NAME      "config_arena"
+#define METRICS_ARENA_NAME     "metrics_arena"
+#define CLASS_CACHE_ARENA_NAME "class_cache_arena"
+#define SCRATCH_ARENA_NAME     "scratch_arena"
+#define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
+#define BYTECODE_ARENA_NAME    "bytecode_arena"
 
 /* Ok/Err */
 #define COOPER_OK        0
@@ -129,7 +126,6 @@ enum arenas
 	SCRATCH_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
-	METHOD_CACHE_ARENA_ID,
 	BYTECODE_ARENA_ID,
 	ARENA_ID__LAST
 };
@@ -265,7 +261,6 @@ struct method_sample
 	uint64_t start_stack_depth;   /**< Starting stack depth */
 	uint64_t current_alloc_bytes; /**< Running total of allocations during method */
 	uint64_t start_cpu;           /**< Starting CPU cycle count */
-	method_sample_t *parent;      /**< Parent (or calling) method */
 };
 
 struct object_ref_info
@@ -303,9 +298,8 @@ struct callbacks
 
 struct thread_context
 {
-	int stack_depth; /**< Depth of call stack */
-	method_sample_t
-	    *sample; /**< Current top of method sample stack - most recent call */
+	int stack_depth;                           /**< Depth of call stack */
+	method_sample_t samples[MAX_STACK_FRAMES]; /**< Fixed array of samples */
 };
 
 struct cooper_method_info
