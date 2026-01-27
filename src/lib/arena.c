@@ -9,21 +9,20 @@
 /**
  * Initialize a new memory arena
  *
- * Creates and initializes a memory arena with the specified size and capacity
- * for tracking free blocks. The arena allocates a contiguous block of memory
+ * Creates and initializes a memory arena with the specified size
+ * The arena allocates a contiguous block of memory
  * and manages allocations from this block to reduce the overhead of frequent
  * small allocations.
  *
  * @param name          Descriptive name for the arena (for debugging)
  * @param size          Total size of the memory pool in bytes
- * @param max_blocks    Maximum number of free blocks that can be tracked
  *
  * @return              Pointer to the initialized arena, or NULL on failure
  */
 arena_t *
-arena_init(const char *name, size_t sz, size_t max_blocks)
+arena_init(const char *name, size_t sz)
 {
-	if (sz == 0 || max_blocks == 0)
+	if (sz == 0)
 		return NULL;
 
 	/* Allocate the arena struct itself */
@@ -50,29 +49,12 @@ arena_init(const char *name, size_t sz, size_t max_blocks)
 	 * Store the allocation size for future reference - this will help
 	 * with arena cleanup during shutdown
 	 */
-	arena->alloc_sz     = mmap_sz;
-	arena->available_sz = mmap_sz;
-	arena->requested_sz = sz;
-	arena->total_sz     = mmap_sz;
-	arena->memory       = memory;
-	arena->used         = 0;
-
-	/* Allocate tracking arrays from the pre-allocated memory */
-	size_t tracking_sz = max_blocks * (sizeof(void *) + sizeof(size_t));
-	if (tracking_sz >= mmap_sz)
-		goto error_cleanup;
-
-	arena->free_blocks = (void **)memory;
-	arena->block_sizes = (size_t *)((char *)memory + (max_blocks * sizeof(void *)));
-	arena->free_count  = 0;
-	arena->max_free_blocks = max_blocks;
-
-	/* Store original memory pointer for cleanup */
+	arena->alloc_sz        = mmap_sz;
+	arena->requested_sz    = sz;
+	arena->total_sz        = mmap_sz;
 	arena->original_memory = memory;
-
-	/* Adjust available memory */
-	arena->memory = (char *)memory + tracking_sz;
-	arena->available_sz -= tracking_sz;
+	arena->used            = 0;
+	arena->memory          = memory;
 
 	return arena;
 
@@ -113,107 +95,30 @@ arena_alloc(arena_t *arena, size_t sz)
 	if (sz == 0)
 		return NULL;
 
-	/* Calculate total size needed including header */
-	size_t header_size = sizeof(block_header_t);
-	size_t req_size    = sz + header_size;
-
-	/* Align total size to prevent fragmentation issues */
-	req_size = (req_size + 7) & ~7; /* Align to 8 bytes */
-
-	void *block    = NULL;
-	void *user_ptr = NULL;
-
-	/* First, check if we have a suitable free block */
-	for (size_t i = 0; i < arena->free_count; i++)
-	{
-		if (arena->block_sizes[i] >= req_size)
-		{
-			block = arena->free_blocks[i];
-
-#ifdef ENABLE_DEBUG_LOGS
-			/* DIAGNOSTIC: check that block looks like a header */
-			block_header_t *hdr = (block_header_t *)block;
-			if (hdr->magic != ARENA_BLOCK_MAGIC)
-			{
-				fprintf(stderr,
-				        "arena_alloc: BAD HEADER MAGIC! block=%p "
-				        "free_count=%zu used=%zu total=%zu\n",
-				        block,
-				        arena->free_count,
-				        arena->used,
-				        arena->total_sz);
-				/* dump a few entries for debugging */
-				for (size_t j = 0; j < arena->free_count; ++j)
-					fprintf(stderr,
-					        " free[%zu]=%p size=%zu\n",
-					        j,
-					        arena->free_blocks[j],
-					        arena->block_sizes[j]);
-				abort(); /* fail fast with diagnostics */
-			}
-#endif
-			/* Remove this block from free list by moving the last one here */
-			arena->free_blocks[i] = arena->free_blocks[arena->free_count - 1];
-			arena->block_sizes[i] = arena->block_sizes[arena->free_count - 1];
-			arena->free_count--;
-
-			// fprintf(stderr,
-			//         "[ARENA_ALLOC] %s REUSE block=%p user=%p size=%zu "
-			//         "free_count(before)=%zu\n",
-			//         arena->name,
-			//         block,
-			//         (char *)block + header_size,
-			//         sz,
-			//         arena->free_count);
-
-			/* Reuse this block */
-			goto init_block;
-		}
-	}
+	/* Align size to prevent fragmentation issues */
+	size_t aligned_sz = (sz + 7) & ~7; /* Align to 8 bytes */
 
 	/* No suitable free block, allocate from remaining space */
-	if (arena->used + req_size > arena->total_sz)
+	if (arena->used + aligned_sz > arena->total_sz)
 	{
 		fprintf(stderr,
 		        "arena_alloc: insufficient space in %s: need=%zu available=%zu "
-		        "used=%zu total=%zu free_blocks=%zu\n",
+		        "used=%zu total=%zu\n",
 		        arena->name,
-		        req_size,
+		        aligned_sz,
 		        arena->total_sz - arena->used,
 		        arena->used,
-		        arena->total_sz,
-		        arena->free_count);
+		        arena->total_sz);
 		return NULL; /* Out of memory */
 	}
 
-	block = (char *)arena->memory + arena->used;
-	arena->used += req_size;
+	void *ptr = (char *)arena->memory + arena->used;
+	arena->used += aligned_sz;
 
-	// fprintf(
-	//     stderr,
-	//     "[ARENA_ALLOC] %s NEW block=%p user=%p size=%zu used=%zu free_count=%zu\n",
-	//     arena->name,
-	//     block,
-	//     (char *)block + header_size,
-	//     sz,
-	//     arena->used,
-	//     arena->free_count);
+	/* Zero initial mem */
+	memset(ptr, 0, sz);
 
-init_block:
-	/* Initialize block header */
-	block_header_t *header = (block_header_t *)block;
-	header->block_sz       = sz;
-	header->total_block_sz = req_size;
-	header->magic          = ARENA_BLOCK_MAGIC;
-	header->owner          = arena;
-
-	/* Return pointer to user data (after the header) */
-	user_ptr = (char *)block + header_size;
-
-	/* Zero initialize user memory */
-	memset(user_ptr, 0, sz);
-
-	return user_ptr;
+	return ptr;
 }
 
 /**
@@ -288,12 +193,7 @@ arena_reset(arena_t *arena)
 	if (!arena)
 		return;
 
-	arena->used       = 0;
-	arena->free_count = 0;
-
-	/* Clear free block tracking */
-	memset(arena->free_blocks, 0, arena->max_free_blocks * sizeof(void *));
-	memset(arena->block_sizes, 0, arena->max_free_blocks * sizeof(size_t));
+	arena->used = 0;
 }
 
 /**

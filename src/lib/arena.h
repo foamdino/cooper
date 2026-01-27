@@ -17,48 +17,25 @@
 
 #include <stdio.h>
 
-/**
- * Magic number for block validation
- *
- * This specific value is used to verify that a pointer passed to arena_free()
- * was actually allocated from the arena. This helps detect invalid frees and
- * memory corruption.
- */
-#define ARENA_BLOCK_MAGIC 0xF0A3D900
-
 typedef struct arena arena_t;
-typedef struct block_header block_header_t;
 typedef struct arena_config arena_config_t;
 
 struct arena_config
 {
-	size_t id;          /**< Arena id */
-	const char *name;   /**< Arena name */
-	size_t size;        /**< Arena size in bytes */
-	size_t block_count; /**< Maximum number of free blocks to track */
+	size_t id;        /**< Arena id */
+	const char *name; /**< Arena name */
+	size_t size;      /**< Arena size in bytes */
 };
 
-struct block_header
-{
-	size_t block_sz;       /**< Size of user data (excluding header) */
-	size_t total_block_sz; /**< Size of block user data + header */
-	uint32_t magic;        /**< Magic number used for validation */
-	arena_t *owner;        /**< Owning arena for this block */
-};
 struct arena
 {
-	void *memory;           /* Pre-allocated memory buffer */
-	void *original_memory;  /* Original pointer returned by mmap */
-	size_t requested_sz;    /* Requested size during init */
-	size_t alloc_sz;        /* Total allocation size, used for cleanup */
-	size_t available_sz;    /* Available (total - tracking metadata)  */
-	size_t total_sz;        /* Total size of memory pool - should be page aligned */
-	size_t used;            /* Currently used bytes */
-	void **free_blocks;     /* Array of pointers to free blocks */
-	size_t *block_sizes;    /* Corresponding sizes of free blocks */
-	size_t free_count;      /* Number of free blocks available */
-	size_t max_free_blocks; /* Maximum number of free blocks we can track */
-	char name[32];          /* Name of the arena for debugging */
+	void *memory;          /* Pre-allocated memory buffer */
+	void *original_memory; /* Original pointer returned by mmap */
+	size_t requested_sz;   /* Requested size during init */
+	size_t alloc_sz;       /* Total allocation size, used for cleanup */
+	size_t total_sz;       /* Total size of memory pool - should be page aligned */
+	size_t used;           /* Currently used bytes */
+	char name[32];         /* Name of the arena for debugging */
 };
 
 /**
@@ -66,11 +43,10 @@ struct arena
  *
  * @param name          Descriptive name for the arena (for debugging)
  * @param sz            Total size of the memory pool in bytes
- * @param max_blocks    Maximum number of free blocks that can be tracked
  *
  * @return              Pointer to the initialized arena, or NULL on failure
  */
-arena_t *arena_init(const char *name, size_t sz, size_t max_blocks);
+arena_t *arena_init(const char *name, size_t sz);
 
 /**
  * Allocate memory from the arena

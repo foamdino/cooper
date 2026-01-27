@@ -137,7 +137,7 @@ test_injection(const char *filename)
 		return -1;
 
 	arena_t *arena =
-	    arena_init("class-arena", 4 * 1024 * 1024, 1024); /* 4MB for modifications */
+	    arena_init("class-arena", 4 * 1024 * 1024); /* 4MB for modifications */
 	if (!arena)
 	{
 		free(class_data);

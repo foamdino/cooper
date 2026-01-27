@@ -18,14 +18,13 @@ static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 /* clang-format off */
 static const arena_config_t arena_configs[] = 
 {
-    {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
-    {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
-    {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
-    {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
-	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
-	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ, BYTECODE_ARENA_BLOCKS}
+    {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ},
+    {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ},
+    {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ},
+    {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ},
+    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ},
+	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ},
+	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ}
 };
 
 /* Output from xxd -i */
@@ -1929,13 +1928,11 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	/* Create each arena from the configuration table */
 	for (size_t i = 0; i < ARENA_ID__LAST; i++)
 	{
-		arena_t *arena = arena_init(arena_configs[i].name,
-		                            arena_configs[i].size,
-		                            arena_configs[i].block_count);
+		arena_t *arena = arena_init(arena_configs[i].name, arena_configs[i].size);
 
 		if (!arena)
 		{
-			printf("Failed to create %s with id: %ld\n",
+			printf("Failed to create %s with id: %zu\n",
 			       arena_configs[i].name,
 			       arena_configs[i].id);
 			return JNI_ERR;
@@ -1943,14 +1940,6 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 
 		global_ctx->arenas[arena_configs[i].id] = arena;
 	}
-
-	/* make interesting classes available for class file load callback */
-	global_ctx->interesting_classes =
-	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
-	              1000,
-	              0.75,
-	              hash_string,
-	              cmp_string);
 
 	/* cache for jmethodid -> method_info_t */
 	global_ctx->interesting_methods =
@@ -2003,13 +1992,6 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
-
-	// arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
-	// if (!class_cache_arena)
-	// {
-	// 	LOG_ERROR("Cache arena not found\n");
-	// 	return JNI_ERR;
-	// }
 
 	/* Initialize metrics after all arenas are created */
 	arena_t *metrics_arena = global_ctx->arenas[METRICS_ARENA_ID];

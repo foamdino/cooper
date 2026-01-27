@@ -1969,12 +1969,10 @@ call_stack_sampling_thread_func(void *arg)
 static void
 record_method_entry_event(agent_context_t *ctx,
                           serialized_method_event_t *event,
-                          jmethodID mid,
-                          arena_t *arena)
+                          jmethodID mid)
 {
 	assert(ctx != NULL);
 	assert(event != NULL);
-	assert(arena != NULL);
 
 	/* Chomp the class_name that comes first, we don't use it */
 	// char *class_name  = event->data;
@@ -2199,13 +2197,6 @@ method_event_thread_func(void *arg)
 		return NULL;
 	}
 
-	arena_t *sample_arena = ctx->arenas[SAMPLE_ARENA_ID];
-	if (!sample_arena)
-	{
-		LOG_ERROR("Failed to find required arenas!");
-		return NULL;
-	}
-
 	LOG_DEBUG("Method event thread started");
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, METHOD_EVENTS_RUNNING))
@@ -2259,7 +2250,7 @@ method_event_thread_func(void *arg)
 			LOG_DEBUG("Calling record_method_entry_event for %s.%s",
 			          class_name,
 			          method_name);
-			record_method_entry_event(ctx, event, mid, sample_arena);
+			record_method_entry_event(ctx, event, mid);
 		}
 		else
 		{

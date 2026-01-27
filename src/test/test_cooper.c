@@ -76,9 +76,8 @@ cleanup_test_context(agent_context_t *ctx)
 static void
 test_arena_trim()
 {
-	agent_context_t *ctx = init_test_context();
-	arena_t *config_arena =
-	    arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+	agent_context_t *ctx         = init_test_context();
+	arena_t *config_arena        = arena_init("config_arena", CONFIG_ARENA_SZ);
 	ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
 	char *result1 = arena_trim(config_arena, "  hello  \n");
@@ -107,9 +106,8 @@ test_arena_trim()
 static void
 test_arena_strip_comment()
 {
-	agent_context_t *ctx = init_test_context();
-	arena_t *config_arena =
-	    arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+	agent_context_t *ctx         = init_test_context();
+	arena_t *config_arena        = arena_init("config_arena", CONFIG_ARENA_SZ);
 	ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
 	char *result1 = arena_strip_comment(config_arena, "hello # comment");
@@ -138,9 +136,8 @@ test_arena_strip_comment()
 static void
 test_config_extract_and_trim_value()
 {
-	agent_context_t *ctx = init_test_context();
-	arena_t *config_arena =
-	    arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+	agent_context_t *ctx         = init_test_context();
+	arena_t *config_arena        = arena_init("config_arena", CONFIG_ARENA_SZ);
 	ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
 	/* Standard key-value pair */
@@ -221,9 +218,8 @@ test_config_extract_and_trim_value()
 static void
 test_config_process_config_line()
 {
-	agent_context_t *ctx = init_test_context();
-	arena_t *config_arena =
-	    arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
+	agent_context_t *ctx         = init_test_context();
+	arena_t *config_arena        = arena_init("config_arena", CONFIG_ARENA_SZ);
 	ctx->arenas[CONFIG_ARENA_ID] = config_arena;
 
 	/* Line with a comment */
@@ -280,13 +276,11 @@ test_load_config()
 	assert(init_test_log_ring(ctx) == 0);
 
 	/* Create necessary arenas */
-	arena_t *config_arena =
-	    arena_init("config_arena", CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS);
-	ctx->arenas[CONFIG_ARENA_ID] = config_arena;
-	arena_t *log_arena = arena_init("log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
-	ctx->arenas[LOG_ARENA_ID] = log_arena;
-	arena_t *metrics_arena =
-	    arena_init("metrics_arena", METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS);
+	arena_t *config_arena         = arena_init("config_arena", CONFIG_ARENA_SZ);
+	ctx->arenas[CONFIG_ARENA_ID]  = config_arena;
+	arena_t *log_arena            = arena_init("log_arena", LOG_ARENA_SZ);
+	ctx->arenas[LOG_ARENA_ID]     = log_arena;
+	arena_t *metrics_arena        = arena_init("metrics_arena", METRICS_ARENA_SZ);
 	ctx->arenas[METRICS_ARENA_ID] = metrics_arena;
 
 	/* Initialize log system */
@@ -397,7 +391,7 @@ test_log_ring()
 	assert(ctx != NULL);
 
 	/* Initialize log arena for message storage */
-	arena_t *log_arena = arena_init("log_arena", LOG_ARENA_SZ, LOG_ARENA_BLOCKS);
+	arena_t *log_arena        = arena_init("log_arena", LOG_ARENA_SZ);
 	ctx->arenas[LOG_ARENA_ID] = log_arena;
 	assert(log_arena != NULL);
 
@@ -440,28 +434,18 @@ test_arena()
 {
 	/* Test arena_init */
 	size_t page_size = sysconf(_SC_PAGESIZE);
-	arena_t *arena   = arena_init("test_arena", 1024, 10);
+	arena_t *arena   = arena_init("test_arena", 1024);
 	assert(arena != NULL);
 	assert(strcmp(arena->name, "test_arena") == 0);
 	assert(arena->requested_sz == 1024);
 	assert(arena->total_sz % page_size == 0); /* Verify page alignment */
 	assert(arena->total_sz >= 1024);
-	assert(arena->available_sz < arena->total_sz); /* Should be less as we subtract
-	                                                  the tracking metadata size */
 	assert(arena->used == 0);
-	assert(arena->free_count == 0);
-	assert(arena->max_free_blocks == 10);
 
 	/* Test arena_alloc */
 	void *block1 = arena_alloc(arena, 100);
 	assert(block1 != NULL);
 	assert(arena->used >= 100);
-
-	/* Check that the block header has the correct magic number */
-	block_header_t *header1 =
-	    (block_header_t *)((char *)block1 - sizeof(block_header_t));
-	assert(header1->magic == ARENA_BLOCK_MAGIC);
-	assert(header1->block_sz == 100);
 
 	/* Write to the memory to ensure it's usable */
 	memset(block1, 'A', 100);
@@ -472,12 +456,6 @@ test_arena()
 	assert((char *)block2 > (char *)block1);
 	assert(arena->used >= 300); /* Including alignment padding */
 
-	/* Check that the second block header has the correct magic number */
-	block_header_t *header2 =
-	    (block_header_t *)((char *)block2 - sizeof(block_header_t));
-	assert(header2->magic == ARENA_BLOCK_MAGIC);
-	assert(header2->block_sz == 200);
-
 	/* Write to the second block */
 	memset(block2, 'B', 200);
 
@@ -485,17 +463,15 @@ test_arena()
 	arena_destroy(arena);
 
 	/* Test initialization with 0 size or max_blocks */
-	assert(arena_init("bad_arena", 0, 10) == NULL);
-	assert(arena_init("bad_arena", 1024, 0) == NULL);
+	assert(arena_init("bad_arena", 0) == NULL);
+	assert(arena_init("bad_arena", 1024) == NULL);
 
 	/* Test allocating more memory than available */
-	arena = arena_init("small_arena", 200, 5);
+	arena = arena_init("small_arena", 200);
 	assert(arena != NULL);
 
 	block1 = arena_alloc(arena, 10);
 	assert(block1 != NULL);
-	header1 = (block_header_t *)((char *)block1 - sizeof(block_header_t));
-	assert(header1->magic == ARENA_BLOCK_MAGIC);
 
 	/* This should fail as we don't have enough space */
 	void *big_block = arena_alloc(arena, 10000);
@@ -516,11 +492,6 @@ test_arena()
 		{
 			break;
 		}
-
-		/* Verify magic number in each block */
-		block_header_t *header =
-		    (block_header_t *)((char *)small_blocks[i] - sizeof(block_header_t));
-		assert(header->magic == ARENA_BLOCK_MAGIC);
 	}
 
 	arena_destroy(arena);
@@ -1102,8 +1073,7 @@ void
 test_buffer_overflow_protection(void)
 {
 	agent_context_t *ctx = init_test_context();
-	arena_t *test_arena  = arena_init(
-            CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+	arena_t *test_arena  = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ);
 	ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
 
 	printf("DEBUG: Arena total_sz = %zu, used = %zu\n",
@@ -1160,12 +1130,6 @@ test_buffer_overflow_protection(void)
 				                        : 4096;
 				memset((char *)chunks[i] + offset, 0xAA + i, write_size);
 			}
-
-			/* Verify header integrity */
-			block_header_t *header =
-			    (block_header_t *)((char *)chunks[i]
-			                       - sizeof(block_header_t));
-			assert(header->magic == ARENA_BLOCK_MAGIC);
 		}
 	}
 
@@ -1180,8 +1144,7 @@ void
 test_arena_bounds_checking(void)
 {
 	agent_context_t *ctx = init_test_context();
-	arena_t *test_arena  = arena_init(
-            CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+	arena_t *test_arena  = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ);
 	ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
 
 	/* Test allocation with zero size */
@@ -1195,12 +1158,6 @@ test_arena_bounds_checking(void)
 		blocks[i] = arena_alloc(test_arena, 64);
 		if (blocks[i] != NULL)
 		{
-			block_header_t *header =
-			    (block_header_t *)((char *)blocks[i]
-			                       - sizeof(block_header_t));
-			assert(header->magic == ARENA_BLOCK_MAGIC);
-			assert(header->block_sz == 64);
-
 			/* Verify block is within arena bounds */
 			assert((char *)blocks[i] >= (char *)test_arena->memory);
 			assert((char *)blocks[i] + 64
@@ -1219,8 +1176,7 @@ void
 test_string_handling_safety(void)
 {
 	agent_context_t *ctx = init_test_context();
-	arena_t *test_arena  = arena_init(
-            CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS);
+	arena_t *test_arena  = arena_init(CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ);
 	ctx->arenas[CLASS_CACHE_ARENA_ID] = test_arena;
 
 	/* Test arena_strdup with NULL input */

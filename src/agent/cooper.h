@@ -60,7 +60,7 @@
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define LOG_ARENA_SZ         1024 * 1024
-#define SAMPLE_ARENA_SZ      2048 * 1024
+
 #define CONFIG_ARENA_SZ      512 * 1024
 #define METRICS_ARENA_SZ     8 * 1024 * 1024
 #define SCRATCH_ARENA_SZ     16 * 1024 * 1024
@@ -68,19 +68,9 @@
 #define FLAMEGRAPH_ARENA_SZ  1024 * 1024
 #define BYTECODE_ARENA_SZ    8 * 1024 * 1024
 
-/* Arena Counts - Amount of blocks for each arena */
-#define LOG_ARENA_BLOCKS         1024
-#define SAMPLE_ARENA_BLOCKS      1024
-#define CONFIG_ARENA_BLOCKS      1024
-#define METRICS_ARENA_BLOCKS     1024
-#define CLASS_CACHE_ARENA_BLOCKS 1024
-#define SCRATCH_ARENA_BLOCKS     1024
-#define FLAMEGRAPH_ARENA_BLOCKS  1024
-#define BYTECODE_ARENA_BLOCKS    1024
-
 /* Arena Names */
 #define LOG_ARENA_NAME         "log_arena"
-#define SAMPLE_ARENA_NAME      "sample_arena"
+
 #define CONFIG_ARENA_NAME      "config_arena"
 #define METRICS_ARENA_NAME     "metrics_arena"
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
@@ -120,7 +110,6 @@ typedef enum thread_id thread_id_e;
 enum arenas
 {
 	LOG_ARENA_ID,
-	SAMPLE_ARENA_ID,
 	CONFIG_ARENA_ID,
 	METRICS_ARENA_ID,
 	SCRATCH_ARENA_ID,
@@ -372,8 +361,6 @@ struct agent_context
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
-	hashtable_t
-	    *interesting_classes; /**< Hashtable of scanned classes we care about */
 	hashtable_t
 	    *class_info_by_name; /**< Hashtable: class_sig -> cooper_class_info_t* */
 	hashtable_t *interesting_methods; /**< Hashtable of methods we care about */
