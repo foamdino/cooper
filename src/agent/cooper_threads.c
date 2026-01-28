@@ -1212,11 +1212,9 @@ heap_object_callback(
 	uint64_t estimated_deep_size = safe_size;
 
 	/* Apply class-specific multipliers based on class signature */
-	const char *class_sig = info->class_sig;
-
-	if (class_sig[0] == '[')
+	if (info->class_sig[0] == '[')
 	{
-		if (strstr(class_sig, "[L"))
+		if (strstr(info->class_sig, "[L"))
 		{
 			/* Object arrays – references dominate */
 			estimated_deep_size = safe_size * 2;
@@ -1228,7 +1226,7 @@ heap_object_callback(
 		}
 	}
 	else
-		estimated_deep_size = est_deep_sz(class_sig, safe_size);
+		estimated_deep_size = est_deep_sz(info->class_sig, safe_size);
 
 	/* Update deep size statistics */
 	stats->total_deep_size += estimated_deep_size;
@@ -1499,79 +1497,71 @@ cache_class_info(agent_context_t *ctx,
 		pattern_filter_entry_t *matching_filter = find_matching_filter(
 		    &ctx->unified_filter, class_sig, method_name, method_sig);
 
+		if (!matching_filter)
+			goto next_method;
+
 		/* Mark method as not interesting first */
 		info->methods[i].sample_index = -1;
 
-		if (matching_filter)
+		char buf[1024];
+		info->methods[i].method_id = methods[i];
+		/* Store arena-allocated copies of the names */
+		info->methods[i].method_name      = arena_strdup(arena, method_name);
+		info->methods[i].method_signature = arena_strdup(arena, method_sig);
+		snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
+		info->methods[i].full_name = arena_strdup(arena, buf);
+
+		/* Build full signature for metrics structure */
+		char full_sig[1024];
+		int written = snprintf(full_sig,
+		                       sizeof(full_sig),
+		                       "%s %s %s",
+		                       class_sig,
+		                       method_name,
+		                       method_sig);
+
+		if (written < 0 || written >= (int)sizeof(full_sig))
 		{
-			char buf[1024];
-			info->methods[i].method_id = methods[i];
-			/* Store arena-allocated copies of the names */
-			info->methods[i].method_name = arena_strdup(arena, method_name);
-			info->methods[i].method_signature =
-			    arena_strdup(arena, method_sig);
-			snprintf(buf, sizeof(buf), "%s.%s", class_sig, method_name);
-			info->methods[i].full_name = arena_strdup(arena, buf);
+			LOG_ERROR("Method signature too long: %s:%s:%s\n",
+			          class_sig,
+			          method_name,
+			          method_sig);
+			goto next_method;
+		}
 
-			// TODO calculate and store a multiplier for deep size
-			// see heap_object_callback for heuristic
-			// class_stats[i].deep_multiplier =
-			// calculate_deep_multiplier(class_sig);
+		/* Add method to metrics structure using filter configuration */
+		int sample_index = add_method_to_metrics(ctx,
+		                                         full_sig,
+		                                         matching_filter->sample_rate,
+		                                         matching_filter->metric_flags);
 
-			/* Build full signature for metrics structure */
-			char full_sig[1024];
-			int written = snprintf(full_sig,
-			                       sizeof(full_sig),
-			                       "%s %s %s",
-			                       class_sig,
-			                       method_name,
-			                       method_sig);
+		/* Only add interesting methods to cache */
+		if (sample_index >= 0)
+		{
+			info->methods[i].sample_index = sample_index;
 
-			if (written < 0 || written >= (int)sizeof(full_sig))
+			/* Add to interesting methods hashtable */
+			if (ht_put(ctx->interesting_methods,
+			           info->methods[i].method_id,
+			           &info->methods[i])
+			    != COOPER_OK)
 			{
-				LOG_ERROR("Method signature too long: %s:%s:%s\n",
-				          class_sig,
-				          method_name,
-				          method_sig);
-				goto next_method;
-			}
-
-			/* Add method to metrics structure using filter configuration */
-			int sample_index =
-			    add_method_to_metrics(ctx,
-			                          full_sig,
-			                          matching_filter->sample_rate,
-			                          matching_filter->metric_flags);
-
-			/* Only add interesting methods to cache */
-			if (sample_index >= 0)
-			{
-				info->methods[i].sample_index = sample_index;
-
-				/* Add to interesting methods hashtable */
-				if (ht_put(ctx->interesting_methods,
-				           info->methods[i].method_id,
-				           &info->methods[i])
-				    != COOPER_OK)
-				{
-					LOG_WARN("Failed to cache method %s",
-					         info->methods[i].method_name);
-				}
-				else
-				{
-					LOG_DEBUG("Cached method: %s (sample_rate=%d, "
-					          "flags=%u, index=%d)",
-					          info->methods[i].full_name,
-					          matching_filter->sample_rate,
-					          matching_filter->metric_flags,
-					          sample_index);
-				}
+				LOG_WARN("Failed to cache method %s",
+				         info->methods[i].method_name);
 			}
 			else
 			{
-				LOG_ERROR("Failed to add method to metrics: %s\n",
-				          full_sig);
+				LOG_DEBUG("Cached method: %s (sample_rate=%d, "
+				          "flags=%u, index=%d)",
+				          info->methods[i].full_name,
+				          matching_filter->sample_rate,
+				          matching_filter->metric_flags,
+				          sample_index);
 			}
+		}
+		else
+		{
+			LOG_ERROR("Failed to add method to metrics: %s\n", full_sig);
 		}
 
 	next_method:
