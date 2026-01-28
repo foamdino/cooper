@@ -59,22 +59,18 @@
 #define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define LOG_ARENA_SZ         1024 * 1024
-
 #define CONFIG_ARENA_SZ      512 * 1024
 #define METRICS_ARENA_SZ     8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ     16 * 1024 * 1024
+#define HEAP_STATS_ARENA_SZ  16 * 1024 * 1024
 #define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
 #define FLAMEGRAPH_ARENA_SZ  1024 * 1024
 #define BYTECODE_ARENA_SZ    8 * 1024 * 1024
 
 /* Arena Names */
-#define LOG_ARENA_NAME         "log_arena"
-
 #define CONFIG_ARENA_NAME      "config_arena"
 #define METRICS_ARENA_NAME     "metrics_arena"
 #define CLASS_CACHE_ARENA_NAME "class_cache_arena"
-#define SCRATCH_ARENA_NAME     "scratch_arena"
+#define HEAP_STATS_ARENA_NAME  "heap_stats_arena"
 #define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
 #define BYTECODE_ARENA_NAME    "bytecode_arena"
 
@@ -109,10 +105,9 @@ typedef enum thread_id thread_id_e;
 
 enum arenas
 {
-	LOG_ARENA_ID,
 	CONFIG_ARENA_ID,
 	METRICS_ARENA_ID,
-	SCRATCH_ARENA_ID,
+	HEAP_STATS_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
 	BYTECODE_ARENA_ID,

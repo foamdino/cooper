@@ -80,10 +80,9 @@ log_thread_func(void *arg)
  * @return              0 on success, non-zero on failure
  */
 int
-init_log_system(mpsc_ring_t *ring, arena_t *arena, FILE *log_file)
+init_log_system(mpsc_ring_t *ring, FILE *log_file)
 {
 	assert(ring != NULL);
-	assert(arena != NULL);
 
 	/* Open log file or use stdout */
 	if (!log_file)
@@ -94,7 +93,7 @@ init_log_system(mpsc_ring_t *ring, arena_t *arena, FILE *log_file)
 	log_system.log_file = log_file;
 
 	/* Create thread parameters */
-	log_thread_params_t *params = arena_alloc(arena, sizeof(log_thread_params_t));
+	log_thread_params_t *params = malloc(sizeof(log_thread_params_t));
 	if (!params)
 	{
 		fprintf(stderr,
@@ -111,7 +110,7 @@ init_log_system(mpsc_ring_t *ring, arena_t *arena, FILE *log_file)
 	if (err != 0)
 	{
 		fprintf(stderr, "ERROR: Failed to start logging thread: %d\n", err);
-		/* Cannot free arena memory individually */
+		free(params);
 		goto error;
 	}
 

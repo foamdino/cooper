@@ -278,13 +278,11 @@ test_load_config()
 	/* Create necessary arenas */
 	arena_t *config_arena         = arena_init("config_arena", CONFIG_ARENA_SZ);
 	ctx->arenas[CONFIG_ARENA_ID]  = config_arena;
-	arena_t *log_arena            = arena_init("log_arena", LOG_ARENA_SZ);
-	ctx->arenas[LOG_ARENA_ID]     = log_arena;
 	arena_t *metrics_arena        = arena_init("metrics_arena", METRICS_ARENA_SZ);
 	ctx->arenas[METRICS_ARENA_ID] = metrics_arena;
 
 	/* Initialize log system */
-	init_log_system(&log_ring, log_arena, stdout);
+	init_log_system(&log_ring, stdout);
 
 	/* Initialize metrics */
 	size_t initial_capacity = 256;
@@ -390,15 +388,10 @@ test_log_ring()
 	agent_context_t *ctx = init_test_context();
 	assert(ctx != NULL);
 
-	/* Initialize log arena for message storage */
-	arena_t *log_arena        = arena_init("log_arena", LOG_ARENA_SZ);
-	ctx->arenas[LOG_ARENA_ID] = log_arena;
-	assert(log_arena != NULL);
-
 	/* Initialize a log ring using the actual log system */
 	mpsc_ring_t local_ring;
 	mpsc_ring_init(&local_ring, LOG_RING_CAPACITY, MAX_LOG_MSG_SZ);
-	int res = init_log_system(&local_ring, log_arena, log_file);
+	int res = init_log_system(&local_ring, log_file);
 	assert(res == 0);
 
 	/* Use LOG macros to add messages to the queue */

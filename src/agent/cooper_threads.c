@@ -1249,7 +1249,7 @@ static void
 collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 {
 	/* Reset scratch arena to reclaim previous allocations */
-	arena_reset(ctx->arenas[SCRATCH_ARENA_ID]);
+	arena_reset(ctx->arenas[HEAP_STATS_ARENA_ID]);
 
 	/* Clear previous heap stats as these are now invalid */
 	ctx->last_heap_stats       = NULL;
@@ -1280,7 +1280,7 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 
 	/* Create min heap with error checking */
 	min_heap_t *heap =
-	    min_heap_create(ctx->arenas[SCRATCH_ARENA_ID], TOP_N, class_stats_compare);
+	    min_heap_create(ctx->arenas[HEAP_STATS_ARENA_ID], TOP_N, class_stats_compare);
 	if (!heap)
 	{
 		LOG_ERROR("Failed to create min heap");
@@ -1288,8 +1288,11 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Create generic hashtable for class statistics */
-	hashtable_t *class_ht = ht_create(
-	    ctx->arenas[SCRATCH_ARENA_ID], MAX_HASH_SIZE, 0.75, hash_string, cmp_string);
+	hashtable_t *class_ht = ht_create(ctx->arenas[HEAP_STATS_ARENA_ID],
+	                                  MAX_HASH_SIZE,
+	                                  0.75,
+	                                  hash_string,
+	                                  cmp_string);
 
 	if (!class_ht)
 	{
@@ -1298,9 +1301,9 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 	}
 
 	/* Set up iteration context with validation */
-	heap_iteration_context_t iter_ctx = {.env         = env,
-	                                     .jvmti       = jvmti,
-	                                     .arena       = ctx->arenas[SCRATCH_ARENA_ID],
+	heap_iteration_context_t iter_ctx = {.env   = env,
+	                                     .jvmti = jvmti,
+	                                     .arena = ctx->arenas[HEAP_STATS_ARENA_ID],
 	                                     .class_table = class_ht};
 
 	/* Tag classes for heap iteration */
@@ -1364,7 +1367,7 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 		    || sort_size > ((class_stats_t *)heap->elements[0])->total_deep_size)
 		{
 			class_stats_t *heap_entry = arena_alloc(
-			    ctx->arenas[SCRATCH_ARENA_ID], sizeof(class_stats_t));
+			    ctx->arenas[HEAP_STATS_ARENA_ID], sizeof(class_stats_t));
 			if (!heap_entry)
 			{
 				LOG_WARN("Failed to allocate heap entry %zu", i);
@@ -1374,7 +1377,7 @@ collect_heap_statistics(agent_context_t *ctx, JNIEnv *env)
 			/* Copy stats */
 			*heap_entry = *stats;
 			heap_entry->class_name =
-			    arena_strdup(ctx->arenas[SCRATCH_ARENA_ID], entry->key);
+			    arena_strdup(ctx->arenas[HEAP_STATS_ARENA_ID], entry->key);
 
 			/* Without a class name nothing to do */
 			if (!heap_entry->class_name)

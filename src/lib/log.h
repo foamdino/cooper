@@ -7,7 +7,6 @@
 #ifndef LOG_H
 #define LOG_H
 
-#include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,10 +14,10 @@
 #include <time.h>
 #include <assert.h>
 #include <unistd.h>
-
-#include "ring/mpsc_ring.h"
+#include <sched.h>
 #include "thread_util.h"
-#include "arena.h"
+#include <stdio.h>
+#include "ring/mpsc_ring.h"
 
 /* Maximum size of a log message */
 #define MAX_LOG_MSG_SZ 1024
@@ -53,7 +52,7 @@ struct log_thread_params
 extern log_level_e current_log_level;
 
 /* Initialize the logging system */
-int init_log_system(mpsc_ring_t *ring, arena_t *arena, FILE *log_file);
+int init_log_system(mpsc_ring_t *ring, FILE *log_file);
 
 /* Clean up the logging system
 Assumes that the log system has been correct initialised via init_log_system

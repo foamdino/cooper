@@ -7,6 +7,7 @@
 #include "cooper.h"
 #include "cooper_threads.h"
 #include "src/lib/log.h"
+#include <stdio.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -16,12 +17,11 @@ static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Arena configurations */
 /* clang-format off */
-static const arena_config_t arena_configs[] = 
+static const arena_config_t arena_configs[] =
 {
-    {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ},
     {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ},
     {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ},
-    {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ},
+    {HEAP_STATS_ARENA_ID, HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ},
     {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ},
 	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ},
 	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ}
@@ -950,19 +950,6 @@ cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
-static char *
-class_name_to_sig(const char *name)
-{
-	/* Nothing to do if name is NULL*/
-	if (!name)
-		return NULL;
-
-	/* We need "L" + name + ";" + '\0' */
-	char *sig = arena_alloc(global_ctx->arenas[SCRATCH_ARENA_ID], strlen(name) + 3);
-	sprintf(sig, "L%s;", name);
-	return sig;
-}
-
 static void JNICALL
 class_file_load_callback(jvmtiEnv *jvmti_env,
                          JNIEnv *jni_env,
@@ -987,10 +974,8 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 		return;
 
 	/* Fast filter check */
-	char *sig = class_name_to_sig(name);
-
-	if (!sig)
-		return;
+	char sig[MAX_SIG_SZ];
+	sprintf(sig, "L%s;", name);
 
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
@@ -1957,17 +1942,8 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	              hash_string,
 	              cmp_string);
 
-	/* Init logging after all arenas are created */
-	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];
-	if (!log_arena)
-	{
-		printf("Log arena not found\n");
-		return JNI_ERR;
-	}
-
 	/* We start the logging thread as we initialise the system now */
-	if (init_log_system(&global_ctx->log_ring, log_arena, global_ctx->log_file)
-	    != COOPER_OK)
+	if (init_log_system(&global_ctx->log_ring, global_ctx->log_file) != COOPER_OK)
 	{
 		cleanup(global_ctx);
 		return JNI_ERR;
