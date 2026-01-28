@@ -51,10 +51,7 @@ arena_t *arena_init(const char *name, size_t sz);
 /**
  * Allocate memory from the arena
  *
- * This function attempts to allocate memory from the arena's pool. It first tries to
- * reuse a previously freed block of adequate size, and if none is available, allocates
- * from the remaining arena space. Each allocation includes a hidden header that tracks
- * the size and validates the block.
+ * This function attempts to allocate memory from the arena.
  *
  * @param arena         Pointer to the arena
  * @param sz            Number of bytes to allocate

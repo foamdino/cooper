@@ -60,11 +60,11 @@
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define CONFIG_ARENA_SZ      512 * 1024
-#define METRICS_ARENA_SZ     8 * 1024 * 1024
-#define HEAP_STATS_ARENA_SZ  16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ 12 * 1024 * 1024
+#define METRICS_ARENA_SZ     2 * 1024 * 1024
+#define HEAP_STATS_ARENA_SZ  8 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ 4 * 1024 * 1024
 #define FLAMEGRAPH_ARENA_SZ  1024 * 1024
-#define BYTECODE_ARENA_SZ    8 * 1024 * 1024
+#define BYTECODE_ARENA_SZ    4 * 1024 * 1024
 
 /* Arena Names */
 #define CONFIG_ARENA_NAME      "config_arena"
