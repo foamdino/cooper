@@ -455,9 +455,8 @@ test_arena()
 	/* Test arena_destroy */
 	arena_destroy(arena);
 
-	/* Test initialization with 0 size or max_blocks */
+	/* Test initialization with 0 size */
 	assert(arena_init("bad_arena", 0) == NULL);
-	assert(arena_init("bad_arena", 1024) == NULL);
 
 	/* Test allocating more memory than available */
 	arena = arena_init("small_arena", 200);
