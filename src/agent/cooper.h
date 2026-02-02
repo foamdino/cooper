@@ -8,6 +8,7 @@
 #define COOPER_H
 
 #include <jvmti.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -291,7 +292,7 @@ struct cooper_method_info
 	jmethodID method_id;
 	char *method_name;
 	char *method_signature;
-	int sample_index; /**< -1 for not sampled, index into SoA structure */
+	int32_t sample_index; /**< -1 for not sampled, index into SoA structure */
 	char *full_name;
 };
 
@@ -300,6 +301,8 @@ struct cooper_class_info
 	jclass global_ref; /**< GlobalRef to the class, valid across threads */
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
+	int32_t obj_alloc_index; /**< -1 for not sampled, index into SoA structure:
+	                            object_allocation_metrics */
 	uint32_t method_count;
 	cooper_method_info_t *methods; /**< Array of methods for this class */
 };

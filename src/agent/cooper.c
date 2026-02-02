@@ -169,31 +169,6 @@ get_thread_local_context()
 	return context;
 }
 
-/**
- * Get cached class signature or fetch if not cached
- * @return COOPER_OK on success, COOPER_ERR on failure
- * output_buffer contains class signature
- */
-static int
-get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buffer)
-{
-	if (!output_buffer || !jvmti_env || !klass)
-		return COOPER_ERR;
-
-	jlong tag      = 0;
-	jvmtiError err = (*jvmti_env)->GetTag(jvmti_env, klass, &tag);
-	if (err != JVMTI_ERROR_NONE)
-		return COOPER_ERR;
-
-	/* If we don't have a tag, there's nothing we can do here */
-	if (tag == 0)
-		return COOPER_ERR;
-
-	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
-	*output_buffer            = info->class_sig;
-	return COOPER_OK;
-}
-
 static object_allocation_metrics_t *
 init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 {
@@ -243,23 +218,25 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
  * @return position in array of object allocation stats or -1 on failure
  */
 static int
-find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *class_sig)
+find_or_add_object_type(object_allocation_metrics_t *obj_metrics,
+                        cooper_class_info_t *info)
 {
 	assert(obj_metrics != NULL);
-	assert(class_sig != NULL);
+	assert(info != NULL);
 
-	if (!obj_metrics)
+	/* Fast path: index already cached on this class */
+	if (info->obj_alloc_index >= 0)
+		return info->obj_alloc_index;
+
+	const char *class_sig = info->class_sig;
+
+	if (class_sig[0] == '\0')
 	{
-		LOG_ERROR("ob_metrics is NULL!\n");
+		LOG_ERROR("Empty class signature\n");
 		return -1;
 	}
 
-	if (!class_sig)
-	{
-		LOG_ERROR("class_sig is NULL!\n");
-		return -1;
-	}
-
+	/* Linear search for existing signature */
 	for (size_t i = 0; i < obj_metrics->count; i++)
 	{
 		if (obj_metrics->class_signatures[i] == NULL)
@@ -272,7 +249,10 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 
 		/* We found the signature */
 		if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
+		{
+			info->obj_alloc_index = (int32_t)i;
 			return i;
+		}
 	}
 
 	/* Do we have space to add new allocation stats? */
@@ -307,44 +287,34 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 // TODO - if we move object allocation stats to a background thread
 // this function becomes simpler - possible to remove mutex and atomics
 static void
-update_object_allocation_stats(agent_context_t *ctx,
-                               const char *class_sig,
-                               uint64_t safe_sz)
+update_object_allocation_stats(agent_context_t *ctx, int index, uint64_t safe_sz)
 {
 	assert(ctx != NULL);
-	assert(class_sig != NULL);
 
-	if (!ctx || !class_sig)
+	if (!ctx)
 		return;
 
-	int index = find_or_add_object_type(ctx->object_metrics, class_sig);
-	if (index >= 0)
-	{
-		atomic_fetch_add_explicit(&ctx->object_metrics->allocation_counts[index],
-		                          1,
-		                          memory_order_relaxed);
-		atomic_fetch_add_explicit(&ctx->object_metrics->total_bytes[index],
-		                          safe_sz,
-		                          memory_order_relaxed);
-		atomic_fetch_add_explicit(&ctx->object_metrics->current_instances[index],
-		                          1,
-		                          memory_order_relaxed);
+	atomic_fetch_add_explicit(
+	    &ctx->object_metrics->allocation_counts[index], 1, memory_order_relaxed);
+	atomic_fetch_add_explicit(
+	    &ctx->object_metrics->total_bytes[index], safe_sz, memory_order_relaxed);
+	atomic_fetch_add_explicit(
+	    &ctx->object_metrics->current_instances[index], 1, memory_order_relaxed);
 
-		// TODO need different locks / stats instead of using single lock
-		/* Update size statistics */
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-		if (safe_sz < ctx->object_metrics->min_size[index])
-			ctx->object_metrics->min_size[index] = safe_sz;
+	// TODO need different locks / stats instead of using single lock
+	/* Update size statistics */
+	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
+	if (safe_sz < ctx->object_metrics->min_size[index])
+		ctx->object_metrics->min_size[index] = safe_sz;
 
-		if (safe_sz > ctx->object_metrics->max_size[index])
-			ctx->object_metrics->max_size[index] = safe_sz;
+	if (safe_sz > ctx->object_metrics->max_size[index])
+		ctx->object_metrics->max_size[index] = safe_sz;
 
-		/* Update average size */
-		ctx->object_metrics->avg_size[index] =
-		    ctx->object_metrics->total_bytes[index]
-		    / ctx->object_metrics->allocation_counts[index];
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
+	/* Update average size */
+	ctx->object_metrics->avg_size[index] =
+	    ctx->object_metrics->total_bytes[index]
+	    / ctx->object_metrics->allocation_counts[index];
+	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 #ifdef ENABLE_DEBUG_LOGS
@@ -781,18 +751,24 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	UNUSED(thread);
 	UNUSED(object);
 
-	/* Buffer for class signature */
-	char *class_sig = NULL;
-
-	/* Get cached class signature */
-	if (get_cached_class_signature(jvmti_env, klass, &class_sig) != COOPER_OK)
+	/* Get class info from JVMTI tag */
+	jlong tag      = 0;
+	jvmtiError err = (*jvmti_env)->GetTag(jvmti_env, klass, &tag);
+	if (err != JVMTI_ERROR_NONE || tag == 0)
 		return;
+
+	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
 
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
 
+	/* Find or add - fast path uses cached index on info struct */
+	int index = find_or_add_object_type(global_ctx->object_metrics, info);
+	if (index < 0)
+		return;
+
 	/* Update the global allocation stats */
-	update_object_allocation_stats(global_ctx, class_sig, safe_sz);
+	update_object_allocation_stats(global_ctx, index, safe_sz);
 
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();
@@ -820,7 +796,7 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	          safe_sz,
 	          sample->method_index,
 	          (long long)sample->current_alloc_bytes,
-	          class_sig,
+	          info->class_sig,
 	          safe_sz);
 }
 

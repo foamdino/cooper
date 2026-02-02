@@ -373,8 +373,6 @@ export_to_file(agent_context_t *ctx)
 	else
 		fprintf(fp, "# No object allocation metrics available\n");
 
-	// pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-
 	fprintf(fp, "# ------ \n\n");
 
 	fprintf(fp, "# Method Metrics Export - %s", ctime(&now));
@@ -1474,6 +1472,9 @@ cache_class_info(agent_context_t *ctx,
 
 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
 	info->in_heap_iteration = 0;
+	/* This is a new class_info, so it has no assigned place in the SoA struct
+	 * object_allocation_metrics, default to -1 */
+	info->obj_alloc_index = -1;
 
 	/* Set up the methods pointer to point to the memory immediately following the
 	 * struct */
