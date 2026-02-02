@@ -301,7 +301,7 @@ struct cooper_class_info
 	jclass global_ref; /**< GlobalRef to the class, valid across threads */
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
-	int32_t obj_alloc_index; /**< -1 for not sampled, index into SoA structure:
+	int32_t obj_alloc_index; /**< -1 for not assigned, index into SoA structure:
 	                            object_allocation_metrics */
 	uint32_t method_count;
 	cooper_method_info_t *methods; /**< Array of methods for this class */

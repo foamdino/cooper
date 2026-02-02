@@ -263,7 +263,7 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics,
 		return -1;
 	}
 
-	int index = obj_metrics->count;
+	int32_t index = obj_metrics->count;
 
 	obj_metrics->class_signatures[index] =
 	    arena_strdup(global_ctx->arenas[METRICS_ARENA_ID], class_sig);
@@ -277,6 +277,7 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics,
 	/* Only set non-zero values, the rest of the values are initialised to 0 */
 	obj_metrics->min_size[index] = UINT64_MAX;
 	obj_metrics->count++;
+	info->obj_alloc_index = index;
 	LOG_DEBUG("Added object type at index %d: %s (total types: %zu)\n",
 	          index,
 	          class_sig,
