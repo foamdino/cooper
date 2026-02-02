@@ -14,7 +14,7 @@ log_level_e current_log_level = LOG_LEVEL_INFO;
 
 /* Global logging system state */
 static log_system_t log_system = {
-    .queue = NULL, .arena = NULL, .log_file = NULL, .log_thread = 0, .initialized = 0};
+    .ring = NULL, .log_file = NULL, .log_thread = 0, .initialized = 0};
 
 /**
  * Logger thread function that writes messages from the log queue
@@ -28,33 +28,44 @@ log_thread_func(void *arg)
 	assert(arg != NULL);
 
 	log_thread_params_t *params = (log_thread_params_t *)arg;
-	q_t *queue                  = params->queue;
+	mpsc_ring_t *ring           = params->ring;
 	FILE *log_file              = params->log_file;
+
+	/* Params are arena allocated, so no need to free */
+
 	while (1)
 	{
-		q_entry_t *entry = q_deq(queue);
-		char *msg        = NULL;
+		uint32_t handle;
+		int res = mpsc_ring_consume(ring, &handle);
 
-		/* Shutting down */
-		if (!entry)
-			break;
-
-		if (entry->type == Q_ENTRY_LOG)
+		if (res == MPSC_OK)
 		{
-			msg = (char *)entry->data;
+			char *msg = mpsc_ring_get(ring, handle);
 			/* Write message to log file */
 			if (msg)
 			{
 				fprintf(log_file, "%s", msg);
 				fflush(log_file);
 			}
+			mpsc_ring_release(ring, handle);
 		}
+		else if (res == MPSC_EMPTY)
+		{
+			/*
+			 * Check if we should exit.
+			 * In a lock-free system without condition variables, we must
+			 * poll. To avoid burning CPU, we sleep briefly.
+			 */
+			if (!log_system.initialized) /* crude shutdown signal check */
+				break;
 
-		/* Free mem back to arena */
-		pthread_mutex_lock(&log_system.arena_lock);
-		arena_free(log_system.arena, msg);
-		arena_free(log_system.arena, entry);
-		pthread_mutex_unlock(&log_system.arena_lock);
+			usleep(1000); /* 1ms sleep */
+		}
+		else if (res == MPSC_BUSY)
+		{
+			/* Producer reserved but hasn't committed. Yield and retry. */
+			sched_yield();
+		}
 	}
 
 	return NULL;
@@ -63,45 +74,26 @@ log_thread_func(void *arg)
 /**
  * Initialize the logging system
  *
- * @param queue         Pointer to log queue to initialize
- * @param arena_head    Pointer to head of arena list
+ * @param ring          Pointer to log ring to initialize
+ * @param arena         Arena for allocating thread parameters
  * @param log_file      log file, or NULL for stdout
  * @return              0 on success, non-zero on failure
  */
 int
-init_log_system(q_t *queue, arena_t *arena, FILE *log_file)
+init_log_system(mpsc_ring_t *ring, FILE *log_file)
 {
-	assert(queue != NULL);
-
-	/* Initialize the queue */
-	queue->running = 1;
-
-	int err = q_init(queue);
-
-	if (err != 0)
-	{
-		fprintf(stderr, "ERROR: Failed to init log queue: %d\n", err);
-		return 1;
-	}
+	assert(ring != NULL);
 
 	/* Open log file or use stdout */
 	if (!log_file)
 		log_file = stdout;
 
-	/* Initialize the arena lock BEFORE any use */
-	if (pthread_mutex_init(&log_system.arena_lock, NULL) != 0)
-	{
-		fprintf(stderr, "ERROR: pthread_mutex_init failed\n");
-		return 1;
-	}
-
 	/* Save state for global access early (safe single-threaded init) */
-	log_system.queue    = queue;
-	log_system.arena    = arena;
+	log_system.ring     = ring;
 	log_system.log_file = log_file;
 
 	/* Create thread parameters */
-	log_thread_params_t *params = arena_alloc(arena, sizeof(log_thread_params_t));
+	log_thread_params_t *params = malloc(sizeof(log_thread_params_t));
 	if (!params)
 	{
 		fprintf(stderr,
@@ -109,15 +101,16 @@ init_log_system(q_t *queue, arena_t *arena, FILE *log_file)
 		goto error;
 	}
 
-	params->queue    = queue;
+	params->ring     = ring;
 	params->log_file = log_file;
 
 	/* Start the logging thread */
 	pthread_t log_thread;
-	err = pthread_create(&log_thread, NULL, log_thread_func, params);
+	int err = pthread_create(&log_thread, NULL, log_thread_func, params);
 	if (err != 0)
 	{
 		fprintf(stderr, "ERROR: Failed to start logging thread: %d\n", err);
+		free(params);
 		goto error;
 	}
 
@@ -131,27 +124,17 @@ error:
 	if (log_file != stdout && log_file != stderr)
 		fclose(log_file);
 
-	pthread_cond_destroy(&queue->cond);
-	pthread_mutex_destroy(&queue->lock);
-	pthread_mutex_destroy(&log_system.arena_lock);
 	return 1;
 }
 
 /**
  * Clean up the logging system
- *
- * @param queue      Pointer to log queue
- * @param log_file   File pointer to log output
- * @param log_thread Thread ID of logging thread
  */
 void
 cleanup_log_system()
 {
-
-	pthread_mutex_lock(&log_system.queue->lock);
-	log_system.queue->running = 0;
-	pthread_cond_broadcast(&log_system.queue->cond);
-	pthread_mutex_unlock(&log_system.queue->lock);
+	/* Signal shutdown */
+	log_system.initialized = 0;
 
 	/* Wait for thread to terminate */
 	int join_result = safe_thread_join(log_system.log_thread, 3);
@@ -162,25 +145,20 @@ cleanup_log_system()
 	}
 
 	/* Purge remaining messages */
-	q_entry_t *entry;
-	while ((entry = q_deq(log_system.queue)) != NULL)
+	uint32_t handle;
+	while (mpsc_ring_consume(log_system.ring, &handle) == MPSC_OK)
 	{
-		if (entry->type == Q_ENTRY_LOG)
-			fprintf(log_system.log_file, "%s\n", (char *)entry->data);
+		char *msg = mpsc_ring_get(log_system.ring, handle);
+		fprintf(log_system.log_file, "%s", msg);
+		mpsc_ring_release(log_system.ring, handle);
 	}
 
 	if (log_system.log_file != stdout && log_system.log_file != stderr)
 		fclose(log_system.log_file);
 
-	pthread_cond_destroy(&log_system.queue->cond);
-	pthread_mutex_destroy(&log_system.queue->lock);
-	pthread_mutex_destroy(&log_system.arena_lock);
-
 	/* Reset global state */
-	log_system.queue       = NULL;
-	log_system.arena       = NULL;
-	log_system.log_file    = NULL;
-	log_system.initialized = 0;
+	log_system.ring     = NULL;
+	log_system.log_file = NULL;
 }
 
 /**
@@ -189,84 +167,102 @@ cleanup_log_system()
 void
 log_message(log_level_e level, const char *file, int line, const char *fmt, ...)
 {
-	/* Skip if system not initialized or level is below current_log_level */
 	if (!log_system.initialized || level < current_log_level)
 		return;
 
-	/* Get current timestamp */
 	time_t now;
 	struct tm tm_now;
-	char timestamp[24]; /* Format: YYYY-MM-DD HH:MM:SS.mmm */
-
+	char timestamp[24];
 	time(&now);
 	localtime_r(&now, &tm_now);
 	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", &tm_now);
 
-	/* Format the message with level, timestamp, location, and user message */
-	char buffer[MAX_LOG_MSG_SZ];
+	/* Reserve a slot in the ring buffer */
+	uint32_t handle;
+	if (mpsc_ring_reserve(log_system.ring, &handle) != MPSC_OK)
+	{
+		/* Ring full, drop message */
+		/* We could try to print to stderr but that might interleave badly */
+		return;
+	}
+
+	char *buffer = mpsc_ring_get(log_system.ring, handle);
+
+	/* Format directly into the ring buffer slot */
 	int header_len = snprintf(buffer,
-	                          sizeof(buffer),
+	                          MAX_LOG_MSG_SZ,
 	                          "[%s] %s [%s:%d] ",
 	                          level_names[level],
 	                          timestamp,
 	                          file ? file : "unknown",
 	                          line);
 
-	/* Header too long, can't proceed */
-	if (header_len < 0 || header_len >= (int)sizeof(buffer))
+	if (header_len < 0)
+	{
+		mpsc_ring_commit(log_system.ring, handle);
 		return;
+	}
 
-	/* Add the user message with variable arguments */
+	/* if header_len >= MAX_LOG_MSG_SZ then nothing can be written */
+	if ((size_t)header_len >= MAX_LOG_MSG_SZ)
+	{
+		/* header truncated; ensure last byte is NUL and drop */
+		buffer[MAX_LOG_MSG_SZ - 1] = '\0';
+		mpsc_ring_commit(log_system.ring, handle);
+		return;
+	}
+
+	/* remaining space for the message (include space for final newline and NUL) */
+	size_t available = MAX_LOG_MSG_SZ - (size_t)header_len;
+
 	va_list args;
 	va_start(args, fmt);
-	int msg_len =
-	    vsnprintf(buffer + header_len, sizeof(buffer) - header_len - 1, fmt, args);
+	/* we pass available - 1 to vsnprintf so there's always room for trailing '\n' or
+	 * '\0' */
+	int rv = vsnprintf(
+	    buffer + header_len, (available > 0) ? (available - 1) : 0, fmt, args);
 	va_end(args);
 
-	/* Formatting error */
-	if (msg_len < 0)
-		return;
+	/* formatting error */
+	if (rv < 0)
+		buffer[header_len] = '\0';
 
-	/* Ensure newline at the end */
-	size_t total_len = header_len + msg_len;
-	if (total_len > 0 && total_len < sizeof(buffer) - 2
-	    && buffer[total_len - 1] != '\n')
+	/* actual number of characters written into the buffer (excluding NUL) */
+	size_t actual_msg_len;
+	if (rv < 0)
+		actual_msg_len = strlen(buffer + header_len);
+	else
 	{
-		buffer[total_len]     = '\n';
-		buffer[total_len + 1] = '\0';
+		/* vsnprintf returns the would-be length; actual written is min(rv,
+		 * available-1) */
+		size_t wrote = (size_t)rv;
+		if (wrote >= (available > 0 ? available - 1 : 0))
+			actual_msg_len = (available > 0 ? available - 1 : 0);
+		else
+			actual_msg_len = wrote;
 	}
 
-	pthread_mutex_lock(&log_system.arena_lock);
-	q_entry_t *entry = arena_alloc(log_system.arena, sizeof(q_entry_t));
-	if (!entry)
+	/* Ensure there's a newline at the end, if room. If not room, we already have a
+	   truncated message and the last char is at buffer[MAX_LOG_MSG_SZ-2] (since we
+	   reserved one for NUL). */
+	size_t total_len = (size_t)header_len + actual_msg_len;
+	if (total_len + 1 < MAX_LOG_MSG_SZ)
 	{
-		/* OOM: drop message, fallback to fprintf */
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: log arena OOM, dropping message: %s", buffer);
-		return;
+		/* room for newline and NUL */
+		if (buffer[total_len - 1] != '\n')
+		{
+			buffer[total_len]     = '\n';
+			buffer[total_len + 1] = '\0';
+		}
+		else
+			buffer[total_len] = '\0';
+	}
+	else
+	{
+		/* truncated — ensure NUL at final position */
+		buffer[MAX_LOG_MSG_SZ - 1] = '\0';
 	}
 
-	char *log_msg = arena_strdup(log_system.arena, buffer);
-	if (!log_msg)
-	{
-		/* Failed to allocate message body — free the entry and drop */
-		arena_free(log_system.arena, entry);
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: log arena OOM (msg), dropping: %s", buffer);
-		return;
-	}
-	pthread_mutex_unlock(&log_system.arena_lock);
-
-	entry->type = Q_ENTRY_LOG;
-	entry->data = log_msg;
-
-	if (q_enq(log_system.queue, entry) != 0)
-	{
-		/* queue full -> drop and free under lock */
-		pthread_mutex_lock(&log_system.arena_lock);
-		arena_free(log_system.arena, log_msg);
-		arena_free(log_system.arena, entry);
-		pthread_mutex_unlock(&log_system.arena_lock);
-		fprintf(stderr, "WARNING: logging queue full, dropping: %s", log_msg);
-	}
+	/* Commit the message to the ring */
+	mpsc_ring_commit(log_system.ring, handle);
 }

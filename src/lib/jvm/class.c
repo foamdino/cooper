@@ -7,7 +7,7 @@
 #include "class.h"
 
 /*
-A set of functions to read data from a class file:
+A set of functions to read/write data to/from a class file:
 
 ClassFile {
     u4             magic;
@@ -29,9 +29,18 @@ ClassFile {
 }
 */
 
+/* Read a byte */
+u1
+read_u1_and_advance(const u1 *data, int *offset)
+{
+	u1 v = (data[*offset]);
+	(*offset)++;
+	return v;
+}
+
 /* Read big endian 16bit value */
 u2
-read_u2(const u1 *data, int *offset)
+read_u2_and_advance(const u1 *data, int *offset)
 {
 	u2 v = (data[*offset] << 8) | data[*offset + 1];
 	*offset += 2;
@@ -40,10 +49,55 @@ read_u2(const u1 *data, int *offset)
 
 /* Read big endian 32bit value */
 u4
-read_u4(const u1 *data, int *offset)
+read_u4_and_advance(const u1 *data, int *offset)
 {
 	u4 v = (data[*offset] << 24) | (data[*offset + 1] << 16)
 	       | (data[*offset + 2] << 8) | data[*offset + 3];
 	*offset += 4;
 	return v;
+}
+
+u2
+read_u2(const u1 *data)
+{
+	u2 v = (data[0] << 8) | data[1];
+	return v;
+}
+
+u4
+read_u4(const u1 *data)
+{
+	u4 v = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+	return v;
+}
+
+void
+write_u1_and_advance(u1 *data, int *offset, u1 value)
+{
+	data[(*offset)++] = value;
+}
+
+void
+write_u2_and_advance(u1 *data, int *offset, u2 value)
+{
+	data[(*offset)++] = (u1)(value >> 8);
+	data[(*offset)++] = (u1)(value & 0xFF);
+}
+
+void
+write_u4_and_advance(u1 *data, int *offset, u4 value)
+{
+	data[(*offset)++] = (u1)(value >> 24);
+	data[(*offset)++] = (u1)(value >> 16);
+	data[(*offset)++] = (u1)(value >> 8);
+	data[(*offset)++] = (u1)(value & 0xFF);
+}
+
+void
+write_u4(u1 *dest, u4 value)
+{
+	dest[0] = (u1)(value >> 24);
+	dest[1] = (u1)(value >> 16);
+	dest[2] = (u1)(value >> 8);
+	dest[3] = (u1)value;
 }

@@ -7,18 +7,17 @@
 #ifndef LOG_H
 #define LOG_H
 
-#include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
 #include <assert.h>
-
-#include "arena.h"
-#include "arena_str.h"
+#include <unistd.h>
+#include <sched.h>
 #include "thread_util.h"
-#include "q.h"
+#include <stdio.h>
+#include "ring/mpsc_ring.h"
 
 /* Maximum size of a log message */
 #define MAX_LOG_MSG_SZ 1024
@@ -38,24 +37,22 @@ enum log_level
 
 struct log_system
 {
-	q_t *queue;
-	arena_t *arena;
+	mpsc_ring_t *ring;
 	FILE *log_file;
 	pthread_t log_thread;
-	pthread_mutex_t arena_lock;
 	int initialized;
 };
 
 struct log_thread_params
 {
-	q_t *queue;
+	mpsc_ring_t *ring;
 	FILE *log_file;
 };
 
 extern log_level_e current_log_level;
 
 /* Initialize the logging system */
-int init_log_system(q_t *queue, arena_t *arena, FILE *log_file);
+int init_log_system(mpsc_ring_t *ring, FILE *log_file);
 
 /* Clean up the logging system
 Assumes that the log system has been correct initialised via init_log_system

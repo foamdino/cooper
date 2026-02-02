@@ -32,8 +32,9 @@
 #include "../lib/thread_util.h"
 #include "../lib/heap.h"
 #include "../lib/ht.h"
-#include "../lib/q.h"
 #include "../lib/ring/ring_channel.h"
+#include "../lib/jvm/class.h"
+#include "../lib/jvm/injection.h"
 
 /* agent includes */
 #include "cooper_types.h"
@@ -50,60 +51,34 @@
 #define MAX_MEMORY_SAMPLES  100  /**< The max number of memory samples to keep */
 #define MAX_OBJECT_TYPES    2048 /**< The max types of objects to track */
 #define CALL_STACK_CHANNEL_CAPACITY                                                      \
-	4096 /**< The max num of elements in the ring channel */
+	4096                      /**< The max num of elements in the ring channel */
+#define LOG_RING_CAPACITY    1024 /**< Max number of log messages in ring */
+#define METHOD_RING_CAPACITY 4096 /**< Max number of method events in ring */
+#define MAX_METHOD_EVENT_SZ  512  /**< Max size of a method event message */
+#define CLASS_RING_CAPACITY  1024 /**< Max number of class events in ring */
+#define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
-#define EXCEPTION_ARENA_SZ    1024 * 1024
-#define LOG_ARENA_SZ          1024 * 1024
-#define SAMPLE_ARENA_SZ       2048 * 1024
-#define CONFIG_ARENA_SZ       512 * 1024
-#define METRICS_ARENA_SZ      8 * 1024 * 1024
-#define SCRATCH_ARENA_SZ      16 * 1024 * 1024
-#define CLASS_CACHE_ARENA_SZ  12 * 1024 * 1024
-#define Q_ENTRY_ARENA_SZ      2048 * 1024
-#define CALL_STACK_ARENA_SZ   64 * 1024 * 1024
-#define FLAMEGRAPH_ARENA_SZ   1024 * 1024
-#define METHOD_CACHE_ARENA_SZ 2 * 1024 * 1024
-
-/* Arena Counts - Amount of blocks for each arena */
-#define EXCEPTION_ARENA_BLOCKS    1024
-#define LOG_ARENA_BLOCKS          1024
-#define EVENT_ARENA_BLOCKS        1024
-#define SAMPLE_ARENA_BLOCKS       1024
-#define CONFIG_ARENA_BLOCKS       1024
-#define METRICS_ARENA_BLOCKS      1024
-#define CLASS_CACHE_ARENA_BLOCKS  1024
-#define SCRATCH_ARENA_BLOCKS      1024
-#define Q_ENTRY_ARENA_BLOCKS      1024
-#define CALL_STACK_ARENA_BLOCKS   1024
-#define FLAMEGRAPH_ARENA_BLOCKS   1024
-#define METHOD_CACHE_ARENA_BLOCKS 1024
+#define CONFIG_ARENA_SZ      512 * 1024
+#define METRICS_ARENA_SZ     2 * 1024 * 1024
+#define HEAP_STATS_ARENA_SZ  8 * 1024 * 1024
+#define CLASS_CACHE_ARENA_SZ 4 * 1024 * 1024
+#define FLAMEGRAPH_ARENA_SZ  1024 * 1024
+#define BYTECODE_ARENA_SZ    4 * 1024 * 1024
 
 /* Arena Names */
-#define EXCEPTION_ARENA_NAME    "exception_arena"
-#define LOG_ARENA_NAME          "log_arena"
-#define SAMPLE_ARENA_NAME       "sample_arena"
-#define CONFIG_ARENA_NAME       "config_arena"
-#define METRICS_ARENA_NAME      "metrics_arena"
-#define CLASS_CACHE_ARENA_NAME  "class_cache_arena"
-#define SCRATCH_ARENA_NAME      "scratch_arena"
-#define Q_ENTRY_ARENA_NAME      "q_entry_arena"
-#define CALL_STACK_ARENA_NAME   "call_stack_arena"
-#define FLAMEGRAPH_ARENA_NAME   "flamegraph_arena"
-#define METHOD_CACHE_ARENA_NAME "method_cache_arena"
+#define CONFIG_ARENA_NAME      "config_arena"
+#define METRICS_ARENA_NAME     "metrics_arena"
+#define CLASS_CACHE_ARENA_NAME "class_cache_arena"
+#define HEAP_STATS_ARENA_NAME  "heap_stats_arena"
+#define FLAMEGRAPH_ARENA_NAME  "flamegraph_arena"
+#define BYTECODE_ARENA_NAME    "bytecode_arena"
 
 /* Ok/Err */
-#define COOPER_OK  0
-#define COOPER_ERR 1
+#define COOPER_OK        0
+#define COOPER_ERR       1
 
-/* Method cache */
-#define METHOD_CACHE_NAME        "method_cache"
-#define METHOD_CACHE_MAX_ENTRIES 16
-
-#define MIN_HASH_SIZE            1000
-#define MAX_HASH_SIZE            20000
-
-#define MAX_STACK_FRAMES         64
+#define MAX_STACK_FRAMES 64
 
 typedef struct package_filter package_filter_t;
 typedef struct config config_t;
@@ -123,34 +98,33 @@ typedef struct object_allocation_metrics object_allocation_metrics_t;
 typedef struct heap_iteration_context heap_iteration_context_t;
 typedef struct callbacks callbacks_t;
 
-typedef struct method_info method_info_t;
-typedef struct class_info class_info_t;
+typedef struct cooper_method_info cooper_method_info_t;
+typedef struct cooper_class_info cooper_class_info_t;
+
+typedef enum thread_id thread_id_e;
 
 enum arenas
 {
-	EXCEPTION_ARENA_ID,
-	LOG_ARENA_ID,
-	SAMPLE_ARENA_ID,
 	CONFIG_ARENA_ID,
 	METRICS_ARENA_ID,
-	SCRATCH_ARENA_ID,
+	HEAP_STATS_ARENA_ID,
 	CLASS_CACHE_ARENA_ID,
-	Q_ENTRY_ARENA_ID,
-	CALL_STACK_ARENA_ID,
 	FLAMEGRAPH_ARENA_ID,
-	METHOD_CACHE_ARENA_ID,
+	BYTECODE_ARENA_ID,
 	ARENA_ID__LAST
 };
 
-enum thread_workers_status
+enum thread_id
 {
-	EXPORT_RUNNING            = (1 << 0),
-	MEM_SAMPLING_RUNNING      = (1 << 1),
-	SHM_EXPORT_RUNNING        = (1 << 2),
-	HEAP_STATS_RUNNING        = (1 << 3),
-	CLASS_CACHE_RUNNING       = (1 << 4),
-	CALL_STACK_RUNNNG         = (1 << 5),
-	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6)
+	THREAD_ID_EXPORT,
+	THREAD_ID_MEM_SAMPLING,
+	THREAD_ID_HEAP_STATS,
+	THREAD_ID_SHM_EXPORT,
+	THREAD_ID_CLASS_CACHE,
+	THREAD_ID_CALL_STACK,
+	THREAD_ID_FLAMEGRAPH,
+	THREAD_ID_METHOD_EVENTS,
+	THREAD_ID__COUNT
 };
 
 struct call_stack_sample
@@ -176,26 +150,27 @@ struct method_metrics_soa
 	char **signatures; /**< Array of method signatures */
 	int *sample_rates; /**< Configured sample rate for each method */
 
+	/* Flags for which metrics are collected for each method */
+	unsigned int *metric_flags;
+
 	/* Counters */
-	uint64_t *call_counts; /**< Number of times each method has been called */
+	_Atomic(uint64_t)
+	    *call_counts; /**< Number of times each method has been called */
 	// uint64_t *sample_counts; /**< Number of times each method has been sampled */
 
 	/* Timing metrics */
-	uint64_t *total_time_ns; /**< Total execution time in nanoseconds */
-	uint64_t *min_time_ns;   /**< Minimum execution time */
-	uint64_t *max_time_ns;   /**< Maximum execution time */
+	_Atomic(uint64_t) *total_time_ns; /**< Total execution time in nanoseconds */
+	_Atomic(uint64_t) *min_time_ns;   /**< Minimum execution time */
+	_Atomic(uint64_t) *max_time_ns;   /**< Maximum execution time */
 
 	/* Memory metrics */
-	uint64_t *alloc_bytes; /**< Total bytes allocated */
-	uint64_t *peak_memory; /**< Peak memory usage */
+	_Atomic(uint64_t) *alloc_bytes; /**< Total bytes allocated */
+	_Atomic(uint64_t) *peak_memory; /**< Peak memory usage */
 
 	/* CPU metrics */
-	uint64_t *cpu_cycles; /**< CPU cycles used */
+	_Atomic(uint64_t) *cpu_cycles; /**< CPU cycles used */
 
-	uint64_t *call_sample_counts; /**< Call stack sample counts */
-
-	/* Flags for which metrics are collected for each method */
-	unsigned int *metric_flags;
+	_Atomic(uint64_t) *call_sample_counts; /**< Call stack sample counts */
 };
 
 struct app_memory_metrics
@@ -222,14 +197,14 @@ struct object_allocation_metrics
 
 	char **class_signatures; /**< Array of class signatures */
 
-	uint64_t *allocation_counts; /**< Number of instances allocated */
-	uint64_t *total_bytes;       /**< Total bytes allocated for this type */
-	uint64_t *peak_instances;    /**< Peak number of live instances */
-	uint64_t *current_instances; /**< Current live instances */
+	_Atomic(uint64_t) *allocation_counts; /**< Number of instances allocated */
+	_Atomic(uint64_t) *total_bytes;       /**< Total bytes allocated for this type */
+	_Atomic(uint64_t) *peak_instances;    /**< Peak number of live instances */
+	_Atomic(uint64_t) *current_instances; /**< Current live instances */
 
-	uint64_t *min_size; /**< Min object size seen */
-	uint64_t *max_size; /**< Max object size seen */
-	uint64_t *avg_size; /**< Avg object size seen */
+	_Atomic(uint64_t) *min_size; /**< Min object size seen */
+	_Atomic(uint64_t) *max_size; /**< Max object size seen */
+	_Atomic(uint64_t) *avg_size; /**< Avg object size seen */
 };
 
 /**
@@ -270,7 +245,6 @@ struct method_sample
 	uint64_t start_stack_depth;   /**< Starting stack depth */
 	uint64_t current_alloc_bytes; /**< Running total of allocations during method */
 	uint64_t start_cpu;           /**< Starting CPU cycle count */
-	method_sample_t *parent;      /**< Parent (or calling) method */
 };
 
 struct object_ref_info
@@ -308,12 +282,11 @@ struct callbacks
 
 struct thread_context
 {
-	int stack_depth; /**< Depth of call stack */
-	method_sample_t
-	    *sample; /**< Current top of method sample stack - most recent call */
+	int stack_depth;                           /**< Depth of call stack */
+	method_sample_t samples[MAX_STACK_FRAMES]; /**< Fixed array of samples */
 };
 
-struct method_info
+struct cooper_method_info
 {
 	jmethodID method_id;
 	char *method_name;
@@ -322,12 +295,13 @@ struct method_info
 	char *full_name;
 };
 
-struct class_info
+struct cooper_class_info
 {
+	jclass global_ref; /**< GlobalRef to the class, valid across threads */
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
 	uint32_t method_count;
-	method_info_t *methods; /**< Array of methods for this class */
+	cooper_method_info_t *methods; /**< Array of methods for this class */
 };
 
 struct thread_alloc
@@ -357,16 +331,10 @@ struct config
 
 struct thread_manager_ctx
 {
-	unsigned int worker_statuses;  /**< Bitfield flags for background worker threads -
-	                                      see thread_workers_status */
-	pthread_t export_thread;       /**< Export background thread */
-	pthread_t mem_sampling_thread; /**< Mem sampling background thread */
-	pthread_t shm_export_thread;   /**< Export via shared mem background thread */
-	pthread_t heap_stats_thread;   /**< Heap stats background thread */
-	pthread_t class_cache_thread;  /**< Class caching background thread */
-	pthread_t call_stack_sample_thread; /**< Call stack sampling background thread */
-	pthread_t flamegraph_export_thread; /**< Flamegraph export background thread */
-	pthread_mutex_t samples_lock;       /**< Lock for sample arrays */
+	pthread_t threads[THREAD_ID__COUNT];
+	unsigned int worker_statuses; /**< Bitfield flags for background worker threads -
+	                                     see thread_workers_status */
+	pthread_mutex_t samples_lock; /**< Lock for sample arrays */
 };
 
 struct agent_context
@@ -381,13 +349,15 @@ struct agent_context
 	FILE *log_file;                    /**< Log output file */
 	pthread_t log_thread;              /**< Logging thread */
 	thread_manager_ctx_t tm_ctx;       /**< Holds state/threads for thread_manager */
+	mpsc_ring_t log_ring;              /**< MPSC ring for logging */
+	mpsc_ring_t method_ring;           /**< MPSC ring for method events */
+	mpsc_ring_t class_ring;            /**< MPSC ring for class events */
 	ring_channel_t call_stack_channel; /**< ring channel for call stacks */
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */
-	q_t *class_queue;                  /**< q for class caching background thread */
 	arena_t *arenas[ARENA_ID__LAST];   /**< Array of arenas */
 	hashtable_t
-	    *interesting_classes; /**< Hashtable of scanned classes we care about */
+	    *class_info_by_name; /**< Hashtable: class_sig -> cooper_class_info_t* */
 	hashtable_t *interesting_methods; /**< Hashtable of methods we care about */
 	method_metrics_soa_t *metrics;    /**< Method metrics in SoA format */
 	app_memory_metrics_t *app_memory_metrics; /**< App level metrics in SoA format */
@@ -410,6 +380,13 @@ pattern_filter_entry_t *find_matching_filter(const pattern_filter_t *filter,
                                              const char *method_name,
                                              const char *method_sig);
 
+thread_context_t *get_thread_local_context();
+method_sample_t *init_method_sample(arena_t *arena,
+                                    int method_index,
+                                    jmethodID method_id,
+                                    uint64_t timestamp,
+                                    uint64_t cpu);
+
 /* Metrics management functions */
 method_metrics_soa_t *init_method_metrics(arena_t *arena, size_t initial_capacity);
 int add_method_to_metrics(agent_context_t *ctx,
@@ -417,11 +394,6 @@ int add_method_to_metrics(agent_context_t *ctx,
                           int sample_rate,
                           unsigned int flags);
 int find_method_index(method_metrics_soa_t *metrics, const char *signature);
-void record_method_execution(agent_context_t *ctx,
-                             int method_index,
-                             uint64_t exec_time_ns,
-                             uint64_t memory_bytes,
-                             uint64_t cycles);
 
 /* Export functions */
 void export_to_file(agent_context_t *ctx);
@@ -435,7 +407,7 @@ hash_string(const void *key, size_t capacity)
 {
 	assert(key != NULL);
 	assert(capacity > 0);
-	const char *str = key;
+	const char *str = (const char *)key;
 
 	size_t hash = 5381;
 	int c;

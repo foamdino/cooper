@@ -8,10 +8,19 @@
 #define COOPER_TYPES_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <jvmti.h>
 
 typedef struct package_filter package_filter_t;
-typedef struct class_q_entry class_q_entry_t;
+typedef struct serialized_method_event serialized_method_event_t;
+typedef struct serialized_class_event serialized_class_event_t;
+typedef enum method_event_type method_event_type_e;
+
+enum method_event_type
+{
+	METHOD_ENTRY,
+	METHOD_EXIT
+};
 
 /* Metric flags for method sampling */
 enum metric_flags
@@ -29,11 +38,27 @@ struct package_filter
 	size_t num_packages;
 };
 
-struct class_q_entry
+struct serialized_method_event
 {
-	jclass klass;       /**< Class reference to process */
-	char *class_sig;    /**< Class signature (for logging) */
-	char **annotations; /**< Array of annotations */
+	method_event_type_e type;
+	jclass klass;
+	uint64_t timestamp;
+	uint64_t cpu;
+	uint64_t thread_id;
+	uint16_t class_name_len;
+	uint16_t method_name_len;
+	uint16_t method_sig_len;
+	/* Variable length data follows: class_name, method_name, method_sig (all null
+	 * terminated) */
+	char data[];
+};
+
+struct serialized_class_event
+{
+	jclass klass; /* Global ref */
+	uint16_t class_sig_len;
+	/* Variable length data follows: class_sig (null terminated) */
+	char data[];
 };
 
 #endif /* COOPER_TYPES_H */

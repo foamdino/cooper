@@ -1,0 +1,302 @@
+[
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena_str.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/arena_str.c -o build/arena_str.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/heap.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/heap.c -o build/heap.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ht.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/ht.c -o build/ht.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/class.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/jvm/class.c -o build/class.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/opcode.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/jvm/opcode.c -o build/opcode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/bytecode.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/jvm/bytecode.c -o build/bytecode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/injection.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/jvm/injection.c -o build/injection.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/proc_mem.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/proc_mem.c -o build/proc_mem.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/ring/ring.c -o build/ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_channel.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/ring/ring_channel.c -o build/ring_channel.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_store.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/ring/ring_store.c -o build/ring_store.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/mpsc_ring.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/ring/mpsc_ring.c -o build/mpsc_ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/thread_util.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/thread_util.c -o build/thread_util.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/arena.c -o build/arena.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/log.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/lib/log.c -o build/log.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_ring.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_ring.c -o build/cooper_ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_shm.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_shm.c -o build/cooper_shm.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/config.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/config.c -o build/config.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_threads.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -DENABLE_INFO_LOGS -O2 -pthread -lrt -c src/agent/cooper_threads.c -o build/cooper_threads.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena_str.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/arena_str.c -o build/arena_str.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/heap.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/heap.c -o build/heap.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ht.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ht.c -o build/ht.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/class.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/class.c -o build/class.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/opcode.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/opcode.c -o build/opcode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/bytecode.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/bytecode.c -o build/bytecode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/injection.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/injection.c -o build/injection.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/proc_mem.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/proc_mem.c -o build/proc_mem.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring.c -o build/ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_channel.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring_channel.c -o build/ring_channel.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_store.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring_store.c -o build/ring_store.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/mpsc_ring.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/mpsc_ring.c -o build/mpsc_ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/thread_util.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/thread_util.c -o build/thread_util.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/arena.c -o build/arena.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/log.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/log.c -o build/log.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_ring.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_ring.c -o build/cooper_ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_shm.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_shm.c -o build/cooper_shm.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/config.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/config.c -o build/config.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper.c -o build/cooper.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/agent/cooper_threads.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/agent/cooper_threads.c -o build/cooper_threads.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/test/test_cooper.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/test/test_cooper.c -o build/test_cooper.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/tui/tui.c",
+    "command": "cc -Wall -Wextra -shared -fPIC -c src/tui/tui.c -o build/tui.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/tui/tui_loader.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -Isrc -g -lrt -ldl -c src/tui/tui_loader.c -o build/tui_loader.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/cli/cli.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -Isrc -g -lrt -ldl -c src/cli/cli.c -o build/cli.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena_str.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/arena_str.c -o build/arena_str.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/heap.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/heap.c -o build/heap.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ht.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ht.c -o build/ht.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/class.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/class.c -o build/class.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/opcode.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/opcode.c -o build/opcode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/bytecode.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/bytecode.c -o build/bytecode.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/jvm/injection.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/jvm/injection.c -o build/injection.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/proc_mem.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/proc_mem.c -o build/proc_mem.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring.c -o build/ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_channel.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring_channel.c -o build/ring_channel.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/ring_store.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/ring_store.c -o build/ring_store.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/ring/mpsc_ring.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/ring/mpsc_ring.c -o build/mpsc_ring.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/thread_util.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/thread_util.c -o build/thread_util.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/arena.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/arena.c -o build/arena.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/lib/log.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/lib/log.c -o build/log.o"
+  },
+  {
+    "directory": "/home/kev/projects/cooper",
+    "file": "src/test/test_bytecode.c",
+    "command": "cc -Wall -Wextra -fPIC -I/home/kev/.sdkman/candidates/java/current/include -I/home/kev/.sdkman/candidates/java/current/include/linux -I. -g -pthread -lrt -c src/test/test_bytecode.c -o build/test_bytecode.o"
+  }
+]

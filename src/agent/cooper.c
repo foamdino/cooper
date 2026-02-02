@@ -5,7 +5,9 @@
  */
 
 #include "cooper.h"
-#include "cooper_thread_manager.h"
+#include "cooper_threads.h"
+#include "src/lib/log.h"
+#include <stdio.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -15,21 +17,52 @@ static pthread_once_t tls_init_once = PTHREAD_ONCE_INIT;
 
 /* Arena configurations */
 /* clang-format off */
-static const arena_config_t arena_configs[] = 
+static const arena_config_t arena_configs[] =
 {
-    {EXCEPTION_ARENA_ID, EXCEPTION_ARENA_NAME, EXCEPTION_ARENA_SZ, EXCEPTION_ARENA_BLOCKS},
-    {LOG_ARENA_ID, LOG_ARENA_NAME, LOG_ARENA_SZ, LOG_ARENA_BLOCKS},
-    {SAMPLE_ARENA_ID, SAMPLE_ARENA_NAME, SAMPLE_ARENA_SZ, SAMPLE_ARENA_BLOCKS},
-    {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ, CONFIG_ARENA_BLOCKS},
-    {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ, METRICS_ARENA_BLOCKS},
-    {SCRATCH_ARENA_ID, SCRATCH_ARENA_NAME, SCRATCH_ARENA_SZ, SCRATCH_ARENA_BLOCKS},
-    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ, CLASS_CACHE_ARENA_BLOCKS},
-    {Q_ENTRY_ARENA_ID, Q_ENTRY_ARENA_NAME, Q_ENTRY_ARENA_SZ, Q_ENTRY_ARENA_BLOCKS},
-	{CALL_STACK_ARENA_ID, CALL_STACK_ARENA_NAME, CALL_STACK_ARENA_SZ, CALL_STACK_ARENA_BLOCKS},
-	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ, FLAMEGRAPH_ARENA_BLOCKS},
-	{METHOD_CACHE_ARENA_ID, METHOD_CACHE_ARENA_NAME, METHOD_CACHE_ARENA_SZ, METHOD_CACHE_ARENA_BLOCKS}
+    {CONFIG_ARENA_ID, CONFIG_ARENA_NAME, CONFIG_ARENA_SZ},
+    {METRICS_ARENA_ID, METRICS_ARENA_NAME, METRICS_ARENA_SZ},
+    {HEAP_STATS_ARENA_ID, HEAP_STATS_ARENA_NAME, HEAP_STATS_ARENA_SZ},
+    {CLASS_CACHE_ARENA_ID, CLASS_CACHE_ARENA_NAME, CLASS_CACHE_ARENA_SZ},
+	{FLAMEGRAPH_ARENA_ID, FLAMEGRAPH_ARENA_NAME, FLAMEGRAPH_ARENA_SZ},
+	{BYTECODE_ARENA_ID, BYTECODE_ARENA_NAME, BYTECODE_ARENA_SZ}
+};
+
+/* Output from xxd -i */
+static const signed char TRACKER_CLASS_BYTECODE[] =
+{
+  0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x34, 0x00, 0x10, 0x0a, 0x00,
+  0x02, 0x00, 0x03, 0x07, 0x00, 0x04, 0x0c, 0x00, 0x05, 0x00, 0x06, 0x01,
+  0x00, 0x10, 0x6a, 0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f,
+  0x4f, 0x62, 0x6a, 0x65, 0x63, 0x74, 0x01, 0x00, 0x06, 0x3c, 0x69, 0x6e,
+  0x69, 0x74, 0x3e, 0x01, 0x00, 0x03, 0x28, 0x29, 0x56, 0x07, 0x00, 0x08,
+  0x01, 0x00, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x67, 0x69, 0x74, 0x68, 0x75,
+  0x62, 0x2f, 0x66, 0x6f, 0x61, 0x6d, 0x64, 0x69, 0x6e, 0x6f, 0x2f, 0x63,
+  0x6f, 0x6f, 0x70, 0x65, 0x72, 0x2f, 0x61, 0x67, 0x65, 0x6e, 0x74, 0x2f,
+  0x4e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x54, 0x72, 0x61, 0x63, 0x6b, 0x65,
+  0x72, 0x01, 0x00, 0x04, 0x43, 0x6f, 0x64, 0x65, 0x01, 0x00, 0x0f, 0x4c,
+  0x69, 0x6e, 0x65, 0x4e, 0x75, 0x6d, 0x62, 0x65, 0x72, 0x54, 0x61, 0x62,
+  0x6c, 0x65, 0x01, 0x00, 0x0d, 0x6f, 0x6e, 0x4d, 0x65, 0x74, 0x68, 0x6f,
+  0x64, 0x45, 0x6e, 0x74, 0x72, 0x79, 0x01, 0x00, 0x39, 0x28, 0x4c, 0x6a,
+  0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72,
+  0x69, 0x6e, 0x67, 0x3b, 0x4c, 0x6a, 0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61,
+  0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x3b, 0x4c, 0x6a,
+  0x61, 0x76, 0x61, 0x2f, 0x6c, 0x61, 0x6e, 0x67, 0x2f, 0x53, 0x74, 0x72,
+  0x69, 0x6e, 0x67, 0x3b, 0x29, 0x56, 0x01, 0x00, 0x0c, 0x6f, 0x6e, 0x4d,
+  0x65, 0x74, 0x68, 0x6f, 0x64, 0x45, 0x78, 0x69, 0x74, 0x01, 0x00, 0x0a,
+  0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x46, 0x69, 0x6c, 0x65, 0x01, 0x00,
+  0x12, 0x4e, 0x61, 0x74, 0x69, 0x76, 0x65, 0x54, 0x72, 0x61, 0x63, 0x6b,
+  0x65, 0x72, 0x2e, 0x6a, 0x61, 0x76, 0x61, 0x00, 0x21, 0x00, 0x07, 0x00,
+  0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0x00,
+  0x06, 0x00, 0x01, 0x00, 0x09, 0x00, 0x00, 0x00, 0x1d, 0x00, 0x01, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x05, 0x2a, 0xb7, 0x00, 0x01, 0xb1, 0x00, 0x00,
+  0x00, 0x01, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00,
+  0x00, 0x03, 0x01, 0x09, 0x00, 0x0b, 0x00, 0x0c, 0x00, 0x00, 0x01, 0x09,
+  0x00, 0x0d, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x01, 0x00, 0x0e, 0x00, 0x00,
+  0x00, 0x02, 0x00, 0x0f
 };
 /* clang-format on */
+
+static const char *TRACKER_CLASS = "com/github/foamdino/cooper/agent/NativeTracker";
 
 /* Get current time in nanoseconds */
 uint64_t
@@ -49,12 +82,12 @@ debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 		return;
 
 	LOG_DEBUG("Method stack dump (depth=%d):\n", tc->stack_depth);
-
-	method_sample_t *current = tc->sample;
-	int level                = 0;
-
-	while (current && level < 20) /* Have a depth cutoff */
+	/* Iterate from top of stack down */
+	int level = 0;
+	for (int i = tc->stack_depth - 1; i >= 0 && level < 20; i--)
 	{
+		method_sample_t *current = &tc->samples[i];
+
 		/* Get method details */
 		char *method_name = NULL;
 		char *method_sig  = NULL;
@@ -85,7 +118,6 @@ debug_dump_method_stack(agent_context_t *ctx, thread_context_t *tc)
 			          current->method_id,
 			          current->method_index);
 
-		current = current->parent;
 		level++;
 	}
 }
@@ -96,11 +128,8 @@ destroy_thread_context(void *data)
 {
 	thread_context_t *tc = (thread_context_t *)data;
 
-	/* We can ignore cleaning up the method_samples
-	as they are arena allocated*/
 	if (tc)
 	{
-		tc->sample      = NULL;
 		tc->stack_depth = 0;
 		free(tc);
 	}
@@ -120,7 +149,7 @@ init_thread_local_storage()
 }
 
 /* Get the thread-local sample structure */
-static thread_context_t *
+thread_context_t *
 get_thread_local_context()
 {
 	init_thread_local_storage();
@@ -132,7 +161,6 @@ get_thread_local_context()
 		context = calloc(1, sizeof(thread_context_t));
 		if (context)
 		{
-			context->sample      = NULL;
 			context->stack_depth = 0;
 			pthread_setspecific(context_key, context);
 		}
@@ -161,121 +189,9 @@ get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buff
 	if (tag == 0)
 		return COOPER_ERR;
 
-	class_info_t *info = (class_info_t *)(intptr_t)tag;
-	*output_buffer     = info->class_sig;
+	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
+	*output_buffer            = info->class_sig;
 	return COOPER_OK;
-}
-
-/**
- * Initialise a method_sample_t structure
- *
- * Return NULL if it fails to allocate space in the provided arena
- */
-static method_sample_t *
-init_method_sample(arena_t *arena, int method_index, jmethodID method_id)
-{
-
-	assert(arena != NULL);
-	assert(method_id != NULL);
-	assert(method_index >= 0);
-
-	if (!arena || method_index < 0 || !method_id)
-		return NULL;
-
-	method_sample_t *sample = arena_alloc(arena, sizeof(method_sample_t));
-	if (!sample)
-		return NULL;
-
-	/* Initialise sample */
-	sample->method_index = method_index;
-	sample->method_id    = method_id;
-	/* current_alloc_bytes and parent already zero-initialized by arena_alloc */
-
-	unsigned int flags = global_ctx->metrics->metric_flags[method_index];
-
-	if (flags & METRIC_FLAG_TIME)
-		sample->start_time = get_current_time_ns();
-
-	if (flags & METRIC_FLAG_CPU)
-		sample->start_cpu = cycles_start();
-
-	return sample;
-}
-
-/* Record method execution metrics */
-void
-record_method_execution(agent_context_t *ctx,
-                        int method_index,
-                        uint64_t exec_time_ns,
-                        uint64_t memory_bytes,
-                        uint64_t cycles)
-{
-	method_metrics_soa_t *metrics = ctx->metrics;
-
-	// LOG_DEBUG("Recording metrics for index: %d, time=%lu, memory=%lu,
-	// cycles=%lu\n",
-	//           method_index,
-	//           (unsigned long)exec_time_ns,
-	//           (unsigned long)memory_bytes,
-	//           (unsigned long)cycles);
-
-	/* Check for valid index */
-	if (method_index < 0 || (size_t)method_index >= metrics->count)
-	{
-		LOG_WARN("WARNING: method_index: %d not found in soa struct\n",
-		         method_index);
-		return;
-	}
-
-	// /* Update sample count */
-	// atomic_fetch_add_explicit(&metrics->sample_counts[method_index], 1,
-	// memory_order_relaxed);
-
-	/* Update timing metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_TIME) != 0)
-	{
-		atomic_fetch_add_explicit(&metrics->total_time_ns[method_index],
-		                          exec_time_ns,
-		                          memory_order_relaxed);
-
-		/* Update min/max */
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-
-		if (exec_time_ns < metrics->min_time_ns[method_index])
-			metrics->min_time_ns[method_index] = exec_time_ns;
-
-		if (exec_time_ns > metrics->max_time_ns[method_index])
-			metrics->max_time_ns[method_index] = exec_time_ns;
-
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
-
-	/* Update memory metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_MEMORY) != 0)
-	{
-		atomic_fetch_add_explicit(&metrics->alloc_bytes[method_index],
-		                          memory_bytes,
-		                          memory_order_relaxed);
-
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-
-		if (memory_bytes > metrics->peak_memory[method_index])
-			metrics->peak_memory[method_index] = memory_bytes;
-
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
-
-	/* Update CPU metrics if enabled */
-	if ((metrics->metric_flags[method_index] & METRIC_FLAG_CPU) != 0)
-		atomic_fetch_add_explicit(
-		    &metrics->cpu_cycles[method_index], cycles, memory_order_relaxed);
-
-	// LOG_DEBUG(
-	//     "Method metrics updated: index=%d, samples=%lu, total_time=%lu, alloc=%lu",
-	//     method_index,
-	//     (unsigned long)metrics->sample_counts[method_index],
-	//     (unsigned long)metrics->total_time_ns[method_index],
-	//     (unsigned long)metrics->alloc_bytes[method_index]);
 }
 
 static object_allocation_metrics_t *
@@ -346,18 +262,17 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 
 	for (size_t i = 0; i < obj_metrics->count; i++)
 	{
-		if (obj_metrics->class_signatures[i] != NULL)
-		{
-			if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
-				return i;
-		}
-		else
+		if (obj_metrics->class_signatures[i] == NULL)
 		{
 			LOG_ERROR("class_signatures[%d] is NULL when count=%zu\n",
 			          i,
 			          obj_metrics->count);
 			return -1;
 		}
+
+		/* We found the signature */
+		if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
+			return i;
 	}
 
 	/* Do we have space to add new allocation stats? */
@@ -368,16 +283,10 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 		return -1;
 	}
 
-	arena_t *arena = global_ctx->arenas[METRICS_ARENA_ID];
-	if (!arena)
-	{
-		LOG_ERROR("unable to find metrics arena!\n");
-		return -1;
-	}
-
 	int index = obj_metrics->count;
 
-	obj_metrics->class_signatures[index] = arena_strdup(arena, class_sig);
+	obj_metrics->class_signatures[index] =
+	    arena_strdup(global_ctx->arenas[METRICS_ARENA_ID], class_sig);
 	if (!obj_metrics->class_signatures[index])
 	{
 		LOG_ERROR("Failed to allocate memory for class signature: %s\n",
@@ -395,6 +304,8 @@ find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *cl
 	return index;
 }
 
+// TODO - if we move object allocation stats to a background thread
+// this function becomes simpler - possible to remove mutex and atomics
 static void
 update_object_allocation_stats(agent_context_t *ctx,
                                const char *class_sig,
@@ -442,14 +353,17 @@ update_object_allocation_stats(agent_context_t *ctx,
  *
  */
 static char *
-get_parameter_value(arena_t *arena,
+get_parameter_value(char *buffer,
+                    size_t buffer_size,
                     jvmtiEnv *jvmti,
                     JNIEnv *jni_env,
                     jthread thread,
                     jint param_slot,
                     char param_type)
 {
-	char *result = NULL;
+	if (!buffer || buffer_size == 0)
+		return NULL;
+
 	jvalue value;
 	jvmtiError err;
 
@@ -461,11 +375,8 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				/* Allocate space for result (max int digist + sign +
-				 * null) */
-				result = arena_alloc(arena, 12);
-				if (result)
-					sprintf(result, "%d", value.i);
+				snprintf(buffer, buffer_size, "%d", value.i);
+				return buffer;
 			}
 			break;
 
@@ -475,9 +386,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.j);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 21);
-				if (result)
-					sprintf(result, "%lld", (long long)value.j);
+				snprintf(buffer, buffer_size, "%lld", (long long)value.j);
+				return buffer;
 			}
 			break;
 
@@ -487,9 +397,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.f);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 32);
-				if (result)
-					sprintf(result, "%f", value.f);
+				snprintf(buffer, buffer_size, "%f", value.f);
+				return buffer;
 			}
 			break;
 
@@ -499,10 +408,8 @@ get_parameter_value(arena_t *arena,
 			    jvmti, thread, 0, param_slot, &value.d);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				/* TODO check this as it's the same size as a float?? */
-				result = arena_alloc(arena, 32);
-				if (result)
-					sprintf(result, "%f", value.d);
+				snprintf(buffer, buffer_size, "%f", value.d);
+				return buffer;
 			}
 			break;
 
@@ -512,9 +419,11 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 6);
-				if (result)
-					sprintf(result, "%s", value.i ? "true" : "false");
+				snprintf(buffer,
+				         buffer_size,
+				         "%s",
+				         value.i ? "true" : "false");
+				return buffer;
 			}
 			break;
 
@@ -525,9 +434,8 @@ get_parameter_value(arena_t *arena,
 			    (*jvmti)->GetLocalInt(jvmti, thread, 0, param_slot, &value.i);
 			if (err == JVMTI_ERROR_NONE)
 			{
-				result = arena_alloc(arena, 12);
-				if (result)
-					sprintf(result, "%d", value.i);
+				snprintf(buffer, buffer_size, "%d", value.i);
+				return buffer;
 			}
 			break;
 
@@ -550,17 +458,13 @@ get_parameter_value(arena_t *arena,
 						jni_env, obj, NULL);
 					if (str_value)
 					{
-						result = arena_alloc(
-						    arena,
-						    strlen(str_value)
-							+ 3); /* includes quotes and null
-						               */
-						if (result)
-							sprintf(
-							    result, "\"%s\"", str_value);
-
+						snprintf(buffer,
+						         buffer_size,
+						         "\"%s\"",
+						         str_value);
 						(*jni_env)->ReleaseStringUTFChars(
 						    jni_env, obj, str_value);
+						return buffer;
 					}
 				}
 				else /* Non-string object */
@@ -583,48 +487,37 @@ get_parameter_value(arena_t *arena,
 							jni_env, str, NULL);
 						if (str_value)
 						{
-							result = arena_alloc(
-							    arena, strlen(str_value) + 1);
-							if (result)
-								strcpy(result, str_value);
-
+							snprintf(buffer,
+							         buffer_size,
+							         "%s",
+							         str_value);
 							(*jni_env)->ReleaseStringUTFChars(
 							    jni_env, str, str_value);
+							return buffer;
 						}
 					}
 					else
 					{
-						result = arena_alloc(arena, 5);
-						if (result)
-							strcpy(result, "null");
+						snprintf(buffer, buffer_size, "null");
+						return buffer;
 					}
 				}
 			}
 			else
 			{
-				result = arena_alloc(arena, 5);
-				if (result)
-					strcpy(result, "null");
+				snprintf(buffer, buffer_size, "null");
+				return buffer;
 			}
 		}
 		break;
 
 		default:
-			result = arena_alloc(arena, 16);
-			if (result)
-				sprintf(result, "<unknown type>");
-
-			break;
+			snprintf(buffer, buffer_size, "<unknown type>");
+			return buffer;
 	}
 
-	if (!result)
-	{
-		result = arena_alloc(arena, 10);
-		if (result)
-			sprintf(result, "<error>");
-	}
-
-	return result;
+	snprintf(buffer, buffer_size, "<error>");
+	return buffer;
 }
 #endif
 
@@ -645,249 +538,6 @@ find_method_index(method_metrics_soa_t *metrics, const char *signature)
 	}
 
 	return -1; /* Not found */
-}
-
-/*
- * Method entry callback
- */
-void JNICALL
-method_entry_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread, jmethodID method)
-{
-	UNUSED(jvmti);
-	UNUSED(jni);
-	UNUSED(thread);
-
-	method_info_t *method_info = ht_get(global_ctx->interesting_methods, method);
-
-	/* We either didn't find the method (should be rare) or it's not one we're
-	 * configured to sample. */
-	if (method_info == NULL || method_info->sample_index < 0)
-		return;
-
-	LOG_INFO("Found method: %s in interesting_methods hashtable",
-	         method_info->full_name);
-
-	/* We found a method to track. Atomically increment its total call count. */
-	uint64_t current_calls = atomic_fetch_add_explicit(
-	    &global_ctx->metrics->call_counts[method_info->sample_index],
-	    1,
-	    memory_order_relaxed);
-
-	int sample_rate =
-	    global_ctx->metrics
-		->sample_rates[method_info->sample_index]; /* Read-only after init */
-
-	/* Decide whether to sample this specific call based on the rate. */
-	if ((current_calls % sample_rate) != 0)
-		return; /* Don't sample this call. */
-
-	/* This call will be sampled. Proceed with creating the method_sample_t. */
-	arena_t *arena = global_ctx->arenas[SAMPLE_ARENA_ID];
-	if (!arena)
-		return;
-
-	thread_context_t *tc = get_thread_local_context();
-	if (!tc)
-		return;
-
-	method_sample_t *sample =
-	    init_method_sample(arena, method_info->sample_index, method);
-
-	if (!sample)
-		return;
-
-	/* Push the sample onto the thread's stack. */
-	sample->parent = tc->sample;
-	tc->sample     = sample;
-	tc->stack_depth++;
-
-	LOG_DEBUG(
-	    "[ENTRY] Sampling method %s.%s\n", info->class_sig, method_info->method_name);
-}
-
-/*
- * Method exit callback
- */
-void JNICALL
-method_exit_callback(jvmtiEnv *jvmti,
-                     JNIEnv *jni,
-                     jthread thread,
-                     jmethodID method,
-                     jboolean was_popped_by_exception,
-                     jvalue return_value)
-{
-	UNUSED(jni);
-	UNUSED(thread);
-	UNUSED(was_popped_by_exception);
-	UNUSED(return_value);
-
-#ifndef ENABLE_DEBUG_LOGS
-	UNUSED(jvmti);
-#endif
-
-	/* Get thread-local context */
-	thread_context_t *context = get_thread_local_context();
-
-	/* Cannot do anything without the thread_context */
-	if (!context)
-		return;
-
-	// if (!context->sample || context->sample->method_index < 0)
-	// {
-	// 	LOG_DEBUG("[method_exit_callback] context:%p context->sample:%p",
-	// 	          context,
-	// 	          context->sample);
-	// }
-
-	/* We need to look in our stack to find a corresponding method entry
-	Note that the JVM doesn't guarantee ordering of method entry/exits for a variety
-	of reasons:
-	- Threading
-	- Optimizations
-	- etc
-	*/
-	method_sample_t *current = context->sample;
-	method_sample_t *parent  = NULL;
-	method_sample_t *target  = NULL;
-
-	/* Top of stack matches - quick case */
-	if (current != NULL && current->method_id == method)
-	{
-		target          = current;
-		context->sample = current->parent; /* Pop from top of stack */
-		context->stack_depth--;
-	}
-	else if (current != NULL)
-	{
-		/* We need to search the stack for a matching method - this seems to be
-		 * the common case */
-		// LOG_DEBUG("Method exit mismatch, searching for method [%p] in
-		// stack\n");
-
-		/* Traverse stack to find target */
-		while (current)
-		{
-			if (current->method_id == method)
-			{
-				target = current;
-				/* Remove node from linked-list/stack */
-				if (parent)
-					parent->parent =
-					    current->parent; /* Skip over this node */
-				else
-					context->sample =
-					    current->parent; /* Update head of list */
-
-				context->stack_depth--;
-				break;
-			}
-			/* not found, move onto next */
-			parent  = current;
-			current = current->parent;
-		}
-	}
-
-	/* Only process the exit if it matches the current method at the top of our stack
-	 * of samples */
-	if (!target)
-	{
-		// LOG_DEBUG("No matching method found for methodID [%p]\n", method);
-		return;
-	}
-
-	// LOG_DEBUG("Matching method found for methodID [%p]\n", method);
-	unsigned int flags = 0;
-
-	if (target->method_index >= 0
-	    && (size_t)target->method_index < global_ctx->metrics->count)
-		flags = global_ctx->metrics->metric_flags[target->method_index];
-
-	/* Get metrics if they were enabled */
-	uint64_t exec_time    = 0;
-	uint64_t memory_delta = 0;
-	uint64_t cpu_delta    = 0;
-
-	/* Calculate execution time */
-	if ((flags & METRIC_FLAG_TIME) != 0 && target->start_time > 0)
-	{
-		uint64_t end_time = get_current_time_ns();
-		exec_time         = end_time - target->start_time;
-	}
-
-	if ((flags & METRIC_FLAG_MEMORY) != 0)
-	{
-		// LOG_DEBUG("sampling memory for %d\n", target->method_index);
-		/* JVM heap allocations during method execution */
-		memory_delta = target->current_alloc_bytes;
-	}
-
-	if ((flags & METRIC_FLAG_CPU) != 0)
-	{
-		uint64_t end_cpu = cycles_end();
-
-		if (end_cpu > target->start_cpu)
-			cpu_delta = end_cpu - target->start_cpu;
-		else
-			LOG_DEBUG("Invalid CPU cycles: end=%llu, start=%llu",
-			          (unsigned long long)end_cpu,
-			          (unsigned long long)target->start_cpu);
-	}
-
-	/* Record the metrics */
-	record_method_execution(
-	    global_ctx, target->method_index, exec_time, memory_delta, cpu_delta);
-
-#ifdef ENABLE_DEBUG_LOGS
-	char *method_name      = NULL;
-	char *method_signature = NULL;
-	char *class_signature  = NULL;
-	jclass declaringClass;
-	jvmtiError err;
-
-	/* Get method details for logging */
-	if (flags != 0)
-	{
-		/* Get method name */
-		err = (*jvmti)->GetMethodName(
-		    jvmti, method, &method_name, &method_signature, NULL);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("GetMethodName failed with error %d\n", err);
-			return; /* Cannot do anything in this case */
-		}
-
-		/* Get declaring class */
-		err = (*jvmti)->GetMethodDeclaringClass(jvmti, method, &declaringClass);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR("GetMethodDeclaringClass failed with error %d\n", err);
-			goto deallocate;
-		}
-
-		/* Get class signature */
-		err = (*jvmti)->GetClassSignature(
-		    jvmti, declaringClass, &class_signature, NULL);
-		if (err != JVMTI_ERROR_NONE)
-		{
-			LOG_ERROR(" GetClassSignature failed with error %d\n", err);
-			goto deallocate;
-		}
-
-		LOG_INFO("[EXIT] Method %s.%s%s executed in %llu ns, memory delta: %llu "
-		         "bytes\n",
-		         class_signature,
-		         method_name,
-		         method_signature,
-		         (unsigned long long)exec_time,
-		         (unsigned long long)memory_delta);
-	}
-
-deallocate:
-	/* Deallocate memory allocated by JVMTI */
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_name);
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)method_signature);
-	(*jvmti)->Deallocate(jvmti, (unsigned char *)class_signature);
-#endif
 }
 
 /**
@@ -1011,15 +661,6 @@ exception_callback(jvmtiEnv *jvmti_env,
 		int param_idx = 0;
 		int slot = is_static ? 0 : 1; /* Start at either 0 or 1 skipping 'this' */
 
-		LOG_DEBUG("Method params: \n");
-
-		arena_t *arena = global_ctx->arenas[EXCEPTION_ARENA_ID];
-		if (arena == NULL)
-		{
-			LOG_ERROR(">> Unable to find exception arena on list! <<\n");
-			goto deallocate;
-		}
-
 		while (*params != ')' && *params != '\0')
 		{
 			char param_type  = *params;
@@ -1049,16 +690,19 @@ exception_callback(jvmtiEnv *jvmti_env,
 			}
 
 			/* Get the param value */
-			char *param_val = get_parameter_value(
-			    arena, jvmti_env, jni_env, thread, slot, param_type);
+			char param_buffer[1024];
+			char *param_val = get_parameter_value(param_buffer,
+			                                      sizeof(param_buffer),
+			                                      jvmti_env,
+			                                      jni_env,
+			                                      thread,
+			                                      slot,
+			                                      param_type);
 
 			LOG_DEBUG("\tParam %d (%s): %s\n",
 			          param_idx,
 			          param_name ? param_name : "<unknown>",
 			          param_val ? param_val : "<error>");
-
-			if (param_val)
-				arena_free(arena, param_val);
 
 			slot++;
 			param_idx++;
@@ -1123,6 +767,8 @@ deallocate:
 #endif
 }
 
+// TODO - we should move the processing of the stats to a background thread
+//  similar to the method etc handling
 static void JNICALL
 object_alloc_callback(jvmtiEnv *jvmti_env,
                       JNIEnv *jni,
@@ -1153,9 +799,11 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	if (!context)
 		return;
 
-	method_sample_t *sample = context->sample;
-	if (!sample)
+	if (context->stack_depth == 0)
 		return;
+
+	/* Get current method sample from top of stack */
+	method_sample_t *sample = &context->samples[context->stack_depth - 1];
 
 	/* Check if memory metrics are enabled for this method */
 	if (sample->method_index < 0
@@ -1204,11 +852,15 @@ find_matching_filter(const pattern_filter_t *filter,
 }
 
 static inline int
-should_cache_class(const pattern_filter_t *filter, const char *class_sig)
+should_process_class(const pattern_filter_t *filter, const char *class_sig)
 {
 	/* If no filters configured, don't cache anything */
 	if (filter->num_entries == 0)
 		return 0;
+
+	/* Never process our tracking class */
+	// if (strcmp(TRACKER_CLASS, class_sig) == 0)
+	// 	return 0;
 
 	/* Check if any filter pattern could match this class */
 	for (size_t i = 0; i < filter->num_entries; i++)
@@ -1233,54 +885,71 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (err != JVMTI_ERROR_NONE || class_sig == NULL)
 		return;
 
-	/* Fast filter check - no allocations */
-	if (!should_cache_class(&global_ctx->unified_filter, class_sig))
-	{
-		/* Class filtered out, skip processing */
+	/* Class filtered out, skip processing */
+	// Lorg/springframework/web/servlet/config/annotation/AsyncSupportConfigurer;
+	if (!should_process_class(&global_ctx->unified_filter, class_sig))
 		goto cleanup;
+
+	/* Convert signature (Lorg/foo/Bar;) to internal class name (org/foo/Bar)
+	 * for FindClass compatibility in method_event_thread_func */
+	char *class_name = class_sig;
+	size_t name_len  = strlen(class_sig);
+
+	if (name_len >= 2 && class_sig[0] == 'L' && class_sig[name_len - 1] == ';')
+	{
+		class_name = class_sig + 1; /* Skip leading 'L' */
+		name_len   = name_len - 2;  /* Exclude 'L' and ';' */
 	}
 
-	/* Create global reference for the class */
+	/* Create a global reference for the class so it's valid in the worker thread */
 	jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, klass);
-	if (global_class_ref == NULL)
+	if (!global_class_ref)
 	{
 		LOG_ERROR("Failed to create global reference for class: %s", class_sig);
 		goto cleanup;
 	}
 
-	/* Class passed filter, enqueue for background processing */
-	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	class_q_entry_t *class_entry =
-	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+	size_t total_size =
+	    sizeof(serialized_class_event_t) + name_len + 1; /* +1 for null terminator */
 
-	if (!entry || !class_entry)
+	if (total_size > MAX_CLASS_EVENT_SZ)
 	{
-		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		LOG_ERROR("Class event too large for ring buffer: %zu > %d",
+		          total_size,
+		          MAX_CLASS_EVENT_SZ);
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 		goto cleanup;
 	}
 
-	class_entry->class_sig = class_sig;
-	class_entry->klass     = global_class_ref;
-
-	entry->type = Q_ENTRY_CLASS;
-	entry->data = class_entry;
-
-	if (q_enq(global_ctx->class_queue, entry) != 0)
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->class_ring, &handle) != 0)
 	{
-		LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
-		/* Clean up the global reference if we couldn't enqueue */
+		LOG_ERROR("Class ring full, dropping class: %s", class_sig);
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-		/* Release entry mem back to arena on enqueue failure */
-		arena_free(q_entry_arena, entry);
-		arena_free(q_entry_arena, class_entry);
+		goto cleanup;
 	}
+
+	void *buffer = mpsc_ring_get(&global_ctx->class_ring, handle);
+	if (!buffer)
+	{
+		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		goto cleanup;
+	}
+
+	serialized_class_event_t *event = (serialized_class_event_t *)buffer;
+	event->klass                    = global_class_ref;
+	event->class_sig_len            = (uint16_t)name_len;
+
+	/* Copy string into variable length data area */
+	memcpy(event->data, class_name, name_len);
+	event->data[name_len] = '\0';
+
+	mpsc_ring_commit(&global_ctx->class_ring, handle);
 
 cleanup:
 	(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
 }
 
-// TODO this is unfinished
 static void JNICALL
 class_file_load_callback(jvmtiEnv *jvmti_env,
                          JNIEnv *jni_env,
@@ -1293,54 +962,342 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
                          jint *new_class_data_len,
                          unsigned char **new_class_data)
 {
-	// TODO finish this - we need to adjust the class_load_callback
-	// we also need to work on th jvm/class.c etc to pull out the
-	// annotations for the class so we can add them here and process
-	// in class_load_callback - this is unfinished
-	return;
 
-	UNUSED(jvmti_env);
 	UNUSED(jni_env);
 	UNUSED(class_being_redefined);
 	UNUSED(loader);
 	UNUSED(protection_domain);
-	UNUSED(new_class_data_len);
-	UNUSED(new_class_data);
-
-	// TODO we will use these when we actually parse the class data
 	UNUSED(class_data_len);
-	UNUSED(class_data);
 
-	/* Fast filter check - no allocations */
-	if (!should_cache_class(&global_ctx->unified_filter, name))
+	/* Never process our tracking class */
+	if (strcmp(TRACKER_CLASS, name) == 0)
 		return;
 
-	/* Class passed filter, enqueue for background processing */
-	arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-	q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-	class_q_entry_t *class_entry =
-	    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+	/* Fast filter check */
+	char sig[MAX_SIG_SZ];
+	sprintf(sig, "L%s;", name);
 
-	if (!entry || !class_entry)
+	if (!should_process_class(&global_ctx->unified_filter, sig))
+		return; /* No modification - use original class */
+
+	/* Get the temp bytecode arena and reset */
+	arena_t *bc_arena = global_ctx->arenas[BYTECODE_ARENA_ID];
+	arena_reset(bc_arena);
+
+	/* Parse the class file */
+	class_file_t *cf         = NULL;
+	bytecode_result_e bc_res = bytecode_parse_class(bc_arena, class_data, &cf);
+
+	if (bc_res != BYTECODE_SUCCESS || !cf)
 	{
-		LOG_ERROR("Unable to allocate room from arena for q entries!");
+		LOG_WARN("Failed to parse class %s, using original", name);
 		return;
 	}
 
-	/* Create our q entry */
-	class_entry->class_sig = arena_strdup(q_entry_arena, name);
-	entry->type            = Q_ENTRY_CLASS;
+	/* Injection config for native callbacks */
+	injection_config_t cfg = {
+	    .callback_class = TRACKER_CLASS,
+	    .entry_method   = "onMethodEntry",
+	    .exit_method    = "onMethodExit",
+	    .entry_sig      = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	    .exit_sig = "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"};
 
-	/* Scan class_data for annotations */
-	// TODO build out class file parsing in lib/jvm to deal with class_data
-	//... use class_data_len and class_data, add result to class_entry->annotations
-	// array
-	entry->data = class_entry;
-	/* Store the q entry in a hashtable
-	we look up the q entry in the class_load_callback and add it to the q for
-	background processing
-	*/
-	ht_put(global_ctx->interesting_classes, name, class_entry);
+	/* Inject */
+	bc_res = injection_add_method_tracking(bc_arena, cf, &cfg);
+
+	if (bc_res != BYTECODE_SUCCESS)
+	{
+		LOG_WARN("Failed to inject tracking into class %s, using original", name);
+		return;
+	}
+
+	/* Serialize modified class to bytecode */
+	u1 *mod_bytecode;
+	u4 mod_sz;
+	bc_res = bytecode_write_class(bc_arena, cf, &mod_bytecode, &mod_sz);
+
+	if (bc_res != BYTECODE_SUCCESS)
+	{
+		LOG_WARN("Failed to serialize modified class %s, using original", name);
+		return;
+	}
+
+	unsigned char *jvmti_buf;
+	jvmtiError err = (*jvmti_env)->Allocate(jvmti_env, mod_sz, &jvmti_buf);
+
+	if (err != JVMTI_ERROR_NONE)
+	{
+		LOG_WARN("JVMTI allocation failed for class %s, using original", name);
+		return;
+	}
+
+	/* Copy modified bytecode */
+	memcpy(jvmti_buf, mod_bytecode, mod_sz);
+
+	/* Return modified class to JVM */
+	*new_class_data     = jvmti_buf;
+	*new_class_data_len = mod_sz;
+
+	LOG_DEBUG("Successfully injected tracking into class %s (%d -> %d bytes)",
+	          name,
+	          class_data_len,
+	          mod_sz);
+}
+
+static uint64_t
+get_current_thread_id()
+{
+	jvmtiEnv *jvmti_env = global_ctx->jvmti_env;
+	jvmtiPhase jvm_phase;
+	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
+	    || jvm_phase != JVMTI_PHASE_LIVE)
+	{
+		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
+		          jvm_phase);
+		return 0;
+	}
+
+	jthread current_thread;
+	jvmtiError err = (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
+	if (err != JVMTI_ERROR_NONE)
+	{
+		LOG_ERROR("GetCurrentThread failed with error %d", err);
+		return 0;
+	}
+
+	// TODO finish me
+
+	return 0;
+}
+
+/* Record method events via queue system
+As multiple JVMTI callback threads will try to record events concurrently
+We need to use a mutex around allocations in this function
+*/
+int
+record_method_event(method_event_type_e event_type,
+                    jclass global_class,
+                    const char *class_name,
+                    const char *method_name,
+                    const char *method_sig)
+{
+	if (!class_name || !method_name || !method_sig)
+		return COOPER_ERR;
+
+	LOG_DEBUG("Recording method event for method: %s", method_name);
+
+	size_t c_len = strlen(class_name);
+	size_t m_len = strlen(method_name);
+	size_t s_len = strlen(method_sig);
+
+	/* Calculate total size needed: struct + strings + null terminators */
+	size_t total_size =
+	    sizeof(serialized_method_event_t) + c_len + 1 + m_len + 1 + s_len + 1;
+
+	if (total_size > MAX_METHOD_EVENT_SZ)
+	{
+		/* Event too large for the ring buffer slot */
+		return COOPER_ERR;
+	}
+
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->method_ring, &handle) != 0)
+	{
+		/* Ring full - drop event */
+		LOG_WARN("Method ring full - dropping event");
+		return COOPER_ERR;
+	}
+
+	void *buffer = mpsc_ring_get(&global_ctx->method_ring, handle);
+	if (!buffer)
+	{
+		LOG_WARN("Failed to get buffer for method event");
+		return COOPER_ERR;
+	}
+
+	serialized_method_event_t *event = (serialized_method_event_t *)buffer;
+	event->klass                     = global_class;
+	event->type                      = event_type;
+	event->timestamp                 = get_current_time_ns();
+	event->thread_id                 = get_current_thread_id();
+
+	if (event_type == METHOD_ENTRY)
+		event->cpu = cycles_start();
+	else
+		event->cpu = cycles_end();
+
+	event->class_name_len  = (uint16_t)c_len;
+	event->method_name_len = (uint16_t)m_len;
+	event->method_sig_len  = (uint16_t)s_len;
+
+	/* Copy strings into the variable length data area */
+	char *data_ptr = event->data;
+
+	memcpy(data_ptr, class_name, c_len);
+	data_ptr[c_len] = '\0';
+	data_ptr += c_len + 1;
+
+	memcpy(data_ptr, method_name, m_len);
+	data_ptr[m_len] = '\0';
+	data_ptr += m_len + 1;
+
+	memcpy(data_ptr, method_sig, s_len);
+	data_ptr[s_len] = '\0';
+
+	mpsc_ring_commit(&global_ctx->method_ring, handle);
+	LOG_DEBUG("Recorded method event for method: %s", method_name);
+	return COOPER_OK;
+}
+
+JNIEXPORT void JNICALL
+Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
+                                                                  jclass klass,
+                                                                  jstring className,
+                                                                  jstring methodName,
+                                                                  jstring methodSignature)
+{
+	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
+	UNUSED(env);   /* Not needed for hashtable lookup */
+
+	/* Convert Java strings to C strings */
+	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
+	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
+	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
+
+	if (!class_cstr || !method_cstr || !sig_cstr)
+		goto release;
+
+	/* Build the class signature key: L<classname>; */
+	char class_sig_key[MAX_SIG_SZ];
+	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
+
+	/* Lookup class info from hashtable -
+	it's ok not to find a class, we will not
+	have a cached version on startup */
+	cooper_class_info_t *class_info =
+	    ht_get(global_ctx->class_info_by_name, class_sig_key);
+	if (!class_info || !class_info->global_ref)
+		goto release;
+
+	/* Use the cached GlobalRef - no need to create a new one */
+	int res = record_method_event(
+	    METHOD_ENTRY, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
+
+	if (res != COOPER_OK)
+		LOG_ERROR("Failed to record method entry event");
+
+release:
+	/* Release strings */
+	if (class_cstr)
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	if (method_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	if (sig_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+}
+
+JNIEXPORT void JNICALL
+Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
+                                                                 jclass klass,
+                                                                 jstring className,
+                                                                 jstring methodName,
+                                                                 jstring methodSignature)
+{
+	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
+	UNUSED(env);   /* Not needed for hashtable lookup */
+
+	/* Convert Java strings to C strings */
+	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
+	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
+	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
+
+	if (!class_cstr || !method_cstr || !sig_cstr)
+		goto release;
+
+	/* Build the class signature key: L<classname>; */
+	char class_sig_key[MAX_SIG_SZ];
+	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
+
+	/* Lookup class info from hashtable -
+	it's ok not to find a class, we will not
+	have a cached version on startup */
+	cooper_class_info_t *class_info =
+	    ht_get(global_ctx->class_info_by_name, class_sig_key);
+	if (!class_info || !class_info->global_ref)
+		goto release;
+
+	/* Use the cached GlobalRef - no need to create a new one */
+	int res = record_method_event(
+	    METHOD_EXIT, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
+
+	if (res != COOPER_OK)
+		LOG_ERROR("Failed to record method exit event");
+
+release:
+	if (class_cstr)
+		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
+	if (method_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
+	if (sig_cstr)
+		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+}
+
+jclass
+create_tracker_class(JNIEnv *jni_env)
+{
+
+	jclass tracker = (*jni_env)->FindClass(jni_env, TRACKER_CLASS);
+	if (tracker != NULL)
+	{
+		LOG_DEBUG("Found existing tracking class");
+		return tracker;
+	}
+
+	(*jni_env)->ExceptionClear(jni_env);
+
+	tracker = (*jni_env)->DefineClass(jni_env,
+	                                  TRACKER_CLASS,
+	                                  NULL,
+	                                  TRACKER_CLASS_BYTECODE,
+	                                  sizeof(TRACKER_CLASS_BYTECODE));
+
+	if (!tracker)
+	{
+		LOG_ERROR("Failed to create tracking class from bytecode");
+		return NULL;
+	}
+
+	return tracker;
+}
+
+int
+register_native_callbacks(JNIEnv *jni_env)
+{
+	jclass tracker = create_tracker_class(jni_env);
+	if (!tracker)
+	{
+		LOG_ERROR("Failed to create/find tracker class");
+		return COOPER_ERR;
+	}
+
+	/* Define native method sigs */
+	JNINativeMethod methods[] = {
+	    {"onMethodEntry",
+	     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	     (void *)Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry},
+	    {"onMethodExit",
+	     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+	     (void *)Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit}};
+
+	jint res = (*jni_env)->RegisterNatives(jni_env, tracker, methods, 2);
+	if (res != JNI_OK)
+	{
+		LOG_ERROR("Failed to register native methods: %d", res);
+		return COOPER_ERR;
+	}
+
+	LOG_INFO("Successfully registered native tracking methods");
+	return COOPER_OK;
 }
 
 static void JNICALL
@@ -1355,11 +1312,10 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	if (!global_ctx->getId_method)
 		return;
 
-	thread_context_t *context = pthread_getspecific(context_key);
+	// thread_context_t *context = pthread_getspecific(context_key);
+	thread_context_t *context = get_thread_local_context();
 	if (context)
 	{
-		/* No need to manually free each call since they're arena-allocated */
-		context->sample      = NULL;
 		context->stack_depth = 0;
 
 		/* Free the context itself */
@@ -1433,9 +1389,7 @@ add_method_to_metrics(agent_context_t *ctx,
 	metrics->min_time_ns[index]  = UINT64_MAX;
 	metrics->metric_flags[index] = flags;
 	metrics->count++;
-	// LOG_DEBUG(
-	//     "Added new method at index %d, total methods: %zu\n", index,
-	//     metrics->count);
+
 	return index;
 }
 
@@ -1634,8 +1588,20 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			continue;
 
 		/* Class filtered out, skip processing */
-		if (!should_cache_class(&global_ctx->unified_filter, class_sig))
+		if (!should_process_class(&global_ctx->unified_filter, class_sig))
 			goto deallocate;
+
+		/* Convert signature (Lorg/foo/Bar;) to internal class name (org/foo/Bar)
+		 * for FindClass compatibility in method_event_thread_func */
+		char *class_name = class_sig;
+		size_t name_len  = strlen(class_sig);
+
+		if (name_len >= 2 && class_sig[0] == 'L'
+		    && class_sig[name_len - 1] == ';')
+		{
+			class_name = class_sig + 1; /* Skip leading 'L' */
+			name_len   = name_len - 2;  /* Exclude 'L' and ';' */
+		}
 
 		/* Create a global reference for the class */
 		jclass global_class_ref = (*jni_env)->NewGlobalRef(jni_env, classes[i]);
@@ -1646,34 +1612,42 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 			goto deallocate;
 		}
 
-		/* Passed filter, enqueue for background processing */
-		arena_t *q_entry_arena = global_ctx->arenas[Q_ENTRY_ARENA_ID];
-		q_entry_t *entry       = arena_alloc(q_entry_arena, sizeof(q_entry_t));
-		class_q_entry_t *class_entry =
-		    arena_alloc(q_entry_arena, sizeof(class_q_entry_t));
+		size_t total_size = sizeof(serialized_class_event_t) + name_len
+		                    + 1; /* +1 for null terminator */
 
-		if (!entry || !class_entry)
+		if (total_size > MAX_CLASS_EVENT_SZ)
 		{
-			LOG_ERROR("Unable to allocate room from arena for q entries!");
+			LOG_ERROR("Class event too large for ring buffer: %zu > %d",
+			          total_size,
+			          MAX_CLASS_EVENT_SZ);
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
 			goto deallocate;
 		}
 
-		class_entry->class_sig = class_sig;
-		/* Use the GLOBAL reference, not the local one */
-		class_entry->klass = global_class_ref;
-
-		entry->type = Q_ENTRY_CLASS;
-		entry->data = class_entry;
-
-		if (q_enq(global_ctx->class_queue, entry) != 0)
+		uint32_t handle;
+		if (mpsc_ring_reserve(&global_ctx->class_ring, &handle) != 0)
 		{
-			LOG_ERROR("Failed to enqueue class: %s\n", class_sig);
-			/* Clean up the global reference if we couldn't enqueue */
+			LOG_ERROR("Class ring full, dropping class: %s", class_sig);
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
-			/* Release entry mem back to arena on enqueue failure */
-			arena_free(q_entry_arena, entry);
-			arena_free(q_entry_arena, class_entry);
+			goto deallocate;
 		}
+
+		void *buffer = mpsc_ring_get(&global_ctx->class_ring, handle);
+		if (!buffer)
+		{
+			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+			goto deallocate;
+		}
+
+		serialized_class_event_t *event = (serialized_class_event_t *)buffer;
+		event->klass                    = global_class_ref;
+		event->class_sig_len            = (uint16_t)name_len;
+
+		/* Copy string into variable length data area */
+		memcpy(event->data, class_name, name_len);
+		event->data[name_len] = '\0';
+
+		mpsc_ring_commit(&global_ctx->class_ring, handle);
 
 	deallocate:
 		(*jvmti_env)->Deallocate(jvmti_env, (unsigned char *)class_sig);
@@ -1728,20 +1702,27 @@ vm_init_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread)
 		goto error;
 	}
 
+	if (register_native_callbacks(jni_env) != COOPER_OK)
+	{
+		LOG_ERROR("Failed to register native class");
+		goto error;
+	}
+	LOG_INFO("Native callbacks registered.");
+
 	/* Release local reference */
 	(*jni_env)->DeleteLocalRef(jni_env, local_thread_class);
 	LOG_INFO("Successfully initialized Thread class and getId method");
 
-	/* Start all background threads */
-	if (start_all_threads(global_ctx) != COOPER_OK)
-	{
-		LOG_ERROR("Failed to start background threads");
-		goto error;
-	}
-
 	if (precache_loaded_classes(jvmti_env, jni_env) != COOPER_OK)
 	{
 		LOG_ERROR("Unable to precache loaded classes");
+		goto error;
+	}
+
+	/* Finally start all background threads */
+	if (start_all_threads(global_ctx) != COOPER_OK)
+	{
+		LOG_ERROR("Failed to start background threads");
 		goto error;
 	}
 
@@ -1758,6 +1739,16 @@ error:
 	/* In all cases if we reach here we want to exit as the environment is incorrect
 	 */
 	exit(1);
+}
+
+static void JNICALL
+vm_death_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
+{
+	UNUSED(jvmti_env);
+	UNUSED(jni_env);
+
+	LOG_INFO("VMDeath received, stopping background threads");
+	stop_all_threads(global_ctx);
 }
 
 static int
@@ -1794,17 +1785,15 @@ init_jvm_capabilities(agent_context_t *ctx)
 	/* Set event callbacks */
 	memset(
 	    &ctx->callbacks.event_callbacks, 0, sizeof(ctx->callbacks.event_callbacks));
-	ctx->callbacks.event_callbacks.MethodEntry = &method_entry_callback;
-	ctx->callbacks.event_callbacks.MethodExit  = &method_exit_callback;
 
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 
-	ctx->callbacks.event_callbacks.VMObjectAlloc = &object_alloc_callback;
-	ctx->callbacks.event_callbacks.ThreadEnd     = &thread_end_callback;
-	ctx->callbacks.event_callbacks.VMInit        = &vm_init_callback;
-	// ctx->callbacks.event_callbacks.ClassLoad = &class_load_callback;
-	ctx->callbacks.event_callbacks.ClassPrepare = &class_load_callback;
-	// ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
+	ctx->callbacks.event_callbacks.VMObjectAlloc     = &object_alloc_callback;
+	ctx->callbacks.event_callbacks.ThreadEnd         = &thread_end_callback;
+	ctx->callbacks.event_callbacks.VMInit            = &vm_init_callback;
+	ctx->callbacks.event_callbacks.VMDeath           = &vm_death_callback;
+	ctx->callbacks.event_callbacks.ClassPrepare      = &class_load_callback;
+	ctx->callbacks.event_callbacks.ClassFileLoadHook = &class_file_load_callback;
 
 	err = (*global_ctx->jvmti_env)
 	          ->SetEventCallbacks(global_ctx->jvmti_env,
@@ -1824,8 +1813,10 @@ init_jvm_capabilities(agent_context_t *ctx)
 	                       JVMTI_EVENT_VM_OBJECT_ALLOC,
 	                       JVMTI_EVENT_THREAD_END,
 	                       JVMTI_EVENT_VM_INIT,
+	                       JVMTI_EVENT_VM_DEATH,
 	                       JVMTI_EVENT_CLASS_LOAD,
-	                       JVMTI_EVENT_CLASS_PREPARE};
+	                       JVMTI_EVENT_CLASS_PREPARE,
+	                       JVMTI_EVENT_CLASS_FILE_LOAD_HOOK};
 
 	for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); ++i)
 	{
@@ -1885,7 +1876,11 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	global_ctx->config.rate                = 1;
 	global_ctx->config.export_interval     = 60;
 	global_ctx->config.mem_sample_interval = 1;
-	pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL);
+	if (pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL) != 0)
+	{
+		printf("ERROR: pthread_mutex_init failed\n");
+		return JNI_ERR;
+	}
 
 	/* Redirect output */
 	if (options && strncmp(options, "logfile=", 8) == 0)
@@ -1902,7 +1897,13 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	if (options && strstr(options, "loglevel=debug"))
 		current_log_level = LOG_LEVEL_DEBUG;
 
-	q_t *log_queue = calloc(1, sizeof(q_t));
+	/* Initialize logging ring buffer */
+	if (mpsc_ring_init(&global_ctx->log_ring, LOG_RING_CAPACITY, MAX_LOG_MSG_SZ)
+	    != MPSC_OK)
+	{
+		printf("Failed to init log ring\n");
+		return JNI_ERR;
+	}
 
 	/*
 	  We initialise all the arenas we need in this function and we
@@ -1912,13 +1913,11 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 	/* Create each arena from the configuration table */
 	for (size_t i = 0; i < ARENA_ID__LAST; i++)
 	{
-		arena_t *arena = arena_init(arena_configs[i].name,
-		                            arena_configs[i].size,
-		                            arena_configs[i].block_count);
+		arena_t *arena = arena_init(arena_configs[i].name, arena_configs[i].size);
 
 		if (!arena)
 		{
-			printf("Failed to create %s with id: %ld\n",
+			printf("Failed to create %s with id: %zu\n",
 			       arena_configs[i].name,
 			       arena_configs[i].id);
 			return JNI_ERR;
@@ -1927,50 +1926,46 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		global_ctx->arenas[arena_configs[i].id] = arena;
 	}
 
-	/* make interesting classes available for class file load callback */
-	global_ctx->interesting_classes =
+	/* cache for jmethodid -> method_info_t */
+	global_ctx->interesting_methods =
+	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
+	              1000,
+	              0.75,
+	              hash_jmethodid,
+	              cmp_jmethodid);
+
+	/* cache for class_sig -> cooper_class_info_t* for lookup in onMethodEntry/Exit */
+	global_ctx->class_info_by_name =
 	    ht_create(global_ctx->arenas[CLASS_CACHE_ARENA_ID],
 	              1000,
 	              0.75,
 	              hash_string,
 	              cmp_string);
 
-	/* cache for jmethodid -> method_info_t */
-	global_ctx->interesting_methods =
-	    ht_create(global_ctx->arenas[METHOD_CACHE_ARENA_ID],
-	              1000,
-	              0.75,
-	              hash_jmethodid,
-	              cmp_jmethodid);
-
-	/* Init logging after all arenas are created */
-	arena_t *log_arena = global_ctx->arenas[LOG_ARENA_ID];
-	if (!log_arena)
-	{
-		printf("Log arena not found\n");
-		return JNI_ERR;
-	}
-
 	/* We start the logging thread as we initialise the system now */
-	if (init_log_system(log_queue, log_arena, global_ctx->log_file) != COOPER_OK)
+	if (init_log_system(&global_ctx->log_ring, global_ctx->log_file) != COOPER_OK)
 	{
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
 
-	q_t *class_queue = calloc(1, sizeof(q_t));
-	if (q_init(class_queue) != COOPER_OK)
+	/* Initialize class ring */
+	if (mpsc_ring_init(
+		&global_ctx->class_ring, CLASS_RING_CAPACITY, MAX_CLASS_EVENT_SZ)
+	    != 0)
 	{
+		LOG_ERROR("Failed to init class ring");
 		cleanup(global_ctx);
 		return JNI_ERR;
 	}
 
-	global_ctx->class_queue = class_queue;
-
-	arena_t *class_cache_arena = global_ctx->arenas[CLASS_CACHE_ARENA_ID];
-	if (!class_cache_arena)
+	/* Initialize method ring */
+	if (mpsc_ring_init(
+		&global_ctx->method_ring, METHOD_RING_CAPACITY, MAX_METHOD_EVENT_SZ)
+	    != 0)
 	{
-		LOG_ERROR("Cache arena not found\n");
+		LOG_ERROR("Failed to init method ring");
+		cleanup(global_ctx);
 		return JNI_ERR;
 	}
 
@@ -2139,7 +2134,9 @@ Agent_OnUnload(JavaVM *vm)
 
 		/* Finally shutdown logging */
 		cleanup_log_system();
-
+		mpsc_ring_free(&global_ctx->log_ring);
+		mpsc_ring_free(&global_ctx->method_ring);
+		mpsc_ring_free(&global_ctx->class_ring);
 		ring_channel_free(&global_ctx->call_stack_channel);
 
 		/* Cleanup the arenas - this will free all cache managers and cache data
