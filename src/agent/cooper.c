@@ -854,7 +854,7 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 
 	/* Fast filter check */
 	char sig[MAX_SIG_SZ];
-	sprintf(sig, "L%s;", name);
+	snprintf(sig, sizeof(sig), "L%s;", name);
 
 	if (!should_process_class(&global_ctx->unified_filter, sig))
 		return; /* No modification - use original class */
@@ -1166,8 +1166,7 @@ thread_end_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
 	if (!global_ctx->getId_method)
 		return;
 
-	// thread_context_t *context = pthread_getspecific(context_key);
-	thread_context_t *context = get_thread_local_context();
+	thread_context_t *context = pthread_getspecific(context_key);
 	if (context)
 	{
 		context->stack_depth = 0;
