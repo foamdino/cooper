@@ -14,6 +14,7 @@
 typedef struct package_filter package_filter_t;
 typedef struct serialized_method_event serialized_method_event_t;
 typedef struct serialized_class_event serialized_class_event_t;
+typedef struct serialized_obj_alloc_event serialized_obj_alloc_event_t;
 typedef enum method_event_type method_event_type_e;
 
 enum method_event_type
@@ -59,6 +60,13 @@ struct serialized_class_event
 	uint16_t class_sig_len;
 	/* Variable length data follows: class_sig (null terminated) */
 	char data[];
+};
+
+struct serialized_obj_alloc_event
+{
+	int32_t
+	    obj_alloc_index; /**< pre-resolved index into object_allocaton_metric soa */
+	uint64_t sz;         /**< Object size in bytes */
 };
 
 #endif /* COOPER_TYPES_H */

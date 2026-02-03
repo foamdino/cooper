@@ -6,7 +6,9 @@
 
 #include "cooper.h"
 #include "cooper_threads.h"
+#include "src/agent/cooper_types.h"
 #include "src/lib/log.h"
+#include "src/lib/ring/mpsc_ring.h"
 #include <stdio.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
@@ -169,31 +171,6 @@ get_thread_local_context()
 	return context;
 }
 
-/**
- * Get cached class signature or fetch if not cached
- * @return COOPER_OK on success, COOPER_ERR on failure
- * output_buffer contains class signature
- */
-static int
-get_cached_class_signature(jvmtiEnv *jvmti_env, jclass klass, char **output_buffer)
-{
-	if (!output_buffer || !jvmti_env || !klass)
-		return COOPER_ERR;
-
-	jlong tag      = 0;
-	jvmtiError err = (*jvmti_env)->GetTag(jvmti_env, klass, &tag);
-	if (err != JVMTI_ERROR_NONE)
-		return COOPER_ERR;
-
-	/* If we don't have a tag, there's nothing we can do here */
-	if (tag == 0)
-		return COOPER_ERR;
-
-	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
-	*output_buffer            = info->class_sig;
-	return COOPER_OK;
-}
-
 static object_allocation_metrics_t *
 init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 {
@@ -222,13 +199,10 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->max_size = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
-	metrics->avg_size = arena_alloc_aligned(
-	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 
 	if (!metrics->class_signatures || !metrics->allocation_counts
 	    || !metrics->total_bytes || !metrics->peak_instances
-	    || !metrics->current_instances || !metrics->min_size || !metrics->max_size
-	    || !metrics->avg_size)
+	    || !metrics->current_instances || !metrics->min_size || !metrics->max_size)
 		return NULL;
 
 	/* Set min_size to maximum value initially */
@@ -236,115 +210,6 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 		metrics->min_size[i] = UINT64_MAX;
 
 	return metrics;
-}
-
-/**
- *
- * @return position in array of object allocation stats or -1 on failure
- */
-static int
-find_or_add_object_type(object_allocation_metrics_t *obj_metrics, const char *class_sig)
-{
-	assert(obj_metrics != NULL);
-	assert(class_sig != NULL);
-
-	if (!obj_metrics)
-	{
-		LOG_ERROR("ob_metrics is NULL!\n");
-		return -1;
-	}
-
-	if (!class_sig)
-	{
-		LOG_ERROR("class_sig is NULL!\n");
-		return -1;
-	}
-
-	for (size_t i = 0; i < obj_metrics->count; i++)
-	{
-		if (obj_metrics->class_signatures[i] == NULL)
-		{
-			LOG_ERROR("class_signatures[%d] is NULL when count=%zu\n",
-			          i,
-			          obj_metrics->count);
-			return -1;
-		}
-
-		/* We found the signature */
-		if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
-			return i;
-	}
-
-	/* Do we have space to add new allocation stats? */
-	if (obj_metrics->count >= obj_metrics->capacity)
-	{
-		LOG_WARN("Object metrics capacity reached (%zu)\n",
-		         obj_metrics->capacity);
-		return -1;
-	}
-
-	int index = obj_metrics->count;
-
-	obj_metrics->class_signatures[index] =
-	    arena_strdup(global_ctx->arenas[METRICS_ARENA_ID], class_sig);
-	if (!obj_metrics->class_signatures[index])
-	{
-		LOG_ERROR("Failed to allocate memory for class signature: %s\n",
-		          class_sig);
-		return -1;
-	}
-
-	/* Only set non-zero values, the rest of the values are initialised to 0 */
-	obj_metrics->min_size[index] = UINT64_MAX;
-	obj_metrics->count++;
-	LOG_DEBUG("Added object type at index %d: %s (total types: %zu)\n",
-	          index,
-	          class_sig,
-	          obj_metrics->count);
-	return index;
-}
-
-// TODO - if we move object allocation stats to a background thread
-// this function becomes simpler - possible to remove mutex and atomics
-static void
-update_object_allocation_stats(agent_context_t *ctx,
-                               const char *class_sig,
-                               uint64_t safe_sz)
-{
-	assert(ctx != NULL);
-	assert(class_sig != NULL);
-
-	if (!ctx || !class_sig)
-		return;
-
-	int index = find_or_add_object_type(ctx->object_metrics, class_sig);
-	if (index >= 0)
-	{
-		atomic_fetch_add_explicit(&ctx->object_metrics->allocation_counts[index],
-		                          1,
-		                          memory_order_relaxed);
-		atomic_fetch_add_explicit(&ctx->object_metrics->total_bytes[index],
-		                          safe_sz,
-		                          memory_order_relaxed);
-		atomic_fetch_add_explicit(&ctx->object_metrics->current_instances[index],
-		                          1,
-		                          memory_order_relaxed);
-
-		// TODO need different locks / stats instead of using single lock
-		/* Update size statistics */
-		pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-		if (safe_sz < ctx->object_metrics->min_size[index])
-			ctx->object_metrics->min_size[index] = safe_sz;
-
-		if (safe_sz > ctx->object_metrics->max_size[index])
-			ctx->object_metrics->max_size[index] = safe_sz;
-
-		/* Update average size */
-		ctx->object_metrics->avg_size[index] =
-		    ctx->object_metrics->total_bytes[index]
-		    / ctx->object_metrics->allocation_counts[index];
-		pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
-	}
 }
 
 #ifdef ENABLE_DEBUG_LOGS
@@ -767,8 +632,6 @@ deallocate:
 #endif
 }
 
-// TODO - we should move the processing of the stats to a background thread
-//  similar to the method etc handling
 static void JNICALL
 object_alloc_callback(jvmtiEnv *jvmti_env,
                       JNIEnv *jni,
@@ -781,18 +644,33 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	UNUSED(thread);
 	UNUSED(object);
 
-	/* Buffer for class signature */
-	char *class_sig = NULL;
+	/* Get class info from JVMTI tag */
+	jlong tag      = 0;
+	jvmtiError err = (*jvmti_env)->GetTag(jvmti_env, klass, &tag);
+	if (err != JVMTI_ERROR_NONE || tag == 0)
+		return;
 
-	/* Get cached class signature */
-	if (get_cached_class_signature(jvmti_env, klass, &class_sig) != COOPER_OK)
+	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
+
+	/* Class not registered for allocation tracking (capacity was full) */
+	if (info->obj_alloc_index < 0)
 		return;
 
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
 
-	/* Update the global allocation stats */
-	update_object_allocation_stats(global_ctx, class_sig, safe_sz);
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->obj_alloc_ring, &handle) != 0)
+		return; /* Ring full, drop event */
+
+	serialized_obj_alloc_event_t *event =
+	    (serialized_obj_alloc_event_t *)mpsc_ring_get(&global_ctx->obj_alloc_ring,
+	                                                  handle);
+
+	event->obj_alloc_index = info->obj_alloc_index;
+	event->sz              = safe_sz;
+
+	mpsc_ring_commit(&global_ctx->obj_alloc_ring, handle);
 
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();
@@ -820,7 +698,7 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	          safe_sz,
 	          sample->method_index,
 	          (long long)sample->current_alloc_bytes,
-	          class_sig,
+	          info->class_sig,
 	          safe_sz);
 }
 
@@ -1969,6 +1847,17 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
+	/* Initialize object allocation event ring */
+	if (mpsc_ring_init(&global_ctx->obj_alloc_ring,
+	                   OBJ_ALLOC_RING_CAPACITY,
+	                   MAX_OBJ_ALLOC_EVENT_SZ)
+	    != 0)
+	{
+		LOG_ERROR("Failed to init obj_alloc_ring");
+		cleanup(global_ctx);
+		return JNI_ERR;
+	}
+
 	/* Initialize metrics after all arenas are created */
 	arena_t *metrics_arena = global_ctx->arenas[METRICS_ARENA_ID];
 	if (!metrics_arena)
@@ -2137,6 +2026,7 @@ Agent_OnUnload(JavaVM *vm)
 		mpsc_ring_free(&global_ctx->log_ring);
 		mpsc_ring_free(&global_ctx->method_ring);
 		mpsc_ring_free(&global_ctx->class_ring);
+		mpsc_ring_free(&global_ctx->obj_alloc_ring);
 		ring_channel_free(&global_ctx->call_stack_channel);
 
 		/* Cleanup the arenas - this will free all cache managers and cache data

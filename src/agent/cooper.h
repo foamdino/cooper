@@ -8,6 +8,7 @@
 #define COOPER_H
 
 #include <jvmti.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,9 @@
 #define MAX_METHOD_EVENT_SZ  512  /**< Max size of a method event message */
 #define CLASS_RING_CAPACITY  1024 /**< Max number of class events in ring */
 #define MAX_CLASS_EVENT_SZ   1024 /**< Max size of a class event message */
+#define OBJ_ALLOC_RING_CAPACITY                                                          \
+	8192 /**< Max number of object allocation events in ring */
+#define MAX_OBJ_ALLOC_EVENT_SZ sizeof(serialized_obj_alloc_event_t)
 
 /* Arena Sizes - Amount of memory to be allocated by each arena */
 #define CONFIG_ARENA_SZ      512 * 1024
@@ -124,6 +128,7 @@ enum thread_id
 	THREAD_ID_CALL_STACK,
 	THREAD_ID_FLAMEGRAPH,
 	THREAD_ID_METHOD_EVENTS,
+	THREAD_ID_OBJ_ALLOC,
 	THREAD_ID__COUNT
 };
 
@@ -197,14 +202,13 @@ struct object_allocation_metrics
 
 	char **class_signatures; /**< Array of class signatures */
 
-	_Atomic(uint64_t) *allocation_counts; /**< Number of instances allocated */
-	_Atomic(uint64_t) *total_bytes;       /**< Total bytes allocated for this type */
-	_Atomic(uint64_t) *peak_instances;    /**< Peak number of live instances */
-	_Atomic(uint64_t) *current_instances; /**< Current live instances */
+	uint64_t *allocation_counts; /**< Number of instances allocated */
+	uint64_t *total_bytes;       /**< Total bytes allocated for this type */
+	uint64_t *peak_instances;    /**< Peak number of live instances */
+	uint64_t *current_instances; /**< Current live instances */
 
-	_Atomic(uint64_t) *min_size; /**< Min object size seen */
-	_Atomic(uint64_t) *max_size; /**< Max object size seen */
-	_Atomic(uint64_t) *avg_size; /**< Avg object size seen */
+	uint64_t *min_size; /**< Min object size seen */
+	uint64_t *max_size; /**< Max object size seen */
 };
 
 /**
@@ -291,7 +295,7 @@ struct cooper_method_info
 	jmethodID method_id;
 	char *method_name;
 	char *method_signature;
-	int sample_index; /**< -1 for not sampled, index into SoA structure */
+	int32_t sample_index; /**< -1 for not sampled, index into SoA structure */
 	char *full_name;
 };
 
@@ -300,6 +304,8 @@ struct cooper_class_info
 	jclass global_ref; /**< GlobalRef to the class, valid across threads */
 	char class_sig[MAX_SIG_SZ];
 	uint8_t in_heap_iteration;
+	int32_t obj_alloc_index; /**< -1 for not assigned, index into SoA structure:
+	                            object_allocation_metrics */
 	uint32_t method_count;
 	cooper_method_info_t *methods; /**< Array of methods for this class */
 };
@@ -352,6 +358,7 @@ struct agent_context
 	mpsc_ring_t log_ring;              /**< MPSC ring for logging */
 	mpsc_ring_t method_ring;           /**< MPSC ring for method events */
 	mpsc_ring_t class_ring;            /**< MPSC ring for class events */
+	mpsc_ring_t obj_alloc_ring;        /**< MPSC ring for object allocation events */
 	ring_channel_t call_stack_channel; /**< ring channel for call stacks */
 	cooper_shm_context_t *shm_ctx;     /**< Shared mem context */
 	config_t config;                   /**< Agent configuration */

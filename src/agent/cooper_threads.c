@@ -6,9 +6,15 @@
 
 #include "cooper_threads.h"
 #include "src/agent/cooper.h"
+#include "src/agent/cooper_types.h"
+#include "src/lib/arena.h"
+#include "src/lib/arena_str.h"
 #include "src/lib/log.h"
+#include "src/lib/ring/mpsc_ring.h"
 #include "src/lib/thread_util.h"
 #include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
 /* clang-format off */
 static const thread_cfg_t thread_cfgs[] = 
@@ -21,6 +27,7 @@ static const thread_cfg_t thread_cfgs[] =
 	{"Call stack sampling", THREAD_ID_CALL_STACK, call_stack_sampling_thread_func, CALL_STACK_RUNNNG},
 	{"Flamegraph export", THREAD_ID_FLAMEGRAPH, flamegraph_export_thread, FLAMEGRAPH_EXPORT_RUNNING},
 	{"Method events", THREAD_ID_METHOD_EVENTS, method_event_thread_func, METHOD_EVENTS_RUNNING},
+	{"Object alloc events", THREAD_ID_OBJ_ALLOC, obj_alloc_event_thread_func, OBJ_ALLOC_EVENTS_RUNNING}
 };
 
 /* Lookups for deep size estimates */
@@ -345,19 +352,13 @@ export_to_file(agent_context_t *ctx)
 
 		for (size_t i = 0; i < obj_metrics->count; i++)
 		{
-			uint64_t alloc_count = atomic_load_explicit(
-			    &obj_metrics->allocation_counts[i], memory_order_relaxed);
-			uint64_t total_bytes = atomic_load_explicit(
-			    &obj_metrics->total_bytes[i], memory_order_relaxed);
-			uint64_t current_inst = atomic_load_explicit(
-			    &obj_metrics->current_instances[i], memory_order_relaxed);
-
-			uint64_t avg_size = atomic_load_explicit(
-			    &obj_metrics->avg_size[i], memory_order_relaxed);
-			uint64_t min_size = atomic_load_explicit(
-			    &obj_metrics->min_size[i], memory_order_relaxed);
-			uint64_t max_size = atomic_load_explicit(
-			    &obj_metrics->max_size[i], memory_order_relaxed);
+			uint64_t alloc_count  = obj_metrics->allocation_counts[i];
+			uint64_t total_bytes  = obj_metrics->total_bytes[i];
+			uint64_t current_inst = obj_metrics->current_instances[i];
+			uint64_t min_size     = obj_metrics->min_size[i];
+			uint64_t max_size     = obj_metrics->max_size[i];
+			uint64_t avg_size =
+			    (alloc_count > 0) ? total_bytes / alloc_count : 0;
 
 			fprintf(fp,
 			        "%s,%lu,%lu,%lu,%lu,%lu,%lu\n",
@@ -372,8 +373,6 @@ export_to_file(agent_context_t *ctx)
 	}
 	else
 		fprintf(fp, "# No object allocation metrics available\n");
-
-	// pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
 	fprintf(fp, "# ------ \n\n");
 
@@ -595,8 +594,7 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 
 	for (size_t i = 0; i < ctx->object_metrics->count; i++)
 	{
-		uint64_t alloc_count = atomic_load_explicit(
-		    &ctx->object_metrics->allocation_counts[i], memory_order_relaxed);
+		uint64_t alloc_count = ctx->object_metrics->allocation_counts[i];
 
 		if (ctx->object_metrics->class_signatures[i] && alloc_count > 0)
 		{
@@ -609,22 +607,15 @@ export_object_alloc_to_shm(agent_context_t *ctx)
 			        COOPER_MAX_SIGNATURE_LEN - 1);
 			alloc_data.class_signature[COOPER_MAX_SIGNATURE_LEN - 1] = '\0';
 
-			/* Semantic field names */
-			alloc_data.allocation_count  = alloc_count;
-			alloc_data.current_instances = atomic_load_explicit(
-			    &ctx->object_metrics->current_instances[i],
-			    memory_order_relaxed);
-			alloc_data.total_bytes = atomic_load_explicit(
-			    &ctx->object_metrics->total_bytes[i], memory_order_relaxed);
+			alloc_data.allocation_count = alloc_count;
+			alloc_data.current_instances =
+			    ctx->object_metrics->current_instances[i];
+			alloc_data.total_bytes = ctx->object_metrics->total_bytes[i];
 			alloc_data.peak_instances =
-			    atomic_load_explicit(&ctx->object_metrics->peak_instances[i],
-			                         memory_order_relaxed);
-			alloc_data.min_size = atomic_load_explicit(
-			    &ctx->object_metrics->min_size[i], memory_order_relaxed);
-			alloc_data.max_size = atomic_load_explicit(
-			    &ctx->object_metrics->max_size[i], memory_order_relaxed);
-			alloc_data.avg_size = atomic_load_explicit(
-			    &ctx->object_metrics->avg_size[i], memory_order_relaxed);
+			    ctx->object_metrics->peak_instances[i];
+			alloc_data.min_size = ctx->object_metrics->min_size[i];
+			alloc_data.max_size = ctx->object_metrics->max_size[i];
+			alloc_data.avg_size = alloc_data.total_bytes / alloc_count;
 
 			cooper_shm_write_data(
 			    ctx->shm_ctx, COOPER_DATA_OBJECT_ALLOC, &alloc_data);
@@ -1425,6 +1416,47 @@ cleanup_classes:
 	(*jvmti)->Deallocate(jvmti, (unsigned char *)classes);
 }
 
+/**
+ * Register a class for object allocation tracking
+ *
+ * @return index into obj_metrics array or -1 on failure
+ */
+static int
+register_object_type(object_allocation_metrics_t *obj_metrics,
+                     arena_t *arena,
+                     const char *class_sig)
+{
+	assert(obj_metrics != NULL);
+	assert(arena != NULL);
+
+	if (obj_metrics->count >= obj_metrics->capacity)
+	{
+		LOG_WARN("Object metrics capacity reached (%zu)\n",
+		         obj_metrics->capacity);
+		return -1;
+	}
+
+	/* We just use the next slot based on the metrics count as the new idx */
+	int32_t idx = obj_metrics->count;
+
+	obj_metrics->class_signatures[idx] = arena_strdup(arena, class_sig);
+	if (!obj_metrics->class_signatures[idx])
+	{
+		LOG_ERROR("Failed to allocation mem for class signature: %s\n",
+		          class_sig);
+		return -1;
+	}
+
+	obj_metrics->min_size[idx] = UINT64_MAX;
+	obj_metrics->count++;
+
+	LOG_DEBUG("Registered object type: %s at index: %d (total types: %zu)\n",
+	          class_sig,
+	          idx,
+	          obj_metrics->count);
+	return idx;
+}
+
 /* Caches class and method info using SetTag */
 static void
 cache_class_info(agent_context_t *ctx,
@@ -1474,6 +1506,13 @@ cache_class_info(agent_context_t *ctx,
 
 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
 	info->in_heap_iteration = 0;
+
+	/* Register this class for object allocation tracking in the SoA struct.
+       This must happen before SetTag, so that obj_alloc_index is visible
+       to any thread that later reads the tag. */
+	int obj_idx = register_object_type(
+	    ctx->object_metrics, ctx->arenas[METRICS_ARENA_ID], class_sig);
+	info->obj_alloc_index = (obj_idx >= 0) ? (int32_t)obj_idx : -1;
 
 	/* Set up the methods pointer to point to the memory immediately following the
 	 * struct */
@@ -2263,5 +2302,51 @@ method_event_thread_func(void *arg)
 	(*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 
 	LOG_INFO("Method events thread exiting");
+	return NULL;
+}
+
+void *
+obj_alloc_event_thread_func(void *arg)
+{
+	agent_context_t *ctx = (agent_context_t *)arg;
+
+	LOG_INFO("Object allocation event thread started");
+
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, OBJ_ALLOC_EVENTS_RUNNING))
+	{
+		uint32_t handle;
+		if (mpsc_ring_consume(&ctx->obj_alloc_ring, &handle) != 0)
+		{
+			usleep(1000); /* 1ms sleep when empty */
+			continue;
+		}
+
+		serialized_obj_alloc_event_t *event =
+		    (serialized_obj_alloc_event_t *)mpsc_ring_get(&ctx->obj_alloc_ring,
+		                                                  handle);
+
+		if (event && event->obj_alloc_index >= 0)
+		{
+
+			ctx->object_metrics->allocation_counts[event->obj_alloc_index]++;
+			ctx->object_metrics->total_bytes[event->obj_alloc_index] +=
+			    event->sz;
+			ctx->object_metrics->current_instances[event->obj_alloc_index]++;
+
+			if (event->sz
+			    < ctx->object_metrics->min_size[event->obj_alloc_index])
+				ctx->object_metrics->min_size[event->obj_alloc_index] =
+				    event->sz;
+
+			if (event->sz
+			    > ctx->object_metrics->max_size[event->obj_alloc_index])
+				ctx->object_metrics->max_size[event->obj_alloc_index] =
+				    event->sz;
+		}
+
+		mpsc_ring_release(&ctx->obj_alloc_ring, handle);
+	}
+
+	LOG_INFO("Object allocation event thread exiting");
 	return NULL;
 }
