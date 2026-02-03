@@ -37,7 +37,7 @@ enum thread_workers_status
 	SHM_EXPORT_RUNNING        = (1 << 2),
 	HEAP_STATS_RUNNING        = (1 << 3),
 	CLASS_CACHE_RUNNING       = (1 << 4),
-	CALL_STACK_RUNNNG         = (1 << 5),
+	CALL_STACK_RUNNING        = (1 << 5),
 	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6),
 	METHOD_EVENTS_RUNNING     = (1 << 7),
 	OBJ_ALLOC_EVENTS_RUNNING  = (1 << 8)

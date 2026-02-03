@@ -24,7 +24,7 @@ static const thread_cfg_t thread_cfgs[] =
 	{"Heap stats", THREAD_ID_HEAP_STATS, heap_stats_thread_func, HEAP_STATS_RUNNING},
 	{"SHM export", THREAD_ID_SHM_EXPORT, shm_export_thread_func, SHM_EXPORT_RUNNING},
 	{"Class caching", THREAD_ID_CLASS_CACHE, class_cache_thread_func, CLASS_CACHE_RUNNING},
-	{"Call stack sampling", THREAD_ID_CALL_STACK, call_stack_sampling_thread_func, CALL_STACK_RUNNNG},
+	{"Call stack sampling", THREAD_ID_CALL_STACK, call_stack_sampling_thread_func, CALL_STACK_RUNNING},
 	{"Flamegraph export", THREAD_ID_FLAMEGRAPH, flamegraph_export_thread, FLAMEGRAPH_EXPORT_RUNNING},
 	{"Method events", THREAD_ID_METHOD_EVENTS, method_event_thread_func, METHOD_EVENTS_RUNNING},
 	{"Object alloc events", THREAD_ID_OBJ_ALLOC, obj_alloc_event_thread_func, OBJ_ALLOC_EVENTS_RUNNING}
@@ -715,7 +715,7 @@ flamegraph_export_thread(void *arg)
 		return NULL;
 	}
 
-	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNING))
 	{
 		uint32_t idx;
 		call_stack_sample_t *sample =
