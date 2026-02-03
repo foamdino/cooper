@@ -2162,7 +2162,10 @@ record_method_exit_event(agent_context_t *ctx,
 		                          exec_time,
 		                          memory_order_relaxed);
 
-		/* Update min/max using relaxed atomics - no mutex needed */
+		/* Update min/max using relaxed atomics
+		We do not have a TOCTOU issue here as this function is called in a single
+		background thread
+		*/
 		uint64_t current_min = atomic_load_explicit(
 		    &ctx->metrics->min_time_ns[method_idx], memory_order_relaxed);
 		if (exec_time < current_min)
