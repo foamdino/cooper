@@ -507,7 +507,7 @@ export_method_to_shm(agent_context_t *ctx)
 	if (!ctx->shm_ctx || !ctx->metrics)
 		return;
 
-	for (size_t i = 0; i < ctx->metrics->capacity; i++)
+	for (size_t i = 0; i < ctx->metrics->count; i++)
 	{
 		if (ctx->metrics->signatures[i])
 		{
