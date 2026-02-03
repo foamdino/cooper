@@ -213,78 +213,6 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 	return metrics;
 }
 
-/**
- *
- * @return position in array of object allocation stats or -1 on failure
- */
-static int
-find_or_add_object_type(object_allocation_metrics_t *obj_metrics,
-                        cooper_class_info_t *info)
-{
-	assert(obj_metrics != NULL);
-	assert(info != NULL);
-
-	/* Fast path: index already cached on this class */
-	if (info->obj_alloc_index >= 0)
-		return info->obj_alloc_index;
-
-	const char *class_sig = info->class_sig;
-
-	if (class_sig[0] == '\0')
-	{
-		LOG_ERROR("Empty class signature\n");
-		return -1;
-	}
-
-	/* Linear search for existing signature */
-	for (size_t i = 0; i < obj_metrics->count; i++)
-	{
-		if (obj_metrics->class_signatures[i] == NULL)
-		{
-			LOG_ERROR("class_signatures[%d] is NULL when count=%zu\n",
-			          i,
-			          obj_metrics->count);
-			return -1;
-		}
-
-		/* We found the signature */
-		if (strcmp(obj_metrics->class_signatures[i], class_sig) == 0)
-		{
-			info->obj_alloc_index = (int32_t)i;
-			return i;
-		}
-	}
-
-	/* Do we have space to add new allocation stats? */
-	if (obj_metrics->count >= obj_metrics->capacity)
-	{
-		LOG_WARN("Object metrics capacity reached (%zu)\n",
-		         obj_metrics->capacity);
-		return -1;
-	}
-
-	int32_t index = obj_metrics->count;
-
-	obj_metrics->class_signatures[index] =
-	    arena_strdup(global_ctx->arenas[METRICS_ARENA_ID], class_sig);
-	if (!obj_metrics->class_signatures[index])
-	{
-		LOG_ERROR("Failed to allocate memory for class signature: %s\n",
-		          class_sig);
-		return -1;
-	}
-
-	/* Only set non-zero values, the rest of the values are initialised to 0 */
-	obj_metrics->min_size[index] = UINT64_MAX;
-	obj_metrics->count++;
-	info->obj_alloc_index = index;
-	LOG_DEBUG("Added object type at index %d: %s (total types: %zu)\n",
-	          index,
-	          class_sig,
-	          obj_metrics->count);
-	return index;
-}
-
 // TODO - if we move object allocation stats to a background thread
 // this function becomes simpler - possible to remove mutex and atomics
 static void
@@ -760,16 +688,15 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 
 	cooper_class_info_t *info = (cooper_class_info_t *)(intptr_t)tag;
 
+	/* Class not registered for allocation tracking (capacity was full) */
+	if (info->obj_alloc_index < 0)
+		return;
+
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
 
-	/* Find or add - fast path uses cached index on info struct */
-	int index = find_or_add_object_type(global_ctx->object_metrics, info);
-	if (index < 0)
-		return;
-
 	/* Update the global allocation stats */
-	update_object_allocation_stats(global_ctx, index, safe_sz);
+	update_object_allocation_stats(global_ctx, info->obj_alloc_index, safe_sz);
 
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();

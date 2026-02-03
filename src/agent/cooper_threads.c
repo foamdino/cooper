@@ -6,9 +6,13 @@
 
 #include "cooper_threads.h"
 #include "src/agent/cooper.h"
+#include "src/lib/arena.h"
+#include "src/lib/arena_str.h"
 #include "src/lib/log.h"
 #include "src/lib/thread_util.h"
 #include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 
 /* clang-format off */
 static const thread_cfg_t thread_cfgs[] = 
@@ -1423,6 +1427,47 @@ cleanup_classes:
 	(*jvmti)->Deallocate(jvmti, (unsigned char *)classes);
 }
 
+/**
+ * Register a class for object allocation tracking
+ *
+ * @return index into obj_metrics array or -1 on failure
+ */
+static int
+register_object_type(object_allocation_metrics_t *obj_metrics,
+                     arena_t *arena,
+                     const char *class_sig)
+{
+	assert(obj_metrics != NULL);
+	assert(arena != NULL);
+
+	if (obj_metrics->count >= obj_metrics->capacity)
+	{
+		LOG_WARN("Object metrics capacity reached (%zu)\n",
+		         obj_metrics->capacity);
+		return -1;
+	}
+
+	/* We just use the next slot based on the metrics count as the new idx */
+	int32_t idx = obj_metrics->count;
+
+	obj_metrics->class_signatures[idx] = arena_strdup(arena, class_sig);
+	if (!obj_metrics->class_signatures[idx])
+	{
+		LOG_ERROR("Failed to allocation mem for class signature: %s\n",
+		          class_sig);
+		return -1;
+	}
+
+	obj_metrics->min_size[idx] = UINT64_MAX;
+	obj_metrics->count++;
+
+	LOG_DEBUG("Registered object type: %s at index: %d (total types: %zu)\n",
+	          idx,
+	          class_sig,
+	          obj_metrics->count);
+	return idx;
+}
+
 /* Caches class and method info using SetTag */
 static void
 cache_class_info(agent_context_t *ctx,
@@ -1472,9 +1517,13 @@ cache_class_info(agent_context_t *ctx,
 
 	strncpy(info->class_sig, class_sig, sizeof(info->class_sig) - 1);
 	info->in_heap_iteration = 0;
-	/* This is a new class_info, so it has no assigned place in the SoA struct
-	 * object_allocation_metrics, default to -1 */
-	info->obj_alloc_index = -1;
+
+	/* Register this class for object allocation tracking in the SoA struct.
+       This must happen before SetTag, so that obj_alloc_index is visible
+       to any thread that later reads the tag. */
+	int obj_idx = register_object_type(
+	    ctx->object_metrics, ctx->arenas[METRICS_ARENA_ID], class_sig);
+	info->obj_alloc_index = (obj_idx >= 0) ? (int32_t)obj_idx : -1;
 
 	/* Set up the methods pointer to point to the memory immediately following the
 	 * struct */
