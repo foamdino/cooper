@@ -6,7 +6,9 @@
 
 #include "cooper.h"
 #include "cooper_threads.h"
+#include "src/agent/cooper_types.h"
 #include "src/lib/log.h"
+#include "src/lib/ring/mpsc_ring.h"
 #include <stdio.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
@@ -197,13 +199,10 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 	metrics->max_size = arena_alloc_aligned(
 	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
-	metrics->avg_size = arena_alloc_aligned(
-	    arena, initial_capacity * sizeof(uint64_t), CACHE_LINE_SZ);
 
 	if (!metrics->class_signatures || !metrics->allocation_counts
 	    || !metrics->total_bytes || !metrics->peak_instances
-	    || !metrics->current_instances || !metrics->min_size || !metrics->max_size
-	    || !metrics->avg_size)
+	    || !metrics->current_instances || !metrics->min_size || !metrics->max_size)
 		return NULL;
 
 	/* Set min_size to maximum value initially */
@@ -211,39 +210,6 @@ init_object_allocation_metrics(arena_t *arena, size_t initial_capacity)
 		metrics->min_size[i] = UINT64_MAX;
 
 	return metrics;
-}
-
-// TODO - if we move object allocation stats to a background thread
-// this function becomes simpler - possible to remove mutex and atomics
-static void
-update_object_allocation_stats(agent_context_t *ctx, int index, uint64_t safe_sz)
-{
-	assert(ctx != NULL);
-
-	if (!ctx)
-		return;
-
-	atomic_fetch_add_explicit(
-	    &ctx->object_metrics->allocation_counts[index], 1, memory_order_relaxed);
-	atomic_fetch_add_explicit(
-	    &ctx->object_metrics->total_bytes[index], safe_sz, memory_order_relaxed);
-	atomic_fetch_add_explicit(
-	    &ctx->object_metrics->current_instances[index], 1, memory_order_relaxed);
-
-	// TODO need different locks / stats instead of using single lock
-	/* Update size statistics */
-	pthread_mutex_lock(&ctx->tm_ctx.samples_lock);
-	if (safe_sz < ctx->object_metrics->min_size[index])
-		ctx->object_metrics->min_size[index] = safe_sz;
-
-	if (safe_sz > ctx->object_metrics->max_size[index])
-		ctx->object_metrics->max_size[index] = safe_sz;
-
-	/* Update average size */
-	ctx->object_metrics->avg_size[index] =
-	    ctx->object_metrics->total_bytes[index]
-	    / ctx->object_metrics->allocation_counts[index];
-	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 }
 
 #ifdef ENABLE_DEBUG_LOGS
@@ -666,8 +632,6 @@ deallocate:
 #endif
 }
 
-// TODO - we should move the processing of the stats to a background thread
-//  similar to the method etc handling
 static void JNICALL
 object_alloc_callback(jvmtiEnv *jvmti_env,
                       JNIEnv *jni,
@@ -695,8 +659,21 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
 
-	/* Update the global allocation stats */
-	update_object_allocation_stats(global_ctx, info->obj_alloc_index, safe_sz);
+	// /* Update the global allocation stats */
+	// update_object_allocation_stats(global_ctx, info->obj_alloc_index, safe_sz);
+
+	uint32_t handle;
+	if (mpsc_ring_reserve(&global_ctx->obj_alloc_ring, &handle) != 0)
+		return; /* Ring full, drop event */
+
+	serialized_obj_alloc_event_t *event =
+	    (serialized_obj_alloc_event_t *)mpsc_ring_get(&global_ctx->obj_alloc_ring,
+	                                                  handle);
+
+	event->obj_alloc_index = info->obj_alloc_index;
+	event->sz              = safe_sz;
+
+	mpsc_ring_commit(&global_ctx->obj_alloc_ring, handle);
 
 	/* Get thread-local context to prevent re-entrancy */
 	thread_context_t *context = get_thread_local_context();
@@ -1873,6 +1850,17 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
+	/* Initialize object allocation event ring */
+	if (mpsc_ring_init(&global_ctx->obj_alloc_ring,
+	                   OBJ_ALLOC_RING_CAPACITY,
+	                   MAX_OBJ_ALLOC_EVENT_SZ)
+	    != 0)
+	{
+		LOG_ERROR("Failed to init obj_alloc_ring");
+		cleanup(global_ctx);
+		return JNI_ERR;
+	}
+
 	/* Initialize metrics after all arenas are created */
 	arena_t *metrics_arena = global_ctx->arenas[METRICS_ARENA_ID];
 	if (!metrics_arena)
@@ -2041,6 +2029,7 @@ Agent_OnUnload(JavaVM *vm)
 		mpsc_ring_free(&global_ctx->log_ring);
 		mpsc_ring_free(&global_ctx->method_ring);
 		mpsc_ring_free(&global_ctx->class_ring);
+		mpsc_ring_free(&global_ctx->obj_alloc_ring);
 		ring_channel_free(&global_ctx->call_stack_channel);
 
 		/* Cleanup the arenas - this will free all cache managers and cache data

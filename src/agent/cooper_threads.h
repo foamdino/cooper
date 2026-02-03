@@ -39,7 +39,8 @@ enum thread_workers_status
 	CLASS_CACHE_RUNNING       = (1 << 4),
 	CALL_STACK_RUNNNG         = (1 << 5),
 	FLAMEGRAPH_EXPORT_RUNNING = (1 << 6),
-	METHOD_EVENTS_RUNNING     = (1 << 7)
+	METHOD_EVENTS_RUNNING     = (1 << 7),
+	OBJ_ALLOC_EVENTS_RUNNING  = (1 << 8)
 };
 
 struct stack_bucket
@@ -79,6 +80,7 @@ void *class_cache_thread_func(void *arg);
 void *call_stack_sampling_thread_func(void *arg);
 void *flamegraph_export_thread(void *arg);
 void *method_event_thread_func(void *arg);
+void *obj_alloc_event_thread_func(void *arg);
 
 /* Set a specific worker status bit */
 static inline void
