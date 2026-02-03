@@ -659,9 +659,6 @@ object_alloc_callback(jvmtiEnv *jvmti_env,
 	/* Convert the jlong (signed) to a uint64_t as we store our stats unsigned */
 	uint64_t safe_sz = (size >= 0) ? (uint64_t)size : 0;
 
-	// /* Update the global allocation stats */
-	// update_object_allocation_stats(global_ctx, info->obj_alloc_index, safe_sz);
-
 	uint32_t handle;
 	if (mpsc_ring_reserve(&global_ctx->obj_alloc_ring, &handle) != 0)
 		return; /* Ring full, drop event */

@@ -1451,8 +1451,8 @@ register_object_type(object_allocation_metrics_t *obj_metrics,
 	obj_metrics->count++;
 
 	LOG_DEBUG("Registered object type: %s at index: %d (total types: %zu)\n",
-	          idx,
 	          class_sig,
+	          idx,
 	          obj_metrics->count);
 	return idx;
 }
