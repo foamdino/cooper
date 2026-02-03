@@ -1586,32 +1586,28 @@ cache_class_info(agent_context_t *ctx,
 		                                         matching_filter->metric_flags);
 
 		/* Only add interesting methods to cache */
-		if (sample_index >= 0)
-		{
-			info->methods[i].sample_index = sample_index;
+		if (sample_index < 0)
+			goto next_method;
 
-			/* Add to interesting methods hashtable */
-			if (ht_put(ctx->interesting_methods,
-			           info->methods[i].method_id,
-			           &info->methods[i])
-			    != COOPER_OK)
-			{
-				LOG_WARN("Failed to cache method %s",
-				         info->methods[i].method_name);
-			}
-			else
-			{
-				LOG_DEBUG("Cached method: %s (sample_rate=%d, "
-				          "flags=%u, index=%d)",
-				          info->methods[i].full_name,
-				          matching_filter->sample_rate,
-				          matching_filter->metric_flags,
-				          sample_index);
-			}
+		info->methods[i].sample_index = sample_index;
+
+		/* Add to interesting methods hashtable */
+		if (ht_put(ctx->interesting_methods,
+		           info->methods[i].method_id,
+		           &info->methods[i])
+		    != COOPER_OK)
+		{
+			LOG_WARN("Failed to cache method %s",
+			         info->methods[i].method_name);
 		}
 		else
 		{
-			LOG_ERROR("Failed to add method to metrics: %s\n", full_sig);
+			LOG_DEBUG("Cached method: %s (sample_rate=%d, "
+			          "flags=%u, index=%d)",
+			          info->methods[i].full_name,
+			          matching_filter->sample_rate,
+			          matching_filter->metric_flags,
+			          sample_index);
 		}
 
 	next_method:
@@ -1908,7 +1904,7 @@ call_stack_sampling_thread_func(void *arg)
 		return NULL;
 	}
 
-	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNNG))
+	while (check_worker_status(ctx->tm_ctx.worker_statuses, CALL_STACK_RUNNING))
 	{
 		// TODO decouple the thread func from the body...
 		//  sleep for configured interval
@@ -1964,31 +1960,16 @@ call_stack_sampling_thread_func(void *arg)
 				jmethodID mid = sample->frames[f];
 
 				// find cached info
-				jclass declaring_class;
-				(*jvmti)->GetMethodDeclaringClass(
-				    jvmti, mid, &declaring_class);
+				cooper_method_info_t *mi =
+				    ht_get(ctx->interesting_methods, mid);
 
-				jlong tag;
-				(*jvmti)->GetTag(jvmti, declaring_class, &tag);
-				if (tag == 0)
+				if (!mi || mi->sample_index < 0)
 					continue;
 
-				cooper_class_info_t *info =
-				    (cooper_class_info_t *)(intptr_t)tag;
-
-				/* linear search - replace at some point */
-				for (uint32_t m = 0; m < info->method_count; m++)
-				{
-					if (info->methods[m].method_id == mid
-					    && info->methods[m].sample_index >= 0)
-					{
-						atomic_fetch_add_explicit(
-						    &ctx->metrics->call_sample_counts
-							 [info->methods[m].sample_index],
-						    1,
-						    memory_order_relaxed);
-					}
-				}
+				atomic_fetch_add_explicit(
+				    &ctx->metrics->call_sample_counts[mi->sample_index],
+				    1,
+				    memory_order_relaxed);
 			}
 
 			/* Publish to channel ready ring */
