@@ -283,12 +283,25 @@ export_to_file(agent_context_t *ctx)
 	pthread_mutex_lock(&ctx->app_memory_metrics->lock);
 
 	/* Export memory samples in chronological order */
-	for (size_t i = 0; i < ctx->app_memory_metrics->sample_count; i++)
+	size_t mem_sample_total = ctx->app_memory_metrics->sample_count;
+	size_t export_count =
+	    mem_sample_total < MAX_MEMORY_SAMPLES ? mem_sample_total : MAX_MEMORY_SAMPLES;
+	for (size_t i = 0; i < export_count; i++)
 	{
+		size_t idx;
+		if (mem_sample_total <= MAX_MEMORY_SAMPLES)
+			idx = i; /* buffer not full so we can use i */
+		else
+		{
+			/* buffer is full, start from the oldest entry */
+			size_t oldest_idx = mem_sample_total % MAX_MEMORY_SAMPLES;
+			idx               = (oldest_idx + i) % MAX_MEMORY_SAMPLES;
+		}
+
 		fprintf(fp,
 		        "%" PRIu64 ",%" PRIu64 "\n",
-		        ctx->app_memory_metrics->timestamps[i],
-		        ctx->app_memory_metrics->process_memory_sample[i]);
+		        ctx->app_memory_metrics->timestamps[idx],
+		        ctx->app_memory_metrics->process_memory_sample[idx]);
 	}
 
 	fprintf(fp, "# ------ \n\n");
@@ -1026,9 +1039,7 @@ sample_thread_mem(agent_context_t *ctx, JNIEnv *jni, uint64_t timestamp)
 			size_t idx = thread_metrics->sample_count % MAX_MEMORY_SAMPLES;
 			thread_metrics->memory_samples[idx] = thread_mem;
 			thread_metrics->timestamps[idx]     = timestamp;
-
-			if (thread_metrics->sample_count < MAX_MEMORY_SAMPLES)
-				thread_metrics->sample_count++;
+			thread_metrics->sample_count++;
 
 			LOG_DEBUG("Stored memory sample for thread %lld: %llu bytes",
 			          (long long)thread_id,
@@ -1752,9 +1763,7 @@ mem_sampling_thread_func(void *arg)
 			    ctx->app_memory_metrics->sample_count % MAX_MEMORY_SAMPLES;
 			ctx->app_memory_metrics->process_memory_sample[idx] = process_mem;
 			ctx->app_memory_metrics->timestamps[idx]            = timestamp;
-
-			if (ctx->app_memory_metrics->sample_count < MAX_MEMORY_SAMPLES)
-				ctx->app_memory_metrics->sample_count++;
+			ctx->app_memory_metrics->sample_count++;
 
 			pthread_mutex_unlock(&ctx->app_memory_metrics->lock);
 
