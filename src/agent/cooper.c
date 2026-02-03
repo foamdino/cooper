@@ -1080,7 +1080,6 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
                                                                   jstring methodSignature)
 {
 	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
-	UNUSED(env);   /* Not needed for hashtable lookup */
 
 	attach_record_event(env, METHOD_ENTRY, className, methodName, methodSignature);
 }
@@ -1093,7 +1092,6 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
                                                                  jstring methodSignature)
 {
 	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
-	UNUSED(env);   /* Not needed for hashtable lookup */
 
 	attach_record_event(env, METHOD_EXIT, className, methodName, methodSignature);
 }
