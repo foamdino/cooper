@@ -9,6 +9,7 @@
 #include "src/agent/cooper_types.h"
 #include "src/lib/log.h"
 #include "src/lib/ring/mpsc_ring.h"
+#include <stdint.h>
 #include <stdio.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
@@ -1027,16 +1028,13 @@ record_method_event(method_event_type_e event_type,
 	return COOPER_OK;
 }
 
-JNIEXPORT void JNICALL
-Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
-                                                                  jclass klass,
-                                                                  jstring className,
-                                                                  jstring methodName,
-                                                                  jstring methodSignature)
+static void
+attach_record_event(JNIEnv *env,
+                    method_event_type_e evt,
+                    jstring className,
+                    jstring methodName,
+                    jstring methodSignature)
 {
-	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
-	UNUSED(env);   /* Not needed for hashtable lookup */
-
 	/* Convert Java strings to C strings */
 	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
 	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
@@ -1059,7 +1057,7 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
 
 	/* Use the cached GlobalRef - no need to create a new one */
 	int res = record_method_event(
-	    METHOD_ENTRY, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
+	    evt, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
 
 	if (res != COOPER_OK)
 		LOG_ERROR("Failed to record method entry event");
@@ -1075,6 +1073,19 @@ release:
 }
 
 JNIEXPORT void JNICALL
+Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodEntry(JNIEnv *env,
+                                                                  jclass klass,
+                                                                  jstring className,
+                                                                  jstring methodName,
+                                                                  jstring methodSignature)
+{
+	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
+	UNUSED(env);   /* Not needed for hashtable lookup */
+
+	attach_record_event(env, METHOD_ENTRY, className, methodName, methodSignature);
+}
+
+JNIEXPORT void JNICALL
 Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
                                                                  jclass klass,
                                                                  jstring className,
@@ -1084,40 +1095,7 @@ Java_com_github_foamdino_cooper_agent_NativeTracker_onMethodExit(JNIEnv *env,
 	UNUSED(klass); /* klass is NativeTracker, not the instrumented class */
 	UNUSED(env);   /* Not needed for hashtable lookup */
 
-	/* Convert Java strings to C strings */
-	const char *class_cstr  = (*env)->GetStringUTFChars(env, className, NULL);
-	const char *method_cstr = (*env)->GetStringUTFChars(env, methodName, NULL);
-	const char *sig_cstr    = (*env)->GetStringUTFChars(env, methodSignature, NULL);
-
-	if (!class_cstr || !method_cstr || !sig_cstr)
-		goto release;
-
-	/* Build the class signature key: L<classname>; */
-	char class_sig_key[MAX_SIG_SZ];
-	snprintf(class_sig_key, sizeof(class_sig_key), "L%s;", class_cstr);
-
-	/* Lookup class info from hashtable -
-	it's ok not to find a class, we will not
-	have a cached version on startup */
-	cooper_class_info_t *class_info =
-	    ht_get(global_ctx->class_info_by_name, class_sig_key);
-	if (!class_info || !class_info->global_ref)
-		goto release;
-
-	/* Use the cached GlobalRef - no need to create a new one */
-	int res = record_method_event(
-	    METHOD_EXIT, class_info->global_ref, class_cstr, method_cstr, sig_cstr);
-
-	if (res != COOPER_OK)
-		LOG_ERROR("Failed to record method exit event");
-
-release:
-	if (class_cstr)
-		(*env)->ReleaseStringUTFChars(env, className, class_cstr);
-	if (method_cstr)
-		(*env)->ReleaseStringUTFChars(env, methodName, method_cstr);
-	if (sig_cstr)
-		(*env)->ReleaseStringUTFChars(env, methodSignature, sig_cstr);
+	attach_record_event(env, METHOD_EXIT, className, methodName, methodSignature);
 }
 
 jclass
