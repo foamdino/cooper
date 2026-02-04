@@ -42,7 +42,6 @@ init_test_context()
 
 	ctx->jvmti_env               = NULL;
 	ctx->log_file                = NULL;
-	ctx->config.rate             = 1;
 	ctx->config.sample_file_path = NULL;
 	ctx->config.export_method    = NULL;
 	ctx->config.export_interval  = 60;
@@ -315,7 +314,6 @@ test_load_config()
 	unlink(config_file);
 
 	assert(result == 0);
-	assert(ctx->config.rate == 5);
 	assert(strcmp(ctx->config.sample_file_path, "/tmp/test.txt") == 0);
 	assert(strcmp(ctx->config.export_method, "file") == 0);
 	assert(ctx->config.export_interval == 30);

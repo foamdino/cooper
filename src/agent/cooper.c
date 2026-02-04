@@ -1280,7 +1280,6 @@ load_config(agent_context_t *ctx, const char *cf)
 	}
 
 	/* Apply configuration to agent context */
-	ctx->config.rate                = config.default_sample_rate;
 	ctx->config.sample_file_path    = config.sample_file_path;
 	ctx->config.export_method       = config.export_method;
 	ctx->config.export_interval     = config.export_interval;
@@ -1697,16 +1696,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 static void
 cleanup(agent_context_t *ctx)
 {
-	/* check if we have work to do */
-	if (ctx->config.filters)
-	{
-		/* Only free the array of pointers, strings are handled by config_arena */
-		free(ctx->config.filters);
-	}
-
-	/* Reset config values (no need to free arena allocated strings) */
-	ctx->config.filters          = NULL;
-	ctx->config.num_filters      = 0;
+	/* Reset config values */
 	ctx->config.sample_file_path = NULL;
 	ctx->config.export_method    = NULL;
 }
@@ -1726,7 +1716,6 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		printf("Failed to allocate agent context\n");
 		return JNI_ERR;
 	}
-	global_ctx->config.rate                = 1;
 	global_ctx->config.export_interval     = 60;
 	global_ctx->config.mem_sample_interval = 1;
 	if (pthread_mutex_init(&global_ctx->tm_ctx.samples_lock, NULL) != 0)
@@ -1920,8 +1909,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
 		return JNI_ERR;
 	}
 
-	LOG_INFO("Config: rate=%d, method='%s', path='%s'\n",
-	         global_ctx->config.rate,
+	LOG_INFO("Config: method='%s', path='%s'\n",
 	         global_ctx->config.export_method,
 	         global_ctx->config.sample_file_path);
 

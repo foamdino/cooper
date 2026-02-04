@@ -326,10 +326,7 @@ struct thread_id_mapping
 
 struct config
 {
-	int rate;                // TODO check if this is actually used
-	char **filters;          // TODO check if this is actually used
-	int num_filters;         // TODO check if this is actually used
-	char *sample_file_path;  // TODO check if this is actually used
+	char *sample_file_path;  /**< used in the export_to_file code */
 	char *export_method;     /**< only support file for now */
 	int mem_sample_interval; /**< Interval between taking mem samples */
 	int export_interval;     /**< export to file every 60 seconds */
