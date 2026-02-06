@@ -815,6 +815,7 @@ class_load_callback(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread thread, jclass
 	if (!buffer)
 	{
 		(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+		mpsc_ring_release(&global_ctx->class_ring, handle);
 		goto cleanup;
 	}
 
@@ -935,7 +936,6 @@ get_current_thread_id()
 
 /* Record method events via queue system
 As multiple JVMTI callback threads will try to record events concurrently
-We need to use a mutex around allocations in this function
 */
 int
 record_method_event(method_event_type_e event_type,
@@ -975,6 +975,7 @@ record_method_event(method_event_type_e event_type,
 	if (!buffer)
 	{
 		LOG_WARN("Failed to get buffer for method event");
+		mpsc_ring_release(&global_ctx->method_ring, handle);
 		return COOPER_ERR;
 	}
 
@@ -1511,6 +1512,7 @@ precache_loaded_classes(jvmtiEnv *jvmti_env, JNIEnv *jni_env)
 		if (!buffer)
 		{
 			(*jni_env)->DeleteGlobalRef(jni_env, global_class_ref);
+			mpsc_ring_release(&global_ctx->class_ring, handle);
 			goto deallocate;
 		}
 

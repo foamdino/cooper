@@ -191,10 +191,6 @@ get_native_thread_id(agent_context_t *ctx, JNIEnv *jni, jthread thread)
 
 	pthread_mutex_unlock(&ctx->tm_ctx.samples_lock);
 
-	/* If we already have a pid just return now */
-	if (result != 0)
-		return result;
-
 	/*
 	This is a new thread id, not previously found in our mappings.
 	We'll need to have the thread tell us its native ID. This part

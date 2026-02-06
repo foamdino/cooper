@@ -215,9 +215,9 @@ struct object_allocation_metrics
  * Thread-local storage for tracking method execution
  *
  * While our JVM agent itself only runs a few dedicated threads (main, event processing,
- * logging, etc.), the JVMTI callbacks (method_entry_callback and method_exit_callback)
- * are executed in the context of the Java application threads that are running the
- * methods we're monitoring.
+ * logging, etc.), the JNI NativeTracker callbacks (method_entry_callback and
+ * method_exit_callback) are executed in the context of the Java application threads that
+ * are running the methods we're monitoring.
  *
  * This is a critical design consideration: when we receive these callbacks, we're
  * actually running in the thread that's executing the Java method. Since multiple
