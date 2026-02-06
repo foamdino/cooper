@@ -9,8 +9,11 @@
 #include "src/agent/cooper_types.h"
 #include "src/lib/log.h"
 #include "src/lib/ring/mpsc_ring.h"
+#include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/syscall.h>
 
 static agent_context_t *global_ctx = NULL; /* Single global context */
 
@@ -738,8 +741,8 @@ should_process_class(const pattern_filter_t *filter, const char *class_sig)
 		return 0;
 
 	/* Never process our tracking class */
-	// if (strcmp(TRACKER_CLASS, class_sig) == 0)
-	// 	return 0;
+	if (strcmp(TRACKER_CLASS, class_sig) == 0)
+		return 0;
 
 	/* Check if any filter pattern could match this class */
 	for (size_t i = 0; i < filter->num_entries; i++)
@@ -848,10 +851,6 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 	UNUSED(protection_domain);
 	UNUSED(class_data_len);
 
-	/* Never process our tracking class */
-	if (strcmp(TRACKER_CLASS, name) == 0)
-		return;
-
 	/* Fast filter check */
 	char sig[MAX_SIG_SZ];
 	snprintf(sig, sizeof(sig), "L%s;", name);
@@ -926,26 +925,11 @@ class_file_load_callback(jvmtiEnv *jvmti_env,
 static uint64_t
 get_current_thread_id()
 {
-	jvmtiEnv *jvmti_env = global_ctx->jvmti_env;
-	jvmtiPhase jvm_phase;
-	if ((*jvmti_env)->GetPhase(jvmti_env, &jvm_phase) != JVMTI_ERROR_NONE
-	    || jvm_phase != JVMTI_PHASE_LIVE)
-	{
-		LOG_ERROR("Cannot get the thread id as jvm is not in correct phase: %d",
-		          jvm_phase);
-		return 0;
-	}
+	thread_context_t *tc = get_thread_local_context();
+	if (tc && tc->java_thread_id != 0)
+		return (uint64_t)tc->java_thread_id;
 
-	jthread current_thread;
-	jvmtiError err = (*jvmti_env)->GetCurrentThread(jvmti_env, &current_thread);
-	if (err != JVMTI_ERROR_NONE)
-	{
-		LOG_ERROR("GetCurrentThread failed with error %d", err);
-		return 0;
-	}
-
-	// TODO finish me
-
+	/* We do not know the java thread id */
 	return 0;
 }
 
@@ -1152,6 +1136,45 @@ register_native_callbacks(JNIEnv *jni_env)
 
 	LOG_INFO("Successfully registered native tracking methods");
 	return COOPER_OK;
+}
+
+static void JNICALL
+thread_start_callback(jvmtiEnv *jvmti, JNIEnv *jni, jthread thread)
+{
+	UNUSED(jvmti);
+
+	if (!thread || !global_ctx->getId_method)
+		return;
+
+	jlong java_tid = (*jni)->CallLongMethod(jni, thread, global_ctx->getId_method);
+	if ((*jni)->ExceptionCheck(jni))
+	{
+		(*jni)->ExceptionClear(jni);
+		return;
+	}
+
+	/* Cache in TLS */
+	thread_context_t *tc = get_thread_local_context();
+	if (tc)
+		tc->java_thread_id = java_tid;
+
+	/* Populate global thread -> native thread mapping */
+#ifdef __linux__
+	pid_t native_tid = syscall(SYS_gettid);
+	pthread_mutex_lock(&global_ctx->tm_ctx.samples_lock);
+	for (int i = 0; i < MAX_THREAD_MAPPINGS; i++)
+	{
+		if (global_ctx->thread_mappings[i].java_thread_id == 0)
+		{
+			global_ctx->thread_mappings[i].java_thread_id   = java_tid;
+			global_ctx->thread_mappings[i].native_thread_id = native_tid;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&global_ctx->tm_ctx.samples_lock);
+#endif
+
+	LOG_DEBUG("Thread started: Java ID %lld", (long long)java_tid);
 }
 
 static void JNICALL
@@ -1641,6 +1664,7 @@ init_jvm_capabilities(agent_context_t *ctx)
 	// ctx->callbacks.event_callbacks.Exception     = &exception_callback;
 
 	ctx->callbacks.event_callbacks.VMObjectAlloc     = &object_alloc_callback;
+	ctx->callbacks.event_callbacks.ThreadStart       = &thread_start_callback;
 	ctx->callbacks.event_callbacks.ThreadEnd         = &thread_end_callback;
 	ctx->callbacks.event_callbacks.VMInit            = &vm_init_callback;
 	ctx->callbacks.event_callbacks.VMDeath           = &vm_death_callback;

@@ -1844,8 +1844,9 @@ class_cache_thread_func(void *arg)
 		LOG_ERROR("Failed to attach class cache thread to JVM");
 		return NULL;
 	}
-
+#ifdef ENABLE_DEBUG_LOGS
 	int classes_processed = 0;
+#endif
 	LOG_INFO("Class cache thread started");
 
 	while (check_worker_status(ctx->tm_ctx.worker_statuses, CLASS_CACHE_RUNNING))
@@ -1867,8 +1868,10 @@ class_cache_thread_func(void *arg)
 
 		serialized_class_event_t *event = (serialized_class_event_t *)buffer;
 
+#ifdef ENABLE_DEBUG_LOGS
 		classes_processed++;
 		LOG_DEBUG("Processing class #%d from ring", classes_processed);
+#endif
 		cache_class_info(ctx, arena, ctx->jvmti_env, jni, event->klass);
 
 		/* Delete the global reference after processing */

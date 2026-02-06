@@ -287,6 +287,7 @@ struct callbacks
 struct thread_context
 {
 	int stack_depth;                           /**< Depth of call stack */
+	jlong java_thread_id;                      /**< Cached java thread id */
 	method_sample_t samples[MAX_STACK_FRAMES]; /**< Fixed array of samples */
 };
 
