@@ -7,19 +7,67 @@
 #include "opcode.h"
 
 const char *MNEMONIC[256] = {
-#define OPCODE(val, name, len, is_branch) [val] = #name,
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = #name,
 #include "opcode.def"
 #undef OPCODE
 };
 
 const u1 INSTRUCTION_LEN[256] = {
-#define OPCODE(val, name, len, is_branch) [val] = len,
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = len,
 #include "opcode.def"
 #undef OPCODE
 };
 
 const u1 IS_BRANCH[256] = {
-#define OPCODE(val, name, len, is_branch) [val] = is_branch,
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = is_branch,
+#include "opcode.def"
+#undef OPCODE
+};
+
+/* Stack effect lookup tables for StackMapTable generation */
+
+const int OPCODE_POP_COUNT[256] = {
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = pop_cnt,
+#include "opcode.def"
+#undef OPCODE
+};
+
+const int OPCODE_PUSH_COUNT[256] = {
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = push_cnt,
+#include "opcode.def"
+#undef OPCODE
+};
+
+const char *OPCODE_POP_TYPES[256] = {
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = pop_types,
+#include "opcode.def"
+#undef OPCODE
+};
+
+const char *OPCODE_PUSH_TYPES[256] = {
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = push_types,
+#include "opcode.def"
+#undef OPCODE
+};
+
+const int OPCODE_FLAGS[256] = {
+#define OPCODE(                                                                          \
+    val, name, len, is_branch, pop_cnt, push_cnt, pop_types, push_types, flags)          \
+	[val] = flags,
 #include "opcode.def"
 #undef OPCODE
 };
